@@ -45,6 +45,7 @@ class Broker:
         self.questions = QuestionBook(on_event=self._emit)
         self.questions.on_answer = self._on_answer
         self.selected: set[str] = set()  # device ids in this session
+        self.watches: dict = {}  # port id -> PortWatch (selected devices' ports held open)
         # Output heard from each target, kept across re-scans so what was learned is not lost
         # when the graph is rebuilt (design.md section 10). Per target: the latest output, plus
         # the latest one that named the part and the latest one that raised an alert, so a later
@@ -114,8 +115,11 @@ class Broker:
                 if self.locks:
                     self.locks.release(d)
             self.approvals.withdraw_ports({p.id for d in dropped for p in b.ports_of(d)})
+            for p in [p for d in dropped for p in b.ports_of(d)]:
+                self._unwatch(p.id)
             self.selected = new
-        out = {"selected": sorted(self.selected), "busy": busy}
+            started = self._autowatch()
+        out = {"selected": sorted(self.selected), "busy": busy, "watching": started}
         self._emit({"event": "selection_changed", **out})
         return out
 
@@ -188,7 +192,47 @@ class Broker:
 
         return asdict(self.approvals.decide(approval_id, granted, scope))
 
+    # ---- watching (design.md section 17) -------------------------------------------------
+    def _autowatch(self) -> list[str]:
+        """Selected devices' serial ports that are SAFE to open are watched right away; the others
+        need `serial.watch`, which asks the human like a listen would."""
+        started = []
+        for d in self.selected:
+            for p in self.bench.ports_of(d):
+                if p.kind == "serial" and p.path and p.id not in self.watches \
+                        and classify(self.bench, "serial.watch", p.id).effect == Effect.SAFE:
+                    if self._watch(p.id, 115200):
+                        started.append(p.id)
+        return started
+
+    def _watch(self, port_id: str, baud: int) -> bool:
+        from .watch import PortWatch
+
+        port = self.bench.ports[port_id]
+        w = PortWatch(self.io, port_id, port.path, self.state / "logs", self._device_event, baud, port.open_lines)
+        try:
+            w.start()
+        except Exception as e:  # busy elsewhere, gone: a fact, not a crash
+            self._emit({"event": "device_event", "port": port_id, "device": port.device_id, "kind": "unwatchable", "what": str(e)})
+            return False
+        self.watches[port_id] = w
+        return True
+
+    def _unwatch(self, port_id: str) -> None:
+        w = self.watches.pop(port_id, None)
+        if w:
+            w.stop()
+
+    def _device_event(self, ev: dict) -> None:
+        port = self.last.bench.ports.get(ev["port"]) if self.last else None
+        if port:
+            ev["device"] = port.device_id
+            ev["device_name"] = self.last.bench.devices[port.device_id].name
+        self._emit(ev)
+
     def end_session(self) -> None:
+        for pid in list(self.watches):
+            self._unwatch(pid)
         with self._lock:
             if self.locks:
                 self.locks.release_all()
@@ -218,6 +262,10 @@ class Broker:
             if refused:
                 return refused
             impact = classify(self.bench, action, port_id, args)
+            w = self.watches.get(port_id)
+            if w and w.alive and action in ("serial.listen", "serial.watch"):
+                # the port is already open: listening opens nothing, so it cannot reset anything
+                impact = Impact(action, port_id, Effect.SAFE, "the port is already open (watched); reading it opens nothing")
             if impact.effect == Effect.SAFE or (approval_id is None and self.approvals.covered(action, port_id, impact.effect)):
                 return self._run(impact, args)
             if approval_id is None:
@@ -259,6 +307,32 @@ class Broker:
 
     def _execute(self, action: str, port_id: str, args: dict):
         port = self.bench.ports[port_id]
+        w = self.watches.get(port_id)
+        if w and w.alive and action in ("serial.listen", "serial.send") and args["baud"] != w.baud:
+            # a different rate was asked for: reopen the watch at it (the port is SAFE to open, it was watched)
+            self._unwatch(port_id)
+            w = self.watches.get(port_id) if self._watch(port_id, args["baud"]) else None
+        if action == "serial.watch":
+            if w and w.alive:
+                return {"watching": port_id, "log": str(w.log.resolve()), "already": True}
+            self._unwatch(port_id)
+            if not self._watch(port_id, args["baud"]):
+                return {"error": "could not open the port to watch it"}
+            return {"watching": port_id, "log": str(self.watches[port_id].log.resolve())}
+        if action == "serial.listen" and w and w.alive:
+            text = w.read_window(args["seconds"])
+            R.apply_log(self.bench.targets_via(port_id), text)
+            self.last.proposals = R.propose(self.bench)
+            self._remember(port_id, text)
+            return dict(self._save_artifact(f"{port_id}-listen-{args['baud']}.txt", text, preview=text[-2000:]),
+                        watched_log=str(w.log.resolve()))
+        if action == "serial.send" and w and w.alive:
+            text = w.send((args["data"] + args["eol"]).encode(), args["seconds"])
+            R.apply_log(self.bench.targets_via(port_id), text)
+            self.last.proposals = R.propose(self.bench)
+            self._remember(port_id, text)
+            safe_name = "".join(c if c.isalnum() else "_" for c in args["data"])[:24]
+            return self._save_artifact(f"{port_id}-send-{safe_name}.txt", text, preview=text[-2000:])
         if action == "serial.listen":
             text = R.listen_into(self.io, port.path, self.bench.targets_via(port_id), args["seconds"],
                                  exclusive=True, baud=args["baud"], lines=port.open_lines)
@@ -283,7 +357,14 @@ class Broker:
             exe = shutil.which("esptool.py") or shutil.which("esptool")
             if not exe:
                 return {"error": "esptool not installed"}
-            out = subprocess.run([exe, "--port", port.path, "chip_id"], capture_output=True, text=True, timeout=30)
+            # hand the port over: esptool opens it itself (design.md section 3)
+            baud = w.baud if w else None
+            self._unwatch(port_id)
+            try:
+                out = subprocess.run([exe, "--port", port.path, "chip_id"], capture_output=True, text=True, timeout=30)
+            finally:
+                if baud:
+                    self._watch(port_id, baud)
             return out.stdout[-2000:] or out.stderr[-2000:]
         if action == "jtag.scan":
             dev = self.bench.devices[port.device_id]

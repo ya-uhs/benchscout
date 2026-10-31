@@ -60,7 +60,7 @@ def classify(bench: Bench, action: str, port_id: str, args: dict | None = None) 
     effect, disturbs_targets, reason = _base(action)
     arg = (args or {}).get("command")
 
-    if action == "serial.listen" and port.may_reset_on_open:
+    if action in ("serial.listen", "serial.watch") and port.may_reset_on_open:
         effect = Effect.DISRUPTIVE
         reason = "opening this port can reset the device (DTR/RTS into an auto-reset circuit, or a native-USB chip resetting on open)"
         disturbs_targets = True

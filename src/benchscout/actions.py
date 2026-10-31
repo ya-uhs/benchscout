@@ -95,6 +95,9 @@ _COMMAND = (Param("command", str, "SCPI command line", required=True),)
 ACTIONS: dict[str, Action] = {a.name: a for a in (
     Action("serial.listen", Effect.SAFE, False, "passively reads console output",
            "listen to a serial port and save what it prints", _LISTEN),
+    Action("serial.watch", Effect.SAFE, False, "keeps the port open and reads it continuously",
+           "keep listening to a serial port in the background; then serial.listen reads from it without reopening, "
+           "and alerts (crashes, resets) are noticed", (Param("baud", int, "baud rate", 115200, min=50, max=12_000_000),)),
     Action("serial.send", Effect.DISRUPTIVE, True, "sends bytes the firmware will act on",
            "send text to a serial port and read the answer",
            (Param("data", str, "text to send", required=True),

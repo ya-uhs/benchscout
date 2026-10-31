@@ -8,6 +8,7 @@ be developed and tested without a board on the desk.
 from __future__ import annotations
 
 import json
+import os
 import platform
 import re
 import shutil
@@ -39,7 +40,62 @@ class Io(Protocol):
     def jtag_scan(self, usb_serial: str | None) -> list[dict]: ...  # [{idcode, manufacturer, model}]
 
 
+class PortGone(OSError):
+    """The port vanished (the device reset or re-enumerated, or was unplugged)."""
+
+
+class _LiveStream:
+    """A serial port held open (design.md section 17: watching a selected device)."""
+
+    def __init__(self, s):
+        self.s = s
+
+    def read(self, timeout: float) -> bytes:
+        import serial
+
+        try:
+            self.s.timeout = timeout
+            return self.s.read(4096)
+        except (serial.SerialException, OSError) as e:
+            raise PortGone(str(e)) from e
+
+    def write(self, data: bytes) -> None:
+        import serial
+
+        try:
+            self.s.write(data)
+            self.s.flush()
+        except (serial.SerialException, OSError) as e:
+            raise PortGone(str(e)) from e
+
+    def close(self) -> None:
+        try:
+            self.s.close()
+        except Exception:
+            pass
+
+
 class LiveIo:
+    def serial_stream(self, path: str, baud: int = 115200, exclusive: bool = False, lines: str = "low") -> _LiveStream:
+        import serial
+
+        s = serial.Serial()
+        s.port, s.baudrate, s.timeout = path, baud, 0.1
+        if exclusive and platform.system() != "Windows":
+            s.exclusive = True
+        if lines == "low":
+            s.dtr = False
+            s.rts = False
+        s.open()
+        return _LiveStream(s)
+
+    def port_present(self, path: str) -> bool:
+        if path.startswith("/dev/"):
+            return os.path.exists(path)
+        from serial.tools import list_ports
+
+        return any(p.device == path for p in list_ports.comports())
+
     def usb_devices(self) -> list[dict]:
         system = platform.system()
         if system == "Linux":
@@ -276,6 +332,41 @@ def parse_detect(text: str) -> list[dict]:
     return [d for d in devices if d["idcode"] is not None]
 
 
+class _FixtureStream:
+    """A scripted port: `streams[path]` is a list of {"after": s, "text": ...} or {"after": s, "vanish": s}."""
+
+    def __init__(self, io: "FixtureIo", path: str):
+        self.io, self.path, self.t0 = io, path, time.monotonic()
+        self.script = list(io.data.get("streams", {}).get(path, []))
+        self.pending = b""
+
+    def read(self, timeout: float) -> bytes:
+        end = time.monotonic() + timeout
+        while True:
+            if self.pending:
+                out, self.pending = self.pending, b""
+                return out
+            now = time.monotonic() - self.t0
+            if self.script and self.script[0]["after"] <= now:
+                ev = self.script.pop(0)
+                if "vanish" in ev:
+                    self.io.gone_until[self.path] = time.monotonic() + ev["vanish"]
+                    raise PortGone("Device not configured (fixture)")
+                return ev["text"].encode()
+            if time.monotonic() >= end:
+                return b""
+            time.sleep(0.01)
+
+    def write(self, data: bytes) -> None:
+        self.io.calls.append(("serial_write", self.path, data))
+        reply = self.io.data.get("replies", {}).get(self.path, {}).get(data.decode(errors="replace"))
+        if reply:
+            self.pending += reply.encode()
+
+    def close(self) -> None:
+        pass
+
+
 class FixtureIo:
     """Replays a bench described in JSON (see fixtures/)."""
 
@@ -285,6 +376,29 @@ class FixtureIo:
         self.exclusive_opens: list[str] = []
         self.bauds: list[int] = []
         self.lines: list[str] = []
+        self.gone_until: dict[str, float] = {}
+        self.streams_opened: list[str] = []
+
+    def serial_stream(self, path: str, baud: int = 115200, exclusive: bool = False, lines: str = "low") -> _FixtureStream:
+        if not self.port_present(path):
+            raise PortGone("not present (fixture)")
+        self.calls.append(("serial_stream", path))
+        self.streams_opened.append(path)
+        self.bauds.append(baud)
+        self.lines.append(lines)
+        if exclusive:
+            self.exclusive_opens.append(path)
+        st = _FixtureStream(self, path)
+        if getattr(self, "_streams", None) is None:
+            self._streams = {}
+        prev = self._streams.get(path)
+        if prev:  # a reopen continues the same script
+            st.script, st.t0 = prev.script, prev.t0
+        self._streams[path] = st
+        return st
+
+    def port_present(self, path: str) -> bool:
+        return time.monotonic() >= self.gone_until.get(path, 0)
 
     def usb_devices(self) -> list[dict]:
         return [dict(d, vid=int(d["vid"], 16), pid=int(d["pid"], 16)) for d in self.data.get("usb", [])]

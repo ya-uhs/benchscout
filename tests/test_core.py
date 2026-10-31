@@ -78,9 +78,9 @@ def test_port_can_be_given_as_path_and_unknown_port_names_the_ids(io, tmp_path):
 
 def test_selected_ports_open_exclusively_recon_does_not(io, tmp_path):
     br = broker_with(io, tmp_path, VCP)
-    assert io.exclusive_opens == []  # recon listened to the VCP without locking others out
-    br.request("serial.listen", VCP, {"seconds": 0.1})
+    # recon listened without locking others out; selecting the device started a watch, which holds it exclusively
     assert io.exclusive_opens == [VCP]
+    assert br.request("serial.listen", VCP, {"seconds": 0.1})["result"]["watched_log"]
 
 
 # ---- approvals: memory only, waiting, scopes ----------------------------------
@@ -384,7 +384,7 @@ def test_serial_send_writes_once_and_reads_the_answer(tmp_path):
     br.decide(res["approval_id"], True)
     done = br.request("serial.send", VCP, {"data": "status"}, approval_id=res["approval_id"])
     assert done["status"] == "done" and done["result"]["preview"].endswith("ok\n")
-    assert ("serial_send", VCP, b"status\n") in io.calls
+    assert ("serial_write", VCP, b"status\n") in io.calls  # through the watch, which holds the port
     assert br.request("serial.send", VCP, {"data": "?", "eol": "", "seconds": 0.1})["status"] == "approval_required"
 
 
