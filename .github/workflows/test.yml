@@ -19,3 +19,34 @@ jobs:
         working-directory: vscode
       - run: npm test
         working-directory: vscode
+
+  package:
+    # one .vsix per OS/CPU with the frozen core inside (PyInstaller does not cross-compile)
+    needs: pytest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, target: win32-x64 }
+          - { os: macos-latest, target: darwin-arm64 }
+          - { os: ubuntu-latest, target: linux-x64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: uv sync --extra mcp --extra visa
+      - run: uv run python packaging/build_core.py
+      - run: npm ci
+        working-directory: vscode
+      - run: npm run package:platform
+        working-directory: vscode
+        env:
+          VSCE_TARGET: ${{ matrix.target }}
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchscout-${{ matrix.target }}
+          path: vscode/benchscout-${{ matrix.target }}.vsix

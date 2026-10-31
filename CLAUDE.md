@@ -78,7 +78,9 @@ BENCHSCOUT_FIXTURE=fixtures/bench_example.json uv run benchscout core   # core w
 ```
 
 VS Code extension (`vscode/`): `npm test` (its control channel against a real core on the fixture
-bench), `npm run package` -> `vscode/benchscout.vsix`. Keep `src/core.ts` free of `vscode` imports
+bench), `npm run package` -> `vscode/benchscout.vsix` (no core inside). Platform build with the frozen
+core: `uv run python packaging/build_core.py` then `VSCE_TARGET=darwin-arm64 npm run package:platform`
+(same tests against the frozen core: `BENCHSCOUT_TEST_BIN=$PWD/bin/benchscout/benchscout npm test`). Keep `src/core.ts` free of `vscode` imports
 so it stays testable with plain Node. Panel wording lives in `src/i18n.ts` (en/ja); clarity first.
 
 For debugging without VS Code, the terminal running `benchscout core` is the control channel:

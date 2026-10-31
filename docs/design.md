@@ -500,7 +500,11 @@ Pack: dev     ← 将来
    `esptool.chip_id`、`esptool.write_flash`(esptool 5 以上を条件に。4.5.1 で書けなかった実機の知見)。シェルを通さず、型付きの引数(ファイル、
    offset:file の対応表)、使えるポートの種類、実行中は機器を手放して見張りを止め後で戻す。利用者も自分のツールを知識のフォルダに足せる。
    実機で Tang Nano の SRAM 書き込みを benchscout 経由・承認付きで実行し、CRC 成功、心拍のカウンタが 1 から数え直したことで再構成を確認
-7. コアの同梱(PyInstaller、OS ごとの .vsix)、VS Code 上での実機確認
+7. (同梱は済 2026-11-01、VS Code 上の確認は未)**コアの同梱**:`packaging/build_core.py` で PyInstaller の onedir(macOS arm64 で 46 MB、
+   起動 約 1 秒)を `vscode/bin/benchscout/` に作り、`npm run package:platform`(`VSCE_TARGET=darwin-arm64` など)で OS ごとの .vsix
+   (25 MB)にする。凍結版のコアと MCP の中継で、拡張のテストと MCP の道具の一覧・判定を確認。CI に OS ごとの .vsix を作るジョブを足した
+   (Windows と Linux はまだ CI で回していない)。拡張は同梱のコアに実行権限を付けてから使う。残り:VS Code の中での確認(S5:Copilot から
+   MCP が見えるか、通知とパネルの操作感、.vsix で入れた実行ファイルへの Gatekeeper の効き方)
 
 **受け入れ試験**(これが通れば「寄せ集めではない」と言える):testbench の ESP32 で `panic` を起こしたとき、人が何も入力しなくても、
 benchscout がクラッシュに気づく → エージェントを起こす → エージェントがログを読み、引用付きでチップを特定する → 原因の見立てを報告する →

@@ -8,3 +8,5 @@ __pycache__/
 # locally installed agent skills (not part of the project)
 .agents/
 skills-lock.json
+build/
+vscode/bin/

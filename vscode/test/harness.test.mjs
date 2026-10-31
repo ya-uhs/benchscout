@@ -14,7 +14,8 @@ import { strings } from "../out/i18n.js";
 
 const repo = resolve(import.meta.dirname, "../..");
 const win = process.platform === "win32";
-const bin = join(repo, ".venv", win ? "Scripts" : "bin", win ? "benchscout.exe" : "benchscout");
+// BENCHSCOUT_TEST_BIN runs the same tests against the frozen core (vscode/bin/benchscout/benchscout)
+const bin = process.env.BENCHSCOUT_TEST_BIN ?? join(repo, ".venv", win ? "Scripts" : "bin", win ? "benchscout.exe" : "benchscout");
 const py = join(repo, ".venv", win ? "Scripts" : "bin", win ? "python.exe" : "python");
 const s = strings("en");
 

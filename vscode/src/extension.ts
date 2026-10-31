@@ -51,8 +51,17 @@ function which(exe: string): string | undefined {
 function coreCommand(ctx: vscode.ExtensionContext): string {
   const set = vscode.workspace.getConfiguration("benchscout").get<string>("corePath");
   if (set) return set;
-  const bundled = path.join(ctx.extensionPath, "bin", process.platform === "win32" ? "benchscout.exe" : "benchscout");
-  return fs.existsSync(bundled) ? bundled : which("benchscout") ?? "benchscout";
+  // the frozen core shipped inside a platform .vsix (packaging/build_core.py)
+  const exe = process.platform === "win32" ? "benchscout.exe" : "benchscout";
+  const bundled = path.join(ctx.extensionPath, "bin", "benchscout", exe);
+  if (fs.existsSync(bundled)) {
+    // a .vsix is a zip: the executable bit may not survive installation
+    if (process.platform !== "win32") {
+      try { fs.chmodSync(bundled, 0o755); } catch { /* read-only install: try as is */ }
+    }
+    return bundled;
+  }
+  return which("benchscout") ?? "benchscout";
 }
 
 function chosenAgent(): string {
