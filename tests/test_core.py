@@ -322,3 +322,15 @@ def test_setup_puts_the_skill_where_each_agent_reads_it(tmp_path):
     assert (copilot / ".agents/skills/bench-expert/SKILL.md").exists()
     assert not (copilot / ".claude").exists()
     assert json.loads((copilot / ".vscode/mcp.json").read_text())["servers"]["benchscout"]["type"] == "stdio"
+
+
+def test_setup_re_enables_a_server_disabled_earlier(tmp_path):
+    from benchscout.cli import setup_workspace
+
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude/settings.local.json").write_text(json.dumps(
+        {"enabledMcpjsonServers": ["benchscout"], "disabledMcpjsonServers": ["benchscout", "other"]}))
+    setup_workspace(tmp_path, "claude")
+    settings = json.loads((tmp_path / ".claude/settings.local.json").read_text())
+    assert settings["disabledMcpjsonServers"] == ["other"]
+    assert "benchscout" in settings["enabledMcpjsonServers"]

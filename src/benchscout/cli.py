@@ -106,6 +106,9 @@ def setup_workspace(cwd: Path, agent: str = "claude") -> None:
             servers = d.setdefault("enabledMcpjsonServers", [])
             if "benchscout" not in servers:
                 servers.append("benchscout")
+            # setup means "use benchscout here": undo an earlier disable from /mcp, which wins otherwise
+            if "benchscout" in d.get("disabledMcpjsonServers", []):
+                d["disabledMcpjsonServers"].remove("benchscout")
             perms = d.setdefault("permissions", {})
             allow = perms.setdefault("allow", [])
             if "mcp__benchscout" not in allow:
