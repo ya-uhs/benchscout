@@ -1,16 +1,17 @@
 # benchscout
 
-Bench recon for hardware engineers, delivered as a VS Code extension. Open it and it finds what
-is plugged in (FPGA, MCU, instruments), says what each thing is (with evidence) and what is
-unknown, asks which device(s) to look at, and lets the user's own agent work on the chosen ones
-through MCP. Hardware access goes only through the broker, which classifies every action by its
-effect on device state and gates anything not SAFE behind a human approval in the panel.
+Bench recon for hardware engineers, delivered as a VS Code extension. Open it and it lists what
+is plugged in with the raw clues (VID/PID, the name the device reports, IDCODE, `*IDN?`, logs) and
+what it remembers about each device, asks which device(s) to look at, and lets the user's own agent
+work on the chosen ones through MCP. Hardware access goes only through the broker, which
+classifies every action by its effect on device state and gates anything not SAFE behind a human
+approval in the panel.
 
 **The source of truth for intent, direction and decisions is `docs/design.md`** (Japanese).
 Read it before design work. If this file or README.md disagrees with it, design.md wins;
-change design.md (its decision log, section 11) first when the direction changes.
+change design.md (its decision log, section 12) first when the direction changes.
 
-## Layout (design.md section 13)
+## Layout (design.md section 14)
 
 ```
 ~/dev/benchscout/            container only: no CLAUDE.md, not a repo
@@ -23,30 +24,40 @@ load in `bench-session/`, which must look exactly like an end user's workspace.
 
 ## Direction (summary of design.md; do not drift from it)
 
-- **No LLM features of our own, and no agent embedding.** Reasoning, conversation, file operations
-  and shell belong to the user's own agent (Copilot in VS Code, Claude Code, Cline...), which
-  connects over MCP only. Do not build an agent loop, an LLM provider layer or SDK adapters.
+- **The agent is the brain.** Identifying what a device is (searching IDs, reading datasheets)
+  and interpreting logs (a crash, an RTOS) is the user's agent's job (Copilot, Claude Code,
+  OpenAI-compatible APIs incl. local LLMs). benchscout has no LLM features, no agent embedding.
+- **benchscout does four things only** (design.md section 3):
+  1. gets **raw clues** from devices and tools; it keeps **no table of what devices are**
+  2. is the **safety gate**: unknown things get cautious defaults; anything not SAFE waits for a
+     human approval in the panel
+  3. keeps **memory**: what was learned about the bench is written **automatically, without
+     asking**; only memory that loosens safety needs the human to confirm (section 6)
+  4. shows devices, approvals and memory in the **panel**
+- **Unknown stays unknown, without tables**: a name is "identified" only if it came from the device
+  or a tool, or the agent quoted the device's own output and benchscout found that quote in the
+  captured output (`bench_identify`). Otherwise it is a guess and shown apart from the name.
+- **Cautious by default**: deleting every shipped data file must only make benchscout stricter.
+  Loosen only from observation plus a human's confirmation.
+- **No device knowledge in code, and none to collect in data either** (section 5): shipped data is
+  limited to safety rules by kind of action. Device names, log formats and board wiring belong to
+  the agent or to memory.
 - **One entry: the user's agent + MCP. One UI: the VS Code extension panel.** Shipped as .vsix
-  (no Marketplace) with this Python core frozen by PyInstaller inside (design.md section 14).
-- **Two channels.** The extension starts the core as a child process and owns the control
-  channel (its stdin/stdout): approvals, selection. The agent reaches the core only through
-  `benchscout mcp`, a relay with tools and no way to approve (design.md section 3, 15 R3).
-- **Recon and the first read are deterministic** (rules/data), shown at once; the LLM starts
-  when the user picks devices (R4). Expert behaviour ships as one skill source, placed in
-  `.claude/skills/` for Claude Code and `.agents/skills/` for the others; the few rules that must
-  hold are also in the MCP instructions (S4). Calls needing approval wait for the panel (S3). Target agents: Copilot, Claude Code, OpenAI-compatible APIs incl. local LLMs
-  (used through Copilot's own-model support).
-- **One core per VS Code window**, a child of the extension; devices are guarded by per-device
-  locks and OS-level exclusive open; the MCP relay never starts a core (S1).
-- **benchscout owns**: recon and the first read, the broker (safety gate), knowledge and protocol
-  definitions as data, expert behaviour, and the device/approval panel.
-- **Scope is bench observation, diagnosis and hardware operation.** No edit/build/flash workflow,
-  but keep the core domain-agnostic so a dev pack can be added later.
-- **No hardcoding.** Code is mechanism; knowledge, protocols, procedures and settings are data files.
-- **Protocols are three layers**: command dictionary / codec / transport. User-defined commands
-  (e.g. an MCU's built-in shell) are added by config, each declaring its effect.
-- **Not always-on.** It runs while the panel is open, only in folders that opted in (S2).
-- Open review items that may still change the shape: design.md section 15, S1-S6.
+  (no Marketplace) with this Python core frozen by PyInstaller inside (section 15).
+- **Two channels.** The extension starts the core as a child process and owns the control channel
+  (its stdin/stdout): approvals, selection. The agent reaches the core only through
+  `benchscout mcp`, a relay with tools and no way to approve (section 3, 16 R3).
+- **The first read needs no LLM** (raw clues + memory, shown at once); the LLM starts when the user
+  picks devices (R4). Calls needing approval wait for the panel (S3). Expert behaviour ships as one
+  skill source, in `.claude/skills/` for Claude Code and `.agents/skills/` for the others (S4).
+- **One core per VS Code window**; devices are guarded by per-device locks and OS-level exclusive
+  open; the MCP relay never starts a core (S1). Runs only in folders that opted in (S2).
+- **Scope**: bench observation, diagnosis and hardware operation, including writing a bitstream
+  to FPGA SRAM or an image to flash as one DANGEROUS action defined as data. Editing and building
+  code are out of scope.
+- What exists today, what shrinks and what is next: design.md sections 11 and 13. Parts of the
+  current code (shipped usb/boards/logs/idcodes/instruments data, `recon.propose`) predate this
+  direction and are being moved out; do not extend them.
 
 ## Commands
 
@@ -81,7 +92,7 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
   (`test_proposal_reason_matches_policy`).
 - VISA `ASRL` resources are never sent `*IDN?`.
 - Approvals come only from the human control channel, never from the agent's channel, and live
-  in the core's memory (design.md section 15 R3). DANGEROUS grants are bound to
+  in the core's memory (design.md section 16 R3). DANGEROUS grants are bound to
   (action, port, arg) and single use; DISRUPTIVE grants may cover (action, port) for the session
   or a time limit (R8). `test_core.py` covers this.
 - Recon (`bench_scan`) runs SAFE probes only.
@@ -109,32 +120,24 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
   `fixtures/` or a test (e.g. ESP32 native USB resets on open; Tang Nano serials are shared).
 - For identification, prefer the external tool's own database (openFPGALoader, USB ID lists)
   over our tables, and say in the evidence which one decided.
-- Knowledge lives in four layers (design.md section 5) and never in code: existing databases
-  (USB descriptor, openFPGALoader, `*IDN?`), a minimal shipped pack in
-  `src/benchscout/packs/bench/data/*.toml` (safety and the first read only), learned memory, and
-  the agent's own interpretation. Users add their own TOML in `~/.config/benchscout/knowledge/`
-  or `<workspace>/.benchscout/knowledge/`. `knowledge.py` only loads and matches;
-  `test_no_device_knowledge_in_code` keeps it that way. Before adding to the shipped pack, ask:
-  without it, would safety be judged wrong or the first read be missing? If not, it is not layer 2.
+- Knowledge (design.md section 5): names and models come from devices and tools, or from the
+  agent (with a quoted device output); interpretation is the agent's; what was learned goes to
+  memory. Shipped data in `src/benchscout/packs/bench/data/` is only for safety rules by kind of
+  action. `knowledge.py` only loads and matches; `test_no_device_knowledge_in_code` keeps device
+  names out of it. Before adding any device-specific entry anywhere, ask whether the agent or
+  memory should own it instead (almost always yes).
 
-## Open findings from the first real-hardware run (2026-10-31)
+## Real bench (2026-10-31)
 
-Bench: Espressif USB-Serial/JTAG (ESP32 native USB) + Sipeed Tang Nano (GW1N(R)-9C, IDCODE `0x0100481B`).
-Causes are known (design.md section 10).
+Bench: ESP32-S3 on its native USB-Serial/JTAG + Sipeed Tang Nano 9K (GW1N(R)-9C), both running the
+test firmware/bitstream from `testbench/` (known output; see testbench/README.md). Everything learned
+there is in design.md section 10; real outputs are kept in `fixtures/real/` for the tests. Points that
+still shape the code:
 
-- Fixed: ports can be given as id or path; an unknown one lists the known ids and paths.
-- Fixed: `serial.listen arg=9600` listened for 9600 s. Actions now take typed `args`
-  (`actions.py`), e.g. {"seconds": 3, "baud": 9600}, with ranges; bad args are rejected.
-- The fabric UART on the Tang Nano is silent at 9600-230400 baud (checked 2026-10-31), so it is
-  not a common-baud problem; whether the bitstream drives the UART is still unknown.
-- ESP32 native USB: dropping DTR/RTS after opening reset the chip on every (re)open. Opened with
-  the lines left asserted (knowledge `open_lines: asserted`) it did not reset and its firmware
-  output was read (`sample: uptime_ms=...`). One observation; listen stays DISRUPTIVE until
-  confirmed again. No reset means no boot log, so the exact chip is still unknown.
-- Fixed: re-scanning dropped what earlier listens found; the broker now keeps the last output per
-  target and re-applies it, marked with when it was seen.
-- `testbench/` holds test firmware (ESP32-S3) and a bitstream (Tang Nano 9K) with known output;
-  see testbench/README.md. Use them to check benchscout against the real bench.
-- Fixed: MCP clients start the relay with a trimmed environment (no TMPDIR), so the runtime
-  dir now depends only on the home directory. Keep anything the core and relay must agree on
-  independent of environment variables.
+- ESP32-S3 native USB resets when DTR/RTS are dropped after opening; opened with the lines left
+  asserted it does not (seen twice). Ports that vanish (reset, re-enumeration) are reopened.
+- MCP clients start the relay with a trimmed environment (no TMPDIR): anything the core and relay
+  must agree on stays independent of environment variables.
+- PlatformIO's bundled esptool.py v4.5.1 could not write the ESP32-S3 over USB-Serial/JTAG;
+  esptool v5.6.0 could.
+- Claude Code (CLI) keeps a call open through a 95 s approval wait; results say who approved.
