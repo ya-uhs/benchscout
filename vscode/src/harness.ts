@@ -1,0 +1,249 @@
+// The harness: runs the loop and keeps the inbox (design.md section 8, 17).
+//
+//   benchscout proposes what to look at (a question card, no LLM)
+//   -> the human picks or writes an intent
+//   -> benchscout wakes the user's agent with it
+//   -> the agent investigates with benchscout's tools; what needs a human becomes a card
+//   -> the turn ends in a report card with next options
+//
+// No `vscode` import: tested with Node against a real core and fake agents.
+
+import { EventEmitter } from "events";
+import { AgentDriver, PermissionAsk, WakeError } from "./agents/types";
+import { Approval, Bench, CoreClient, Question, describeArgs, deviceViews } from "./core";
+import { Strings } from "./i18n";
+
+export type CardKind = "question" | "confirm" | "report" | "notify";
+
+export interface CardOption { id: string; label: string; primary?: boolean }
+
+export interface Card {
+  id: string;
+  kind: CardKind;
+  time: number;
+  title: string;
+  body: string;
+  detail?: string; // command, port and args
+  effect?: string; // for confirm cards from the broker
+  options: CardOption[];
+  freeText: boolean; // "something else…" box
+  status: "open" | "working" | "closed";
+  answer?: string;
+  progress: string[]; // for report cards: what the agent did, in order
+}
+
+type Answer = { option?: string; text?: string };
+
+export interface HarnessOptions {
+  language: string; // the language the agent should reply in, e.g. "Japanese"
+  maxTurnsPerHour: number; // budget; past it, the harness stops and says so
+}
+
+export class Harness extends EventEmitter {
+  cards: Card[] = [];
+  private handlers = new Map<string, (a: Answer) => unknown>();
+  private driver?: AgentDriver;
+  private turns: number[] = [];
+  private nextId = 1;
+  private askedFirst = false;
+  private busy = false;
+
+  constructor(private core: CoreClient, private makeDriver: () => AgentDriver, private s: Strings,
+              private opts: HarnessOptions = { language: "English", maxTurnsPerHour: 20 }) {
+    super();
+    core.on("scan", (b: Bench) => { if (!this.askedFirst) { this.askedFirst = true; this.firstQuestion(b); } });
+    core.on("approvalRequested", (a: Approval) => this.approvalCard(a));
+    core.on("approvalDecided", (a: Approval) => this.closeRef(`approval:${a.id}`, a.status));
+    core.on("questionAsked", (q: Question) => this.questionCard(q));
+    core.on("questionAnswered", (q: Question) => this.closeRef(`question:${q.id}`, q.choice ?? q.reply ?? ""));
+  }
+
+  /** The human answered a card in the panel. */
+  async answer(cardId: string, a: Answer): Promise<void> {
+    const h = this.handlers.get(cardId);
+    const card = this.cards.find((c) => c.id === cardId);
+    if (!h || !card || card.status !== "open") return;
+    this.handlers.delete(cardId);
+    card.status = "closed";
+    card.answer = a.text ?? card.options.find((o) => o.id === a.option)?.label ?? a.option;
+    this.changed();
+    await h(a);
+  }
+
+  /** Free text typed into the box at the top: always a way to say what you want. */
+  async tell(text: string): Promise<void> {
+    await this.wake(text, text.slice(0, 60));
+  }
+
+  stop(): void {
+    this.driver?.stop();
+  }
+
+  /** A question from the host (e.g. which agent to use), shown like any other card. */
+  ask(title: string, body: string, options: CardOption[], handler: (a: Answer) => unknown, freeText = false): Card {
+    return this.add({ kind: "question", title, body, options, freeText }, handler);
+  }
+
+  /** Forget the running agent (e.g. the human picked another one in settings). */
+  resetAgent(): void {
+    this.driver?.stop();
+    this.driver = undefined;
+  }
+
+  // ---- cards -------------------------------------------------------------------------
+
+  private add(card: Omit<Card, "id" | "time" | "progress" | "status"> & Partial<Card>, handler?: (a: Answer) => unknown, ref?: string): Card {
+    const c: Card = { id: ref ?? `c${this.nextId++}`, time: Date.now(), status: "open", progress: [], ...card };
+    this.cards.push(c);
+    if (handler) this.handlers.set(c.id, handler);
+    this.changed();
+    return c;
+  }
+
+  private closeRef(ref: string, answer: string): void {
+    const c = this.cards.find((x) => x.id === ref);
+    if (c && c.status === "open") {
+      c.status = "closed";
+      c.answer = c.answer ?? answer;
+      this.handlers.delete(ref);
+      this.changed();
+    }
+  }
+
+  private changed(): void {
+    this.emit("changed");
+  }
+
+  /** benchscout's own first question, built from the raw clues without an LLM. */
+  private firstQuestion(bench: Bench): void {
+    const views = deviceViews(bench);
+    if (!views.length) return;
+    const lines = views.map((d) => {
+      const known = d.things.map((t) => t.name || (t.status === "family" ? t.facts[0] : "")).filter(Boolean).join(", ");
+      return `• ${d.name}${known ? ` — ${known}` : ""}${d.alert ? " ⚠" : ""}`;
+    });
+    const ordered = [...views].sort((a, b) => Number(b.alert) - Number(a.alert));
+    const options: CardOption[] = ordered.map((d, i) => ({ id: d.id, label: this.s.lookAt(d.name), primary: i === 0 }));
+    if (views.length > 1) options.push({ id: "*all", label: this.s.lookAll });
+    this.add({ kind: "question", title: this.s.firstAsk, body: `${this.s.firstQuestion}\n${lines.join("\n")}`, options, freeText: true },
+      async (a) => {
+        if (a.text) return this.wake(a.text, a.text.slice(0, 60));
+        const ids = a.option === "*all" ? views.map((d) => d.id) : [a.option!];
+        await this.core.select(ids);
+        const names = views.filter((d) => ids.includes(d.id)).map((d) => d.name).join(", ");
+        return this.wake(`Look at ${names}: what they are, what they are doing, and what to check next.`, names);
+      });
+  }
+
+  private approvalCard(a: Approval): void {
+    const options: CardOption[] = [{ id: "once", label: this.s.allowOnce, primary: true }];
+    if (a.effect === "disruptive") options.push({ id: "session", label: this.s.allowSession });
+    options.push({ id: "deny", label: this.s.deny });
+    this.add({
+      kind: "confirm", title: this.s.actions[a.action] ?? a.action, body: a.impact.reason,
+      detail: `${a.port} · ${describeArgs(a.args)}${a.impact.affected_ports.length ? ` · ${this.s.alsoAffects}: ${a.impact.affected_ports.join(", ")}` : ""}`,
+      effect: a.effect, options, freeText: false,
+    }, (ans) => this.core.decide(a.id, ans.option !== "deny", ans.option === "session" ? "session" : "once").catch(() => undefined),
+    `approval:${a.id}`);
+  }
+
+  private questionCard(q: Question): void {
+    if (q.kind === "devices") {
+      const names = Object.values(q.data.names ?? {}).join(", ");
+      this.add({
+        kind: "question", title: this.s.agentWantsDevices(names), body: q.data.reason ?? "",
+        options: [{ id: "allow", label: this.s.allowDevices, primary: true }, { id: "deny", label: this.s.denyDevices }], freeText: true,
+      }, (a) => this.core.answer(q.id, a.text ? null : a.option!, a.text).catch(() => undefined), `question:${q.id}`);
+      return;
+    }
+    this.add({
+      kind: "question", title: this.s.agentAsks, body: q.text,
+      options: q.options.map((o, i) => ({ id: o, label: o, primary: i === 0 })), freeText: true,
+    }, (a) => this.core.answer(q.id, a.text ? null : a.option!, a.text).catch(() => undefined), `question:${q.id}`);
+  }
+
+  // ---- waking the agent ---------------------------------------------------------------
+
+  private overBudget(): boolean {
+    const hourAgo = Date.now() - 3600_000;
+    this.turns = this.turns.filter((t) => t > hourAgo);
+    return this.turns.length >= this.opts.maxTurnsPerHour;
+  }
+
+  private async wake(request: string, title: string): Promise<void> {
+    if (this.overBudget()) {
+      this.add({ kind: "notify", title: this.s.budget(this.opts.maxTurnsPerHour), body: "", options: [], freeText: false });
+      return;
+    }
+    if (this.busy) {
+      // one turn at a time; the request is not lost, it goes to the agent next
+      this.once("idle", () => void this.wake(request, title));
+      return;
+    }
+    this.busy = true;
+    const report = this.add({ kind: "report", title: `${this.s.investigating}: ${title}`, body: this.s.working, options: [], freeText: false, status: "working" });
+    try {
+      if (!this.driver) {
+        const d = this.makeDriver();
+        d.onEvent = (e) => {
+          if (e.kind === "tool") report.progress.push(`🔧 ${e.title}${e.status ? ` (${e.status})` : ""}`);
+          else if (e.kind === "text") report.body = (report.body === this.s.working ? "" : report.body) + e.text;
+          this.changed();
+        };
+        d.onPermission = (p) => this.permission(p);
+        try {
+          await d.start();
+        } catch (e) {
+          const w = e instanceof WakeError ? e : new WakeError(String(e), "");
+          report.status = "closed";
+          report.body = "";
+          this.add({ kind: "notify", title: this.s.wakeFailed(d.label), body: w.message, detail: w.fix ? `${this.s.wakeFix}: ${w.fix}` : undefined, options: [], freeText: false });
+          return; // never fall back to another agent or LLM
+        }
+        this.driver = d;
+      }
+      this.turns.push(Date.now());
+      const r = await this.driver.prompt(this.instructions(request));
+      report.status = "open";
+      report.title = `${this.s.report}: ${title}`;
+      report.body = r.text.trim() || report.body;
+      report.options = [{ id: "continue", label: this.s.continueIt, primary: true }, { id: "done", label: this.s.doneIt }];
+      report.freeText = true;
+      this.handlers.set(report.id, (a) => (a.text ? this.wake(a.text, a.text.slice(0, 60)) : a.option === "continue" ? this.wake("Continue.", title) : undefined));
+    } catch (e) {
+      report.status = "closed";
+      const w = e instanceof WakeError ? e : new WakeError(String(e), "");
+      this.add({ kind: "notify", title: this.s.wakeFailed(this.driver?.label ?? "agent"), body: w.message, detail: w.fix || undefined, options: [], freeText: false });
+      this.driver?.stop();
+      this.driver = undefined;
+    } finally {
+      this.busy = false;
+      this.changed();
+      this.emit("idle");
+    }
+  }
+
+  /** benchscout's own tools are gated by the broker, so the agent's ask about them is answered here. */
+  private permission(p: PermissionAsk): Promise<string> {
+    const allow = p.options.find((o) => o.kind === "allow_once") ?? p.options.find((o) => o.kind !== "reject");
+    if (p.benchscout && allow) return Promise.resolve(allow.id);
+    return new Promise((resolve) => {
+      this.add({
+        kind: "confirm", title: `${this.s.agentWantsTool}: ${p.title}`, body: "", detail: p.detail,
+        options: p.options.map((o, i) => ({ id: o.id, primary: i === 0,
+          label: o.kind === "allow_once" ? this.s.allowOnce : o.kind === "allow_always" ? this.s.allowAlways : this.s.deny })), freeText: false,
+      }, (a) => resolve(a.option ?? p.options.find((o) => o.kind === "reject")?.id ?? "reject"));
+    });
+  }
+
+  private instructions(request: string): string {
+    return [
+      request,
+      "",
+      "Use the benchscout MCP tools for anything on the bench (start with bench_scan). Name a part only with a",
+      "quote of the device's own output. When you need a decision, call ask_user with short options; if you",
+      "need a device that is not selected, call request_devices. Keep the report short: what you found, the",
+      `evidence, and what to check next. Reply in ${this.opts.language}.`,
+    ].join("\n");
+  }
+}

@@ -28,12 +28,19 @@ export interface Approval {
   impact: { reason: string; affected_ports: string[]; disturbs: string[] };
 }
 
+export interface Question {
+  id: string; text: string; options: string[]; status: string; choice: string | null; reply: string | null;
+  kind: "question" | "devices"; data: { devices?: string[]; names?: Record<string, string>; reason?: string };
+}
+
 export interface CoreEvents {
   ready: [];
   scan: [Bench, Proposal[]];
   selection: [string[], Record<string, { workspace?: string; pid?: number }>];
   approvalRequested: [Approval];
   approvalDecided: [Approval];
+  questionAsked: [Question];
+  questionAnswered: [Question];
   exit: [number | null, string];
 }
 
@@ -44,6 +51,7 @@ export class CoreClient extends EventEmitter {
   private stderr = "";
   selected: string[] = [];
   pending = new Map<string, Approval>();
+  questions = new Map<string, Question>();
 
   constructor(private command: string, private workspace: string, private env: NodeJS.ProcessEnv = process.env) {
     super();
@@ -75,6 +83,9 @@ export class CoreClient extends EventEmitter {
   decide(approvalId: string, granted: boolean, scope: "once" | "session" | number = "once"): Promise<any> {
     return this.call("decide", { approval_id: approvalId, granted, scope });
   }
+  answer(questionId: string, choice: string | null, reply?: string): Promise<any> {
+    return this.call("answer", { question_id: questionId, choice, reply: reply ?? null });
+  }
 
   private call(method: string, params: object = {}): Promise<any> {
     if (!this.running) return Promise.reject(new Error("benchscout core is not running"));
@@ -99,6 +110,14 @@ export class CoreClient extends EventEmitter {
       case "approval_decided":
         this.pending.delete(msg.approval.id);
         this.emit("approvalDecided", msg.approval);
+        return;
+      case "question_asked":
+        this.questions.set(msg.question.id, msg.question);
+        this.emit("questionAsked", msg.question);
+        return;
+      case "question_answered":
+        this.questions.delete(msg.question.id);
+        this.emit("questionAnswered", msg.question);
         return;
     }
     if (msg.id === undefined) return;

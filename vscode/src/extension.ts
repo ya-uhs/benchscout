@@ -1,83 +1,108 @@
-// benchscout VS Code extension: the human's side of the bench (design.md section 3, 7, 15).
+// benchscout VS Code extension: the harness and its inbox (design.md section 3, 8, 17).
 //
 // - starts the core for this folder as a child process and owns its control channel
-// - shows the devices and asks the person before anything changes device state
-// - registers the MCP server so the person's own agent (Copilot, ...) can use the bench
-// No LLM here and no agent embedded: the agent is whatever the person already uses.
+// - proposes what to look at, wakes the agent the human chose (Claude Code via `claude -p`,
+//   others via ACP), and turns everything that needs the human into inbox cards
+// - registers the MCP server so the person's own agent can also use the bench from its chat
+// No LLM here: the agent is whatever the person already uses, signed in by them.
 
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
-import { Approval, Bench, CoreClient, Proposal, describeArgs, deviceViews } from "./core";
+import { AcpDriver, COPILOT } from "./agents/acp";
+import { ClaudeDriver } from "./agents/claude";
+import { AgentDriver, McpRelay, WakeError } from "./agents/types";
+import { Bench, CoreClient } from "./core";
+import { Card, Harness } from "./harness";
 import { strings } from "./i18n";
-import { PanelState, PendingView, html } from "./panel";
+import { PanelState, html } from "./panel";
 
 const s = strings(vscode.env.language);
+const LANGUAGE = vscode.env.language.startsWith("ja") ? "Japanese" : "English";
+
+const AGENTS: Record<string, { label: string; exe: string }> = {
+  copilot: { label: "GitHub Copilot CLI", exe: "copilot" },
+  claude: { label: "Claude Code", exe: "claude" },
+};
 
 let core: CoreClient | undefined;
+let harness: Harness | undefined;
 let bench: Bench | undefined;
-let proposals: Proposal[] = [];
-const history: string[] = [];
 let view: vscode.WebviewView | undefined;
 let status: vscode.StatusBarItem;
+const notified = new Set<string>();
 const mcpChanged = new vscode.EventEmitter<void>();
 
 function folder(): string | undefined {
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
 
-// Which benchscout to run: the setting, then the copy bundled in the .vsix, then PATH,
-// then ~/.local/bin (a Dock-launched VS Code on macOS often lacks it on PATH).
+/** An executable by name: PATH, then the usual per-user places (a Dock-launched VS Code on macOS lacks them on PATH). */
+function which(exe: string): string | undefined {
+  const name = process.platform === "win32" ? `${exe}.exe` : exe;
+  const dirs = [...(process.env.PATH ?? "").split(path.delimiter), path.join(os.homedir(), ".local", "bin"), "/opt/homebrew/bin", "/usr/local/bin"];
+  for (const d of dirs) {
+    if (d && fs.existsSync(path.join(d, name))) return path.join(d, name);
+  }
+  return undefined;
+}
+
 function coreCommand(ctx: vscode.ExtensionContext): string {
   const set = vscode.workspace.getConfiguration("benchscout").get<string>("corePath");
   if (set) return set;
-  const exe = process.platform === "win32" ? "benchscout.exe" : "benchscout";
-  const bundled = path.join(ctx.extensionPath, "bin", exe);
-  if (fs.existsSync(bundled)) return bundled;
-  for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
-    if (dir && fs.existsSync(path.join(dir, exe))) return path.join(dir, exe);
-  }
-  const local = path.join(os.homedir(), ".local", "bin", exe);
-  return fs.existsSync(local) ? local : exe;
+  const bundled = path.join(ctx.extensionPath, "bin", process.platform === "win32" ? "benchscout.exe" : "benchscout");
+  return fs.existsSync(bundled) ? bundled : which("benchscout") ?? "benchscout";
 }
 
-function note(text: string): void {
-  history.push(`${new Date().toLocaleTimeString()}  ${text}`);
-  if (history.length > 50) history.shift();
+function chosenAgent(): string {
+  return vscode.workspace.getConfiguration("benchscout").get<string>("agent") ?? "";
 }
 
-function pendingViews(): PendingView[] {
-  return [...(core?.pending.values() ?? [])].map((a: Approval) => ({
-    id: a.id,
-    effect: a.effect,
-    what: s.actions[a.action] ?? a.action,
-    port: a.port,
-    args: describeArgs(a.args),
-    why: a.impact.reason,
-    also: a.impact.affected_ports,
-  }));
+function makeDriver(ctx: vscode.ExtensionContext, ws: string): AgentDriver {
+  const relay: McpRelay = { command: coreCommand(ctx), args: ["mcp", "--workspace", ws], env: {} };
+  const id = chosenAgent();
+  if (id === "claude") return new ClaudeDriver(ws, relay, which("claude") ?? "claude");
+  if (id === "copilot") return new AcpDriver({ ...COPILOT, command: which("copilot") ?? "copilot" }, ws, relay);
+  // Nothing chosen: say so instead of picking one (design.md section 17: never switch on our own).
+  return {
+    label: "benchscout", onEvent: () => {}, onPermission: async () => "reject",
+    start: async () => { throw new WakeError("No agent is chosen", s.chooseAgent); },
+    prompt: async () => ({ stopReason: "error", text: "" }), stop: () => {},
+  };
+}
+
+function askForAgent(): void {
+  const found = Object.entries(AGENTS).filter(([, a]) => which(a.exe));
+  if (!harness || chosenAgent() || !found.length) return;
+  harness.ask(s.chooseAgent, found.map(([, a]) => a.label).join(" / "),
+    found.map(([id, a], i) => ({ id, label: a.label, primary: i === 0 })),
+    async (a) => {
+      await vscode.workspace.getConfiguration("benchscout").update("agent", a.option, vscode.ConfigurationTarget.Global);
+      harness?.resetAgent();
+      refresh();
+    });
 }
 
 function refresh(): void {
-  const n = core?.pending.size ?? 0;
-  status.text = n ? `$(bell-dot) ${s.statusWaiting(n)}` : `$(circuit-board) ${s.statusIdle}`;
-  status.backgroundColor = n ? new vscode.ThemeColor("statusBarItem.warningBackground") : undefined;
+  const cards: Card[] = harness?.cards ?? [];
+  const waiting = cards.filter((c) => c.status === "open" && (c.kind === "confirm" || c.kind === "question")).length;
+  status.text = waiting ? `$(bell-dot) ${s.statusWaiting(waiting)}` : `$(circuit-board) ${s.statusIdle}`;
+  status.backgroundColor = waiting ? new vscode.ThemeColor("statusBarItem.warningBackground") : undefined;
+  for (const c of cards) {
+    if (c.kind === "confirm" && c.status === "open" && !notified.has(c.id)) {
+      notified.add(c.id);
+      vscode.window.showWarningMessage(`benchscout: ${c.title}`, s.notifyShow).then((p) => p && vscode.commands.executeCommand("benchscout.panel.focus"));
+    }
+  }
   if (!view) return;
-  const { statusWaiting, ...plain } = s;
-  const state: PanelState = {
-    running: !!core?.running,
-    devices: bench ? deviceViews(bench) : [],
-    selected: core?.selected ?? [],
-    pending: pendingViews(),
-    proposals,
-    history,
-    strings: plain,
-  };
+  const { statusWaiting, lookAt, wakeFailed, budget, agentWantsDevices, ...plain } = s;
+  const devices = (bench?.devices ?? []).map((d) => d.name + (core?.selected.includes(d.id) ? " ✓" : ""));
+  const state: PanelState = { running: !!core?.running, agent: AGENTS[chosenAgent()]?.label ?? "", cards, devices, strings: plain };
   view.webview.postMessage({ type: "state", state });
 }
 
-async function startCore(ctx: vscode.ExtensionContext): Promise<void> {
+async function start(ctx: vscode.ExtensionContext): Promise<void> {
   const ws = folder();
   if (!ws) {
     vscode.window.showWarningMessage(s.noFolder);
@@ -87,43 +112,21 @@ async function startCore(ctx: vscode.ExtensionContext): Promise<void> {
   fs.mkdirSync(path.join(ws, ".benchscout"), { recursive: true }); // next time, open on its own (S2)
   const c = new CoreClient(coreCommand(ctx), ws);
   core = c;
-  c.on("scan", (b: Bench, p: Proposal[]) => { bench = b; proposals = p; refresh(); });
-  c.on("selection", (sel: string[], busy: Record<string, { workspace?: string }>) => {
-    const names = sel.map((id) => bench?.devices.find((d) => d.id === id)?.name ?? id);
-    note(`${s.selectedNow}: ${names.join(", ") || "-"}`);
-    for (const [id, h] of Object.entries(busy)) note(`${bench?.devices.find((d) => d.id === id)?.name ?? id}: ${s.inUse} (${h.workspace ?? ""})`);
-    refresh();
-  });
-  c.on("approvalRequested", async (a: Approval) => {
-    refresh();
-    const what = `${s.actions[a.action] ?? a.action} (${a.port})`;
-    const pick = await vscode.window.showWarningMessage(`benchscout: ${what}. ${a.impact.reason}`,
-      s.notifyAllow, s.notifyDeny, s.notifyShow);
-    if (pick === s.notifyAllow) await decide(a.id, true, "once");
-    else if (pick === s.notifyDeny) await decide(a.id, false, "once");
-    else if (pick === s.notifyShow) vscode.commands.executeCommand("benchscout.panel.focus");
-  });
-  c.on("approvalDecided", (a: Approval) => {
-    const word = a.status === "granted" ? s.granted : a.status === "denied" ? s.denied : s.withdrawn;
-    note(`${s.actions[a.action] ?? a.action} (${a.port}): ${word}`);
-    refresh();
-  });
+  const max = vscode.workspace.getConfiguration("benchscout").get<number>("maxTurnsPerHour") ?? 20;
+  harness?.stop();
+  harness = new Harness(c, () => makeDriver(ctx, ws), s, { language: LANGUAGE, maxTurnsPerHour: max });
+  harness.on("changed", refresh);
+  c.on("scan", (b: Bench) => { bench = b; refresh(); });
+  c.on("selection", refresh);
   c.on("exit", (code: number | null, err: string) => {
     if (core === c) core = undefined;
     if (code !== 0) vscode.window.showErrorMessage(`${s.coreMissing}${err ? "\n" + err.split("\n").pop() : ""}`);
     refresh();
   });
   c.start();
+  askForAgent();
   mcpChanged.fire();
   refresh();
-}
-
-async function decide(id: string, granted: boolean, scope: "once" | "session"): Promise<void> {
-  try {
-    await core?.decide(id, granted, scope);
-  } catch (e) {
-    vscode.window.showWarningMessage(String((e as Error).message)); // e.g. already decided in the panel
-  }
 }
 
 export function activate(ctx: vscode.ExtensionContext): void {
@@ -142,25 +145,17 @@ export function activate(ctx: vscode.ExtensionContext): void {
       v.webview.onDidReceiveMessage(async (m) => {
         switch (m.type) {
           case "ready": refresh(); break;
-          case "start": await startCore(ctx); break;
-          case "stop": core?.stop(); break;
+          case "start": await start(ctx); break;
+          case "stop": harness?.stop(); core?.stop(); break;
           case "rescan": await core?.scan().catch(() => undefined); break;
-          case "select": await core?.select(m.devices).catch((e: Error) => vscode.window.showWarningMessage(e.message)); break;
-          case "decide": await decide(m.id, m.granted, m.scope ?? "once"); break;
-          case "chat":
-            await vscode.commands.executeCommand("workbench.action.chat.open", { query: s.prompt }).then(undefined,
-              () => vscode.env.clipboard.writeText(s.prompt).then(() => vscode.window.showInformationMessage(s.copied)));
-            break;
-          case "copy":
-            await vscode.env.clipboard.writeText(s.prompt);
-            vscode.window.showInformationMessage(s.copied);
-            break;
+          case "answer": await harness?.answer(m.id, { option: m.option, text: m.text }); break;
+          case "tell": await harness?.tell(m.text); break;
         }
       });
     },
-  }));
+  }, { webviewOptions: { retainContextWhenHidden: true } }));
 
-  // The person's own agent finds the bench here (Copilot). Claude Code reads .mcp.json instead.
+  // The person's own agent can also use the bench from its chat (Copilot in VS Code).
   ctx.subscriptions.push(vscode.lm.registerMcpServerDefinitionProvider("benchscout", {
     onDidChangeMcpServerDefinitions: mcpChanged.event,
     provideMcpServerDefinitions: () => {
@@ -171,19 +166,21 @@ export function activate(ctx: vscode.ExtensionContext): void {
 
   ctx.subscriptions.push(
     vscode.commands.registerCommand("benchscout.start", async () => {
-      await startCore(ctx);
+      await start(ctx);
       vscode.commands.executeCommand("benchscout.panel.focus");
     }),
     vscode.commands.registerCommand("benchscout.rescan", () => core?.scan()),
-    vscode.commands.registerCommand("benchscout.stop", () => core?.stop()),
-    { dispose: () => core?.stop() },
+    vscode.commands.registerCommand("benchscout.stop", () => { harness?.stop(); core?.stop(); }),
+    vscode.workspace.onDidChangeConfiguration((e) => { if (e.affectsConfiguration("benchscout.agent")) { harness?.resetAgent(); refresh(); } }),
+    { dispose: () => { harness?.stop(); core?.stop(); } },
   );
 
   // Opened on its own only in folders that already use benchscout (design.md 15 S2).
-  if (folder() && fs.existsSync(path.join(folder()!, ".benchscout"))) startCore(ctx);
+  if (folder() && fs.existsSync(path.join(folder()!, ".benchscout"))) void start(ctx);
   refresh();
 }
 
 export function deactivate(): void {
+  harness?.stop();
   core?.stop(); // closing the control channel stops the core and frees the devices
 }
