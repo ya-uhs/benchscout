@@ -10,7 +10,7 @@
 
 import { EventEmitter } from "events";
 import { AgentDriver, PermissionAsk, WakeError } from "./agents/types";
-import { Approval, Bench, CoreClient, Question, describeArgs, deviceViews } from "./core";
+import { Approval, Bench, CoreClient, DeviceEvent, Question, describeArgs, deviceViews } from "./core";
 import { Strings } from "./i18n";
 
 export type CardKind = "question" | "confirm" | "report" | "notify";
@@ -37,6 +37,8 @@ type Answer = { option?: string; text?: string };
 export interface HarnessOptions {
   language: string; // the language the agent should reply in, e.g. "Japanese"
   maxTurnsPerHour: number; // budget; past it, the harness stops and says so
+  autonomy?: "auto" | "suggest"; // auto: wake the agent on events; suggest: only offer to (design.md section 17)
+  wakeCooldownMs?: number; // per device: do not wake again for this long after waking for an event
 }
 
 export class Harness extends EventEmitter {
@@ -46,6 +48,7 @@ export class Harness extends EventEmitter {
   private turns: number[] = [];
   private nextId = 1;
   private askedFirst = false;
+  private lastWake = new Map<string, number>(); // device -> when the agent was last woken for it
   private busy = false;
 
   constructor(private core: CoreClient, private makeDriver: () => AgentDriver, private s: Strings,
@@ -56,6 +59,7 @@ export class Harness extends EventEmitter {
     core.on("approvalDecided", (a: Approval) => this.closeRef(`approval:${a.id}`, a.status));
     core.on("questionAsked", (q: Question) => this.questionCard(q));
     core.on("questionAnswered", (q: Question) => this.closeRef(`question:${q.id}`, q.choice ?? q.reply ?? ""));
+    core.on("deviceEvent", (e: DeviceEvent) => this.deviceEvent(e));
   }
 
   /** The human answered a card in the panel. */
@@ -160,6 +164,41 @@ export class Harness extends EventEmitter {
       kind: "question", title: this.s.agentAsks, body: q.text,
       options: q.options.map((o, i) => ({ id: o, label: o, primary: i === 0 })), freeText: true,
     }, (a) => this.core.answer(q.id, a.text ? null : a.option!, a.text).catch(() => undefined), `question:${q.id}`);
+  }
+
+  // ---- noticing: events from the watched devices -------------------------------------------
+
+  private deviceEvent(e: DeviceEvent): void {
+    const name = e.device_name ?? e.port;
+    const dev = e.device ?? e.port;
+    const log = e.log ? `${this.s.logAt}: ${e.log}` : undefined;
+    if (e.kind === "vanished") {
+      this.add({ kind: "notify", title: this.s.deviceVanished(name), body: e.what, options: [], freeText: false, status: "closed" });
+      return;
+    }
+    if (e.kind === "gone" || e.kind === "unwatchable") {
+      this.add({ kind: "notify", title: this.s.deviceGone(name), body: e.what, detail: log, options: [], freeText: false });
+      return;
+    }
+    const title = e.kind === "alert" ? this.s.deviceAlert(name) : this.s.deviceReset(name);
+    const body = e.kind === "alert" ? `${e.what}${e.line ? `\n> ${e.line}` : ""}` : e.what;
+    const request = [
+      `benchscout noticed this on ${name} (${e.port}): ${e.kind === "alert" ? e.what : "the device reset (its port vanished and came back)"}.`,
+      e.line ? `The line: ${e.line}` : "",
+      e.log ? `Everything the port printed is in ${e.log} (read the end of it).` : "",
+      "Find out what happened and why, with evidence from the device's output.",
+    ].filter(Boolean).join("\n");
+    const recent = Date.now() - (this.lastWake.get(dev) ?? 0) < (this.opts.wakeCooldownMs ?? 60_000);
+    if ((this.opts.autonomy ?? "auto") === "auto" && !recent) {
+      this.add({ kind: "notify", title, body, detail: log, options: [], freeText: false, status: "closed" });
+      this.lastWake.set(dev, Date.now());
+      void this.wake(request, title);
+      return;
+    }
+    // suggest mode, or woken for this device moments ago: offer, do not act
+    this.add({ kind: "question", title, body, detail: log, freeText: true,
+      options: [{ id: "go", label: this.s.investigate, primary: true }, { id: "ignore", label: this.s.ignore }] },
+      (a) => (a.text ? this.wake(`${request}\n\nThe human adds: ${a.text}`, title) : a.option === "go" ? this.wake(request, title) : undefined));
   }
 
   // ---- waking the agent ---------------------------------------------------------------

@@ -86,6 +86,19 @@
           "default": 20,
           "minimum": 1,
           "description": "Budget: at most this many agent turns per hour; past it, benchscout pauses and says so."
+        },
+        "benchscout.autonomy": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "suggest"
+          ],
+          "default": "auto",
+          "enumDescriptions": [
+            "Wake the agent when a watched device crashes or resets",
+            "Only offer to investigate; the human decides"
+          ],
+          "description": "What benchscout does when it notices something on a watched device."
         }
       }
     }

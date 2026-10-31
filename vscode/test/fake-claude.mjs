@@ -15,6 +15,12 @@ readline.createInterface({ input: process.stdin }).on("line", async (line) => {
   const m = JSON.parse(line);
   if (m.type === "control_response") return waiting.get(m.response.request_id)?.(m.response.response.behavior);
   if (m.type !== "user") return;
+  if (process.env.FAKE_QUIET) {  // no permission asks: just say what it was asked
+    const first = String(m.message.content).split("\n")[0];
+    out({ type: "assistant", message: { content: [{ type: "text", text: `got: ${first}` }] } });
+    out({ type: "result", subtype: "success", is_error: false, result: `got: ${first}` });
+    return;
+  }
   const a = await ask("mcp__benchscout__bench_scan", {});
   const b = await ask("Bash", { command: "rm -rf build" });
   out({ type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "mcp__benchscout__bench_scan" }, { type: "text", text: `bench_scan:${a} shell:${b}` }] } });

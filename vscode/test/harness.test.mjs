@@ -110,3 +110,48 @@ test("broker approvals and agent questions become cards; answers go back through
     assert.equal(ans.reply, "the probe is on VBAT");
   } finally { done(); }
 });
+
+import { writeFileSync, readFileSync } from "node:fs";
+
+async function streamingBench(autonomy) {
+  const root = mkdtempSync(join(win ? tmpdir() : "/tmp", "bsw"));
+  const data = JSON.parse(readFileSync(join(repo, "fixtures", "bench_example.json"), "utf8"));
+  data.streams = { "/dev/cu.usbmodem21403": [{ after: 0.5, text: "boot ok\n" }, { after: 1.0, text: "abort() was called at PC 0x42001c85 on core 1\n" }] };
+  const fx = join(root, "bench.json");
+  writeFileSync(fx, JSON.stringify(data));
+  const env = { ...process.env, BENCHSCOUT_FIXTURE: fx, BENCHSCOUT_RUNTIME: root };
+  const core = new CoreClient(bin, root, env);
+  const relay = { command: bin, args: ["mcp", "--workspace", root], env: { BENCHSCOUT_RUNTIME: root } };
+  process.env.FAKE_QUIET = "1";
+  const h = new Harness(core, () => new ClaudeDriver(root, relay, join(import.meta.dirname, "fake-claude.mjs")), s,
+    { language: "English", maxTurnsPerHour: 5, autonomy });
+  core.start();
+  return { core, h, done: () => { delete process.env.FAKE_QUIET; h.stop(); core.stop(); rmSync(root, { recursive: true, force: true }); } };
+}
+
+test("auto: a crash on a watched device wakes the agent with the line, without the human typing anything", async () => {
+  const { h, done } = await streamingBench("auto");
+  try {
+    const first = await until(h, (c) => c.kind === "question");
+    const st = first.options.find((o) => o.label.includes("STLINK"));
+    await h.answer(first.id, { option: st.id });               // the only human action: pick the device
+    const alert = await until(h, (c) => c.kind === "notify" && /something to look at/.test(c.title));
+    assert.match(alert.body, /abort\(\) was called at PC 0x42001c85/);
+    assert.match(alert.detail, /\.benchscout\/logs\/serial_usbmodem21403\.log/);
+    const report = await until(h, (c) => c.kind === "report" && c.status === "open" && /something to look at/.test(c.title));
+    assert.match(report.body, /got: benchscout noticed this on STLINK-V3/);
+  } finally { done(); }
+});
+
+test("suggest: a crash only offers to investigate", async () => {
+  const { h, done } = await streamingBench("suggest");
+  try {
+    const first = await until(h, (c) => c.kind === "question");
+    const st = first.options.find((o) => o.label.includes("STLINK"));
+    await h.answer(first.id, { option: st.id });
+    await until(h, (c) => c.kind === "report" && c.status === "open");  // the selection itself wakes the agent once
+    const offer = await until(h, (c) => c.kind === "question" && /something to look at/.test(c.title));
+    assert.deepEqual(offer.options.map((o) => o.id), ["go", "ignore"]);
+    assert.equal(h.cards.filter((c) => c.kind === "report" && /something to look at/.test(c.title)).length, 0);
+  } finally { done(); }
+});

@@ -114,7 +114,8 @@ async function start(ctx: vscode.ExtensionContext): Promise<void> {
   core = c;
   const max = vscode.workspace.getConfiguration("benchscout").get<number>("maxTurnsPerHour") ?? 20;
   harness?.stop();
-  harness = new Harness(c, () => makeDriver(ctx, ws), s, { language: LANGUAGE, maxTurnsPerHour: max });
+  const autonomy = vscode.workspace.getConfiguration("benchscout").get<"auto" | "suggest">("autonomy") ?? "auto";
+  harness = new Harness(c, () => makeDriver(ctx, ws), s, { language: LANGUAGE, maxTurnsPerHour: max, autonomy });
   harness.on("changed", refresh);
   c.on("scan", (b: Bench) => { bench = b; refresh(); });
   c.on("selection", refresh);

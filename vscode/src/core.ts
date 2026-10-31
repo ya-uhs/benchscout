@@ -33,6 +33,11 @@ export interface Question {
   kind: "question" | "devices"; data: { devices?: string[]; names?: Record<string, string>; reason?: string };
 }
 
+export interface DeviceEvent {
+  port: string; device?: string; device_name?: string;
+  kind: "alert" | "vanished" | "returned" | "gone" | "unwatchable"; what: string; line?: string | null; log?: string; time?: number;
+}
+
 export interface CoreEvents {
   ready: [];
   scan: [Bench, Proposal[]];
@@ -40,6 +45,7 @@ export interface CoreEvents {
   approvalRequested: [Approval];
   approvalDecided: [Approval];
   questionAsked: [Question];
+  deviceEvent: [DeviceEvent];
   questionAnswered: [Question];
   exit: [number | null, string];
 }
@@ -110,6 +116,9 @@ export class CoreClient extends EventEmitter {
       case "approval_decided":
         this.pending.delete(msg.approval.id);
         this.emit("approvalDecided", msg.approval);
+        return;
+      case "device_event":
+        this.emit("deviceEvent", msg as DeviceEvent);
         return;
       case "question_asked":
         this.questions.set(msg.question.id, msg.question);
