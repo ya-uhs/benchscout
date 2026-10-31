@@ -12,13 +12,13 @@ from __future__ import annotations
 
 import json
 import os
-import socket
+from multiprocessing.connection import Client
 from pathlib import Path
 
 import anyio
 from mcp.server.mcpserver import MCPServer
 
-from .runtime import socket_path
+from .runtime import address_family, agent_address
 
 # How long a call that needs approval waits for the human in the panel (S3). Kept under
 # typical client tool timeouts; on expiry the agent gets approval_required and can retry.
@@ -42,31 +42,23 @@ NO_CORE = ("No benchscout core is running for this folder. Open the benchscout p
 
 
 class CoreClient:
-    def __init__(self, sock: Path):
-        self.sock = sock
+    def __init__(self, address: str | Path):
+        self.address = str(address)
 
     def call(self, method: str, params: dict | None = None, timeout: float = 30.0) -> dict:
         """One request on a fresh connection. Returns {"result": ...} or {"error": ...}."""
-        s = socket.socket(socket.AF_UNIX)
-        s.settimeout(timeout)
         try:
-            s.connect(str(self.sock))
+            conn = Client(self.address, address_family(self.address))
         except OSError:
-            s.close()
             return {"error": NO_CORE}
-        try:
-            s.sendall((json.dumps({"id": 1, "method": method, "params": params or {}}) + "\n").encode())
-            buf = b""
-            while not buf.endswith(b"\n"):
-                chunk = s.recv(65536)
-                if not chunk:
-                    return {"error": "the benchscout core closed the connection"}
-                buf += chunk
-            return json.loads(buf)
-        except TimeoutError:
-            return {"error": f"the benchscout core did not answer within {timeout:.0f} s"}
-        finally:
-            s.close()
+        with conn:
+            try:
+                conn.send_bytes(json.dumps({"id": 1, "method": method, "params": params or {}}).encode())
+                if not conn.poll(timeout):
+                    return {"error": f"the benchscout core did not answer within {timeout:.0f} s"}
+                return json.loads(conn.recv_bytes())
+            except (EOFError, OSError):
+                return {"error": "the benchscout core closed the connection"}
 
 
 def build_server(client: CoreClient, language: str = "English") -> MCPServer:
@@ -126,6 +118,5 @@ def build_server(client: CoreClient, language: str = "English") -> MCPServer:
 def main(workspace: str | None = None) -> None:
     from .cli import user_language
 
-    sock = Path(os.environ["BENCHSCOUT_SOCKET"]) if os.environ.get("BENCHSCOUT_SOCKET") else \
-        socket_path(Path(workspace or os.getcwd()))
-    build_server(CoreClient(sock), user_language()).run()
+    address = os.environ.get("BENCHSCOUT_ADDRESS") or agent_address(Path(workspace or os.getcwd()))[0]
+    build_server(CoreClient(address), user_language()).run()

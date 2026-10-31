@@ -30,8 +30,12 @@ SKILL_DIRS = {"claude": ".claude/skills", "copilot": ".agents/skills"}
 
 
 def user_language(explicit: str | None = None) -> str:
-    """--lang, then BENCHSCOUT_LANG, then LANG/LC_ALL, then the macOS UI language."""
+    """--lang, then BENCHSCOUT_LANG, then LANG/LC_ALL, then the Windows or macOS UI language."""
     code = explicit or os.environ.get("BENCHSCOUT_LANG") or os.environ.get("LC_ALL") or os.environ.get("LANG")
+    if not code and sys.platform == "win32":
+        import locale
+
+        code = windows_locale_code(locale.getlocale()[0])
     if not code and sys.platform == "darwin":
         try:
             out = subprocess.run(["defaults", "read", "-g", "AppleLanguages"], capture_output=True, text=True).stdout
@@ -42,6 +46,15 @@ def user_language(explicit: str | None = None) -> str:
     if code in ("c", "posix"):
         code = "en"
     return LANGUAGE_NAMES.get(code, code)
+
+
+def windows_locale_code(name: str | None) -> str | None:
+    """Windows reports 'Japanese_Japan' (or 'ja_JP'); map it to a language code."""
+    if not name:
+        return None
+    head = name.split("_")[0].split("-")[0].lower()
+    by_name = {v.lower(): k for k, v in LANGUAGE_NAMES.items()}
+    return by_name.get(head, head)
 
 
 def _io():
@@ -57,11 +70,11 @@ def cmd_scan(a) -> None:
 def cmd_core(a) -> None:
     from .core import Core
     from .locks import DeviceLocks, owner_info
-    from .runtime import socket_path
+    from .runtime import agent_address
 
     ws = Path(a.workspace).resolve()
     broker = Broker(_io(), ws / ".benchscout", locks=DeviceLocks(owner_info(ws)), approval_wait=a.wait)
-    core = Core(broker, socket_path(ws))
+    core = Core(broker, agent_address(ws)[0])
     broker.on_event = core.emit
     if sys.stdin.isatty():
         print("benchscout core: this terminal is the control channel. Commands: scan | select <device>... | "

@@ -411,14 +411,14 @@ VS Code の中にいるので、ビルドや書き込みは既存の拡張(ESP-I
 4. VS Code 拡張の最小版:コアの起動、機器の一覧、承認ボタン、MCP サーバーの登録、.vsix のビルド
 5. 知識をデータファイルへ出す、プロトコル層(§4)
 6. ブローカーがセッション中ポートを持ち続け、ログを流しながらコマンドも送れるようにする(多重化)
-7. Windows / Linux 対応(§15 R6)
+7. (済、実機未確認)Windows / Linux 対応(§15 R6)
 8. 記憶、調査単位とタイムライン、辞書の学習
 
 未決のこと:
 
 - **データファイルの形式**:TOML 案(Python 標準の `tomllib` で読める)。未確定
 - **パネルの実装**(素の TS か、軽いフレームワークか):拡張に着手するときに決める
-- **FTDI のチャネル A/B の判定**:今はポート名の並び順頼み
+- ~~FTDI のチャネル A/B の判定~~ → OS ごとの手がかりで決めるようにした(Windows:シリアル末尾の A/B、Linux:インターフェース番号、macOS:ポート名末尾の数字)。どれもなければ並び順
 - **実行部分**:`serial.send`、FPGA 書き込み(**SRAM のみ**、`openFPGALoader -m`。電源を切れば戻る)、オシロのキャプチャ、esptool
 - **VS Code の fork(Cursor など)**:.vsix は入るが、MCP サーバーを登録する API がない。設定ファイルに書く形で補う(§15 S5)
 
@@ -520,7 +520,7 @@ src/benchscout/
 | R3 | 承認の状態が作業フォルダのファイルにあり、エージェントが書き換えて偽造できる | **承認は人の経路からだけ。状態はメモリ**(下に詳細) |
 | R4 | 開くたびの報告を LLM に頼ると遅くて高い | **一覧と見立てはルールで即座に。LLM は選んでから** |
 | R5 | SDK が同梱するエージェントの CLI をさらに同梱すると、サイズ・署名・再配布の問題 | R1 で埋め込みをやめたので解消 |
-| R6 | `LiveIo.usb_devices` は macOS だけ。Windows の USBTMC は pyvisa-py だと libusb のドライバ差し替えが要る(NI-VISA があればそちらを使う) | 未対応。VS Code の利用者は Windows が多いので優先度が上がった(§12 の 7) |
+| R6 | `LiveIo.usb_devices` は macOS だけ。Windows の USBTMC は pyvisa-py だと libusb のドライバ差し替えが要る(NI-VISA があればそちらを使う) | **対応した(2026-10-31)**:USB 列挙は Linux(sysfs)と Windows(PnP)、エージェントの経路は Windows では名前付きパイプ、機器のロックは Windows では `LockFile`、VISA は NI-VISA などがあればそれを使い、なければ pyvisa-py。FT2232H のチャネルは OS ごとの手がかりで決める。**Windows の実機では未確認**(CI で Windows のテストを回す。openFPGALoader を Windows で FTDI に使うにはドライバの差し替えが要る点は利用者向けの案内が必要) |
 | R7 | MCU のシェルはログと応答が混ざる | line-shell の Codec の要件にした(§4) |
 | R8 | 承認が多すぎる | **DISRUPTIVE に限り範囲と期限付きの許可。DANGEROUS は1回限り** |
 | 小 | 他のアプリも同じポートを開ける | 確保したポートは OS で排他にする(§3) |

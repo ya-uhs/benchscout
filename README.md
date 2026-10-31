@@ -21,6 +21,7 @@ source of truth; this README is a summary of it.
 | Protocols | hard-coded in Python | command dictionary / codec / transport; user-defined commands added by config |
 | Knowledge | tables in `knowledge.py` | data files, preferring existing databases |
 | Scope | bench observation, diagnosis, hardware operation | same; a dev pack (build/flash) can be added later |
+| Platforms | macOS, Linux, Windows (Windows: named pipe and LockFile; not yet tried on real Windows hardware; CI runs the tests on all three) | same |
 
 ```
 benchscout scan                           # recon, safe probes only

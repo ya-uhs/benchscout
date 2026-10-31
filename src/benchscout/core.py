@@ -5,7 +5,7 @@ Two channels (design.md section 3, 15 R3/S1):
 - control channel = this process's stdin/stdout, owned by whoever started it (the VS Code
   extension; a developer's terminal for now). JSON lines both ways. Approvals and device
   selection come only from here. When stdin closes, the core shuts down and frees the devices.
-- agent channel = a Unix socket that `benchscout mcp` relays to. It offers the agent's
+- agent channel = a Unix socket (named pipe on Windows) that `benchscout mcp` relays to. It offers the agent's
   methods only; there is no method that approves or selects anything.
 
 Control messages:   {"id": 1, "method": "select", "params": {"devices": ["..."]}}
@@ -19,15 +19,16 @@ from __future__ import annotations
 
 import json
 import os
-import socket
-import socketserver
 import sys
 import threading
 from dataclasses import asdict
 from pathlib import Path
 from typing import IO, Any
 
+from multiprocessing.connection import Client, Listener
+
 from .broker import Broker
+from .runtime import address_family
 from .report import render
 
 # ---- agent channel --------------------------------------------------------------
@@ -48,42 +49,68 @@ def agent_dispatch(broker: Broker, method: str, params: dict) -> Any:
     raise ValueError(f"no method {method!r} on the agent channel (available: {', '.join(AGENT_METHODS)})")
 
 
-class _AgentHandler(socketserver.StreamRequestHandler):
-    def handle(self) -> None:
-        for raw in self.rfile:
-            msg_id = None
-            try:
-                msg = json.loads(raw)
-                msg_id = msg.get("id")
-                reply = {"id": msg_id, "result": agent_dispatch(self.server.broker, msg["method"], msg.get("params") or {})}
-            except Exception as e:  # report to the agent instead of dropping the connection
-                reply = {"id": msg_id, "error": f"{type(e).__name__}: {e}"}
-            self.wfile.write((json.dumps(reply, default=str) + "\n").encode())
-            self.wfile.flush()
+class AgentServer:
+    """Serves the agent channel: a Unix socket on POSIX, a named pipe on Windows
+    (multiprocessing.connection gives both, with message framing)."""
 
-
-class AgentServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
-    daemon_threads = True
-
-    def __init__(self, path: Path, broker: Broker):
+    def __init__(self, address: str, broker: Broker):
+        self.address, self.family = address, address_family(address)
         self.broker = broker
-        super().__init__(str(path), _AgentHandler)
-        os.chmod(path, 0o600)
+        self._closing = False
+        claim_address(address)
+        self._listener = Listener(address, self.family)
+        if self.family == "AF_UNIX":
+            os.chmod(address, 0o600)
+
+    def serve_forever(self) -> None:
+        while not self._closing:
+            try:
+                conn = self._listener.accept()
+            except OSError:
+                break
+            if self._closing:
+                conn.close()
+                break
+            threading.Thread(target=self._serve, args=(conn,), daemon=True).start()
+
+    def _serve(self, conn) -> None:
+        with conn:
+            while True:
+                try:
+                    raw = conn.recv_bytes()
+                except (EOFError, OSError):
+                    return
+                msg_id = None
+                try:
+                    msg = json.loads(raw)
+                    msg_id = msg.get("id")
+                    reply = {"id": msg_id, "result": agent_dispatch(self.broker, msg["method"], msg.get("params") or {})}
+                except Exception as e:  # report to the agent instead of dropping the connection
+                    reply = {"id": msg_id, "error": f"{type(e).__name__}: {e}"}
+                try:
+                    conn.send_bytes(json.dumps(reply, default=str).encode())
+                except OSError:
+                    return
+
+    def close(self) -> None:
+        self._closing = True
+        try:  # wake a blocked accept(); closing alone does not on Windows
+            Client(self.address, self.family).close()
+        except OSError:
+            pass
+        self._listener.close()  # also removes the socket file on POSIX
 
 
-def claim_socket(path: Path) -> None:
+def claim_address(address: str) -> None:
     """Refuse to start a second core for the same workspace; clear a dead one's socket."""
-    if not path.exists():
-        return
-    s = socket.socket(socket.AF_UNIX)
+    family = address_family(address)
     try:
-        s.connect(str(path))
+        Client(address, family).close()
     except OSError:
-        path.unlink()
+        if family == "AF_UNIX" and os.path.exists(address):
+            os.unlink(address)
         return
-    finally:
-        s.close()
-    raise RuntimeError(f"a benchscout core is already running for this workspace ({path})")
+    raise RuntimeError(f"a benchscout core is already running for this workspace ({address})")
 
 
 # ---- control channel ------------------------------------------------------------
@@ -131,9 +158,9 @@ def control_dispatch(broker: Broker, method: str, params: dict) -> Any:
 
 
 class Core:
-    def __init__(self, broker: Broker, sock: Path, out: IO[str] = sys.stdout):
+    def __init__(self, broker: Broker, address: str | Path, out: IO[str] = sys.stdout):
         self.broker = broker
-        self.sock = sock
+        self.address = str(address)
         self._out = out
         self._out_lock = threading.Lock()
         self.server: AgentServer | None = None
@@ -144,10 +171,9 @@ class Core:
             self._out.flush()
 
     def start(self) -> None:
-        claim_socket(self.sock)
-        self.server = AgentServer(self.sock, self.broker)
+        self.server = AgentServer(self.address, self.broker)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.emit({"event": "ready", "socket": str(self.sock)})
+        self.emit({"event": "ready", "address": self.address})
 
     def handle_line(self, line: str) -> bool:
         """Handle one control line. Returns False when the controller asked to stop."""
@@ -180,10 +206,7 @@ class Core:
 
     def stop(self) -> None:
         if self.server:
-            self.server.shutdown()
-            self.server.server_close()
+            self.server.close()
             self.server = None
-        if self.sock.exists():
-            self.sock.unlink()
         self.broker.end_session()
         self.emit({"event": "stopped"})

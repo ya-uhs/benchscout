@@ -9,6 +9,7 @@ import shutil
 import tempfile
 import threading
 import time
+import uuid
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ from benchscout.io import FixtureIo
 from benchscout.locks import DeviceLocks
 from benchscout.mcp_relay import NO_CORE, CoreClient
 from benchscout.policy import classify
+from benchscout.runtime import WINDOWS
 
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "bench_example.json"
 CH340 = "serial:usbserial-10"  # bridge: opening may reset -> DISRUPTIVE
@@ -33,10 +35,18 @@ def io():
 
 
 @pytest.fixture
-def short_dir():
+def addr():
+    """An agent-channel address for one test: a short Unix socket path, or a named pipe on Windows."""
+    if WINDOWS:
+        yield rf"\\.\pipe\benchscout-test-{uuid.uuid4().hex[:8]}"
+        return
     d = Path(tempfile.mkdtemp(prefix="bs", dir="/tmp"))  # AF_UNIX paths must stay short
-    yield d
+    yield str(d / "c.sock")
     shutil.rmtree(d, ignore_errors=True)
+
+
+def gone(address):
+    return WINDOWS or not Path(address).exists()
 
 
 def broker_with(io, state, *ports, locks=None, wait=0.0):
@@ -173,10 +183,10 @@ def test_agent_channel_has_no_way_to_approve_or_select(io, tmp_path):
             agent_dispatch(br, method, {"approval_id": "x", "granted": True, "devices": []})
 
 
-def test_end_to_end_agent_waits_while_human_approves_on_control(io, tmp_path, short_dir):
+def test_end_to_end_agent_waits_while_human_approves_on_control(io, tmp_path, addr):
     br = Broker(io, tmp_path, approval_wait=5)
     out = stdio.StringIO()
-    core = Core(br, short_dir / "c.sock", out)
+    core = Core(br, addr, out)
     br.on_event = core.emit
     core.start()
     try:
@@ -184,7 +194,7 @@ def test_end_to_end_agent_waits_while_human_approves_on_control(io, tmp_path, sh
         dev = br.bench.ports[CH340].device_id
         core.handle_line(json.dumps({"id": 2, "method": "select", "params": {"devices": [dev]}}))
 
-        client = CoreClient(short_dir / "c.sock")
+        client = CoreClient(addr)
         got = {}
         t = threading.Thread(target=lambda: got.update(client.call("do", {"action": "serial.listen", "port": CH340, "arg": "0.1"})))
         t.start()
@@ -203,31 +213,31 @@ def test_end_to_end_agent_waits_while_human_approves_on_control(io, tmp_path, sh
         assert got["result"]["status"] == "done"
     finally:
         core.stop()
-    assert not (short_dir / "c.sock").exists()
+    assert gone(addr)
 
 
-def test_second_core_for_the_same_folder_is_refused(io, tmp_path, short_dir):
-    first = Core(Broker(io, tmp_path / "1"), short_dir / "c.sock", stdio.StringIO())
+def test_second_core_for_the_same_folder_is_refused(io, tmp_path, addr):
+    first = Core(Broker(io, tmp_path / "1"), addr, stdio.StringIO())
     first.start()
     try:
         with pytest.raises(RuntimeError, match="already running"):
-            Core(Broker(FixtureIo(FIXTURE), tmp_path / "2"), short_dir / "c.sock", stdio.StringIO()).start()
+            Core(Broker(FixtureIo(FIXTURE), tmp_path / "2"), addr, stdio.StringIO()).start()
     finally:
         first.stop()
 
 
-def test_closing_the_control_channel_stops_the_core_and_frees_devices(io, tmp_path, short_dir):
+def test_closing_the_control_channel_stops_the_core_and_frees_devices(io, tmp_path, addr):
     locks = DeviceLocks({"pid": 1, "workspace": "/w"}, root=tmp_path / "rt")
     br = Broker(io, tmp_path, locks=locks)
-    core = Core(br, short_dir / "c.sock", stdio.StringIO())
+    core = Core(br, addr, stdio.StringIO())
     br.scan()
     dev = br.bench.ports[CH340].device_id
     core.run(stdio.StringIO(f'{json.dumps({"method": "select", "params": {"devices": [dev]}})}\n'), initial_scan=False)
-    assert not locks.holds(dev) and not (short_dir / "c.sock").exists()
+    assert not locks.holds(dev) and gone(addr)
 
 
-def test_relay_without_a_core_says_how_to_start_one(short_dir):
-    assert CoreClient(short_dir / "none.sock").call("scan") == {"error": NO_CORE}
+def test_relay_without_a_core_says_how_to_start_one(addr):
+    assert CoreClient(addr).call("scan") == {"error": NO_CORE}
 
 
 @pytest.mark.parametrize("line,expected", [

@@ -65,9 +65,11 @@ def build(io: Io) -> Bench:
             )
         )
 
-    # Serial ports hang off USB devices; on Linux the USB list is empty, so create devices here.
+    # Serial ports hang off USB devices; if the USB list lacks one, create the device here.
     by_dev: dict[str, list[dict]] = {}
+    usb_serials = {(d.vid, d.pid, d.serial) for d in b.devices.values()}
     for s in io.serial_ports():
+        s = _with_channel(s, usb_serials)
         did = _dev_id(s["vid"], s["pid"], s.get("serial_number"), None)
         if did not in b.devices:
             match = [d for d in b.devices.values() if (d.vid, d.pid) == (s["vid"], s["pid"]) and d.serial == s.get("serial_number")]
@@ -87,6 +89,35 @@ def build(io: Io) -> Bench:
     for res in io.visa_resources():
         _add_visa(b, res)
     return b
+
+
+_LINUX_IFACE = re.compile(r":\d+\.(\d+)$")  # pyserial location "1-1.2:1.1" -> interface 1
+
+
+def _with_channel(s: dict, usb_serials: set) -> dict:
+    """Which channel of a multi-channel USB-UART (FT2232H...) this port is, from what each OS
+    tells us, instead of the order the ports happen to be listed in:
+
+    - Windows: the FTDI driver appends the channel letter to the serial (210319A8C7D1B)
+    - Linux:   the USB interface number is in the location (1-1:1.1)
+    - macOS:   the port name ends with the channel digit (cu.usbserial-210319A8C7D11)
+    """
+    if s.get("channel") is not None:
+        return s
+    if K.USB_IDS.get((s["vid"], s["pid"]), {}).get("role") != "multi":
+        return s
+    sn = s.get("serial_number") or ""
+    base = os.path.basename(s["device"])
+    ch = None
+    if (m := _LINUX_IFACE.search(s.get("location") or "")):
+        ch = int(m.group(1))
+    elif re.fullmatch(r".+[A-D]", sn) and ((s["vid"], s["pid"], sn[:-1]) in usb_serials or base.upper().startswith("COM")):
+        ch, sn = "ABCD".index(sn[-1]), sn[:-1]
+    else:
+        tail = base.split("-", 1)[-1]
+        if tail[-1:].isdigit() and len(tail) > 1 and sn.replace(" ", "").startswith(tail[:-1]):
+            ch = int(tail[-1])
+    return dict(s, channel=ch, serial_number=sn or None) if ch is not None else s
 
 
 def _serial_port(b: Bench, dev: Device, s: dict, kind: str = "serial", may_reset: bool = False) -> Port:
