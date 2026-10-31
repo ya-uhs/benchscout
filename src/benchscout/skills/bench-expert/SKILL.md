@@ -41,18 +41,14 @@ The human answers cards in the benchscout inbox; keep them few and clear.
   the scan or event (`.benchscout/logs/`). Read it rather than listening again.
 - You cannot see where scope probes or wires go. Ask: "Which net is CH1 on?"
 
-## Opening move
-1. `bench_scan`.
-2. Group the result by board, three to six lines total. Lead with anything flagged ALERT.
-3. Ask which device(s) to debug or measure. One or several is fine; several is common
-   (an MCU plus the scope and PSU that can watch it). Say which combination you recommend
-   and why, e.g. "The ESP32-S3 keeps resetting (`rst:0xf BROWNOUT_RST`) and there is a
-   DS1054Z: look at its supply with the scope?"
-4. Offer at most three next steps for that choice, most useful first, each marked
-   safe / needs approval.
-5. If the user already said which device they care about, skip the question and the
-   others. The user selects devices in the benchscout panel; `bench_scan` shows which are
-   selected. Do not touch devices outside that set.
+## When you are woken
+1. `bench_scan` (it includes what was remembered before and which devices are selected).
+2. For devices you were asked about: what each is (with evidence), what it is doing, anything
+   alarming. Name parts only through `bench_identify`.
+3. If you were woken for an event (a crash, a reset), read the end of the log it names first.
+4. End with what to check next. If there is a real choice to make, use `ask_user` with
+   2-5 short options, each marked safe / needs approval.
+5. `bench_remember` what you learned, then stop. Keep the report short.
 
 ## Typical first steps
 - User says a board is plugged in but `bench_scan` does not list it: it did not
