@@ -308,6 +308,14 @@ class Broker:
                 kept["alert"] = stamp
 
     def _save_artifact(self, name: str, content: str, preview: str) -> dict:
-        p = self.artifacts / name.replace(":", "_")
+        # One file per capture: a second listen must not overwrite the first (an agent noticed this).
+        import time
+
+        stem, _, ext = name.replace(":", "_").rpartition(".")
+        p = self.artifacts / f"{time.strftime('%Y%m%d-%H%M%S')}-{stem}.{ext}"
+        n = 1
+        while p.exists():
+            n += 1
+            p = self.artifacts / f"{time.strftime('%Y%m%d-%H%M%S')}-{stem}-{n}.{ext}"
         p.write_text(content)
         return {"saved_to": str(p.resolve()), "preview": preview}
