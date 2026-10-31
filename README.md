@@ -60,7 +60,8 @@ ESP32-S3 USB ─┬─ /dev/cu.usbmodem ─uart─┐
 - Opening a port that can reset the device needs approval: USB-UART bridges that pulse DTR/RTS,
   and native-USB chips such as the ESP32 USB-Serial/JTAG, which was seen resetting on open.
 - VISA's serial (`ASRL`) resources are never sent `*IDN?`.
-- Approvals are bound to (action, port, arg) and single use.
+- Approvals are bound to (action, port, arg) and single use. (Planned: grants only from the human
+  control channel, held in the core's memory; DISRUPTIVE grants may be session-scoped. See design.md section 15.)
 - An action or command with no declared effect is treated as DANGEROUS.
 
 ## Not done yet

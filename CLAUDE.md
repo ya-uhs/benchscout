@@ -62,7 +62,11 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
 - Every proposal carries a `why:` that is the policy's actual reason
   (`test_proposal_reason_matches_policy`).
 - VISA `ASRL` resources are never sent `*IDN?`.
-- Approvals are bound to (action, port, arg) and are single use.
+- Approvals come only from the human control channel, never from the agent's channel, and live
+  in the core's memory (design.md section 15 R3). DANGEROUS grants are bound to
+  (action, port, arg) and single use; DISRUPTIVE grants may cover (action, port) for the session
+  or a time limit (R8). Until the core daemon lands, the code still uses single-use file-backed
+  approvals, which an agent with file access can forge.
 - Recon (`bench_scan`) runs SAFE probes only.
 
 ## Working in this repo
