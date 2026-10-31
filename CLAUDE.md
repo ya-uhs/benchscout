@@ -1,10 +1,10 @@
 # benchscout
 
-Bench recon host for hardware engineers. Start it and it finds what is plugged in (FPGA, MCU,
-instruments), says what each thing is (with evidence) and what is unknown, asks which device(s)
-to look at, and drives observation, diagnosis and hardware operation for the chosen ones,
-without being asked. Hardware access goes only through the broker, which classifies every
-action by its effect on device state and gates anything not SAFE behind a human approval.
+Bench recon for hardware engineers, delivered as a VS Code extension. Open it and it finds what
+is plugged in (FPGA, MCU, instruments), says what each thing is (with evidence) and what is
+unknown, asks which device(s) to look at, and lets the user's own agent work on the chosen ones
+through MCP. Hardware access goes only through the broker, which classifies every action by its
+effect on device state and gates anything not SAFE behind a human approval in the panel.
 
 **The source of truth for intent, direction and decisions is `docs/design.md`** (Japanese).
 Read it before design work. If this file or README.md disagrees with it, design.md wins;
@@ -23,21 +23,26 @@ load in `bench-session/`, which must look exactly like an end user's workspace.
 
 ## Direction (summary of design.md; do not drift from it)
 
-- **No LLM features of our own.** Reasoning, file operations, shell and conversation belong to
-  existing agents (Claude Code, GitHub Copilot). Do not build an agent loop or an LLM provider layer.
-- **Embed those agents through their SDKs** (Claude Agent SDK first, then Copilot SDK, ACP later),
-  with benchscout as the host app (GUI). The plain Claude Code path (`benchscout setup`) stays.
-- **Ship as a single binary via Tauri** (not Electron): thin Rust shell + TypeScript UI + this
-  Python core as a PyInstaller sidecar, talking over a token-protected localhost WebSocket.
-  No policy or approval logic in the shell (design.md section 14).
-- **benchscout owns**: startup recon, the broker (safety gate), knowledge and protocol definitions
-  as data, and the proposal/approval UI.
+- **No LLM features of our own, and no agent embedding.** Reasoning, conversation, file operations
+  and shell belong to the user's own agent (Copilot in VS Code, Claude Code, Cline...), which
+  connects over MCP only. Do not build an agent loop, an LLM provider layer or SDK adapters.
+- **One entry: the user's agent + MCP. One UI: the VS Code extension panel.** Shipped as .vsix
+  (no Marketplace) with this Python core frozen by PyInstaller inside (design.md section 14).
+- **Two channels.** The extension starts the core as a child process and owns the control
+  channel (its stdin/stdout): approvals, selection. The agent reaches the core only through
+  `benchscout mcp`, a relay with tools and no way to approve (design.md section 3, 15 R3).
+- **Recon and the first read are deterministic** (rules/data), shown at once; the LLM starts
+  when the user picks devices (R4). Expert behaviour goes out as MCP instructions/prompts first,
+  agent-specific skills on top (S4).
+- **benchscout owns**: recon and the first read, the broker (safety gate), knowledge and protocol
+  definitions as data, expert behaviour, and the device/approval panel.
 - **Scope is bench observation, diagnosis and hardware operation.** No edit/build/flash workflow,
   but keep the core domain-agnostic so a dev pack can be added later.
 - **No hardcoding.** Code is mechanism; knowledge, protocols, procedures and settings are data files.
 - **Protocols are three layers**: command dictionary / codec / transport. User-defined commands
   (e.g. an MCU's built-in shell) are added by config, each declaring its effect.
-- **Not always-on.** Recon at startup is the baseline.
+- **Not always-on.** It runs while the panel is open, only in folders that opted in (S2).
+- Open review items that may still change the shape: design.md section 15, S1-S6.
 
 ## Commands
 
@@ -65,8 +70,8 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
 - Approvals come only from the human control channel, never from the agent's channel, and live
   in the core's memory (design.md section 15 R3). DANGEROUS grants are bound to
   (action, port, arg) and single use; DISRUPTIVE grants may cover (action, port) for the session
-  or a time limit (R8). Until the core daemon lands, the code still uses single-use file-backed
-  approvals, which an agent with file access can forge.
+  or a time limit (R8). Until the control channel lands, the code still uses single-use
+  file-backed approvals, which an agent with file access can forge.
 - Recon (`bench_scan`) runs SAFE probes only.
 
 ## Working in this repo
@@ -74,9 +79,10 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
 - Do not touch hardware from this session: no opening `/dev/cu.*`, no esptool,
   openocd or SCPI scripts. New behaviour is tested against `FixtureIo` first; add a
   fixture case to `fixtures/` or the test instead of probing the real bench.
-- Real-hardware checks happen in `../bench-session`, a workspace made by
-  `benchscout setup` exactly as an end user would get it. Do not hand-edit its
-  `.mcp.json` or `.claude/`; if they are wrong, fix `setup_workspace()` in `cli.py`.
+- Real-hardware checks happen in `../bench-session`, a workspace set up exactly as an end user
+  would get it (today by `benchscout setup` for Claude Code; later by opening it in VS Code with
+  the extension). Do not hand-edit its `.mcp.json` or `.claude/`; if they are wrong, fix
+  `setup_workspace()` in `cli.py`.
 - `src/benchscout/skills/bench-expert/SKILL.md` is the source of the agent's bench
   behaviour. `setup` copies it into the workspace, so after editing it re-run
   `benchscout setup` in `../bench-session`.
