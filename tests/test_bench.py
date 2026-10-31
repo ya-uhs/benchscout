@@ -1,0 +1,250 @@
+import json
+from pathlib import Path
+
+import pytest
+
+from benchscout import recon
+from benchscout.broker import Broker
+from benchscout.io import FixtureIo
+from benchscout.model import Confidence
+from benchscout.policy import Effect, classify
+
+FIXTURE = Path(__file__).parent.parent / "fixtures" / "bench_example.json"
+
+
+@pytest.fixture
+def io():
+    return FixtureIo(FIXTURE)
+
+
+@pytest.fixture
+def r(io):
+    return recon.run(io)
+
+
+def target_named(b, name):
+    return next(t for t in b.targets.values() if t.name == name)
+
+
+def test_non_bench_usb_is_ignored(r):
+    assert not any("Keychron" in d.name for d in r.bench.devices.values())
+
+
+def esp_target(b):
+    return next(t for t in b.targets.values() if any("ESP32" in f for f in t.facts))
+
+
+def test_one_chip_two_ports(r):
+    b = r.bench
+    esp = esp_target(b)
+    kinds = sorted(p.kind for p in b.ports_reaching(esp.id))
+    assert kinds == ["jtag", "serial"]
+    # native USB resets on open, so recon stops at the descriptor: family only
+    assert esp.confidence == Confidence.FAMILY and esp.name is None
+
+
+def test_one_usb_device_two_targets(r):
+    b = r.bench
+    ftdi = next(d for d in b.devices.values() if d.name == "FTDI FT2232H")
+    kinds = sorted(p.kind for p in b.ports_of(ftdi.id))
+    assert kinds == ["jtag", "serial"]
+    fabric = next(t for t in b.targets.values() if t.kind == "fabric-endpoint")
+    assert b.targets[fabric.hosted_on].kind == "fpga"
+
+
+def test_unknown_stays_unknown(r):
+    b = r.bench
+    ch340 = next(p for p in b.ports.values() if p.path == "/dev/cu.usbserial-10")
+    (t,) = b.targets_via(ch340.id)
+    assert t.name is None and t.confidence == Confidence.UNKNOWN
+    # FPGA part is unknown until a JTAG scan actually runs
+    fpga = next(t for t in b.targets.values() if t.kind == "fpga")
+    assert fpga.name is None
+
+
+def test_stlink_swd_and_vcp_reach_same_target(r):
+    b = r.bench
+    swd = next(p for p in b.ports.values() if p.kind == "swd")
+    vcp = next(p for p in b.ports.values() if p.path == "/dev/cu.usbmodem21403")
+    assert b.targets_via(swd.id) == b.targets_via(vcp.id)
+
+
+def test_recon_runs_only_safe_probes(io, r):
+    # CH340 bridge and native-USB ESP32 may reset on open -> never opened during recon
+    assert ("serial_listen", "/dev/cu.usbserial-10") not in io.calls
+    assert ("serial_listen", "/dev/cu.usbmodem1101") not in io.calls
+    assert ("serial_listen", "/dev/cu.usbmodem21403") in io.calls  # probe VCP is safe
+    for p in r.bench.ports.values():
+        if p.kind == "serial" and ("serial_listen", p.path) in io.calls:
+            assert classify(r.bench, "serial.listen", p.id).effect == Effect.SAFE
+
+
+def test_instruments_identified_by_idn(r):
+    b = r.bench
+    assert "oscilloscope" in target_named(b, "Rigol DS1054Z").facts
+    assert "power supply" in target_named(b, "Siglent SPD3303X").facts
+
+
+def test_fpga_program_disturbs_fabric_uart(r):
+    b = r.bench
+    jtag = next(p for p in b.ports.values() if p.kind == "jtag" and p.id.startswith("jtag:2103"))
+    uart = next(p for p in b.ports.values() if p.path and p.path.endswith("C7D11"))
+    imp = classify(b, "fpga.program", jtag.id)
+    assert imp.effect == Effect.DANGEROUS
+    assert uart.id in imp.affected_ports
+
+
+def test_esptool_read_is_disruptive_and_hits_jtag(r):
+    b = r.bench
+    imp = classify(b, "esptool.chip_id", "serial:usbmodem1101")
+    assert imp.effect == Effect.DISRUPTIVE
+    assert any(p.startswith("jtag:") for p in imp.affected_ports)
+
+
+def test_scpi_classification(r):
+    psu = next(p for p in r.bench.ports.values() if "192.168.1.50" in p.id)
+    assert classify(r.bench, "scpi.query", psu.id, "MEAS:CURR? CH1").effect == Effect.SAFE
+    assert classify(r.bench, "scpi.query", psu.id, ":TRIG:MODE SING").effect == Effect.DISRUPTIVE
+    assert classify(r.bench, "scpi.query", psu.id, "OUTP CH1,ON").effect == Effect.DANGEROUS
+
+
+def test_proposals(r):
+    texts = " | ".join(p.text for p in r.proposals)
+    assert "usbserial-10" in texts and "usbmodem1101" in texts
+    assert "browning out" not in texts  # nothing heard yet, so nothing claimed
+
+
+def test_approved_listen_identifies_and_reproposes(io, tmp_path):
+    br = Broker(io, tmp_path)
+    br.scan()
+    aid = br.request("serial.listen", "serial:usbmodem1101")["approval_id"]
+    br.decide(aid, True)
+    assert br.request("serial.listen", "serial:usbmodem1101", approval_id=aid)["status"] == "done"
+    esp = target_named(br.bench, "ESP32-S3")
+    assert any(e.source == "boot-log" for e in esp.evidence)
+    texts = " | ".join(p.text for p in br.last.proposals)
+    assert "browning out" in texts and "DS1054Z" in texts
+    assert "usbmodem1101" not in texts  # already listened
+
+
+def test_every_proposal_says_why(r):
+    assert r.proposals
+    for p in r.proposals:
+        assert p.reason, p.text
+    ch340 = next(p for p in r.proposals if "usbserial-10" in p.text)
+    assert "DTR/RTS" in ch340.reason
+
+
+def test_proposal_reason_matches_policy(r):
+    jtag = next(p for p in r.proposals if p.action == "jtag.scan")
+    assert jtag.reason == classify(r.bench, "jtag.scan", jtag.port).reason
+
+
+@pytest.mark.parametrize(
+    "explicit,env,expected",
+    [
+        ("ja", {}, "Japanese"),
+        (None, {"BENCHSCOUT_LANG": "en"}, "English"),
+        (None, {"LANG": "ja_JP.UTF-8"}, "Japanese"),
+        (None, {"LANG": "C"}, "English"),
+        ("pt-BR", {}, "pt"),
+    ],
+)
+def test_user_language(monkeypatch, explicit, env, expected):
+    from benchscout.cli import user_language
+
+    for k in ("BENCHSCOUT_LANG", "LC_ALL", "LANG"):
+        monkeypatch.delenv(k, raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    assert user_language(explicit) == expected
+
+
+def test_approval_gate(io, tmp_path):
+    br = Broker(io, tmp_path)
+    br.scan()
+    res = br.request("serial.listen", "serial:usbserial-10")
+    assert res["status"] == "approval_required"
+    aid = res["approval_id"]
+    assert ("serial_listen", "/dev/cu.usbserial-10") not in io.calls
+
+    assert br.request("serial.listen", "serial:usbserial-10", approval_id=aid)["status"] == "pending"
+    br.decide(aid, True)
+    # an approval cannot be reused for a different action
+    assert br.request("serial.send", "serial:usbserial-10", "help", approval_id=aid)["status"] == "approval_mismatch"
+    done = br.request("serial.listen", "serial:usbserial-10", approval_id=aid)
+    assert done["status"] == "done"
+    assert Path(done["result"]["saved_to"]).read_text().startswith("[I] sensor ok")
+    # single use
+    assert br.request("serial.listen", "serial:usbserial-10", approval_id=aid)["status"] == "used"
+
+
+def test_visa_serial_resources_are_never_sent_idn(tmp_path):
+    data = json.loads(FIXTURE.read_text())
+    data["visa"]["ASRL/dev/cu.usbserial-10::INSTR"] = {"*IDN?": "should never be asked"}
+    f = tmp_path / "bench.json"
+    f.write_text(json.dumps(data))
+    io = FixtureIo(f)
+    r = recon.run(io)
+    assert not any(c[0] == "visa_query" and c[1].startswith("ASRL") for c in io.calls)
+    assert not any(p.id.startswith("visa:ASRL") for p in r.bench.ports.values())
+
+
+def _variant(tmp_path, mutate):
+    data = json.loads(FIXTURE.read_text())
+    mutate(data)
+    f = tmp_path / "bench.json"
+    f.write_text(json.dumps(data))
+    return FixtureIo(f)
+
+
+def test_port_vanishing_mid_read_is_a_fact_not_a_crash(tmp_path):
+    io = _variant(tmp_path, lambda d: d["listen"].update({"/dev/cu.usbmodem21403": {"error": "Device not configured"}}))
+    r = recon.run(io)
+    vcp = next(p for p in r.bench.ports.values() if p.path == "/dev/cu.usbmodem21403")
+    (t,) = r.bench.targets_via(vcp.id)
+    assert any("port disappeared" in f for f in t.facts)
+
+
+def test_tang_nano_9k(tmp_path):
+    def mutate(d):
+        d["usb"] = [{"name": "JTAG Debugger", "vendor": "SIPEED", "vid": "0x0403", "pid": "0x6010", "serial": "FactoryAIOT Pro", "location": "0x01100000"}]
+        d["serial"] = [
+            {"device": "/dev/cu.usbserial-FactoryAIOT0", "vid": "0x0403", "pid": "0x6010", "serial_number": "FactoryAIOT Pro", "channel": 0},
+            {"device": "/dev/cu.usbserial-FactoryAIOT1", "vid": "0x0403", "pid": "0x6010", "serial_number": "FactoryAIOT Pro", "channel": 1},
+        ]
+        d["visa"] = {}
+        d["tools"] = ["openFPGALoader"]
+        # raw output captured from a real Tang Nano 9K (openFPGALoader v1.2.0)
+        d["jtag"] = {"FactoryAIOT Pro": "No cable or board specified: using direct ft2232 interface\n"
+                     "Jtag frequency : requested 6.00MHz    -> real 6.00MHz   \nindex 0:\n\tidcode 0x100481b\n"
+                     "\tmanufacturer Gowin\n\tfamily GW1N\n\tmodel  GW1N(R)-9C\n\tirlength 8\n"}
+    io = _variant(tmp_path, mutate)
+    r = recon.run(io)
+    fpga = target_named(r.bench, "Gowin GW1N(R)-9C")
+    assert any("openFPGALoader database" in e.detail for e in fpga.evidence)
+    assert fpga.confidence == Confidence.IDENTIFIED
+    fabric = next(t for t in r.bench.targets.values() if t.kind == "fabric-endpoint")
+    assert fabric.hosted_on == fpga.id
+    (dev,) = r.bench.devices.values()
+    assert "BL702" in dev.name
+    assert all(" " not in pid for pid in r.bench.ports)
+
+
+def test_inventory_is_json_serializable(r):
+    json.dumps(r.to_dict(), default=str)
+
+
+def test_idcode_table_fallback(tmp_path):
+    """Without the tool's model line, our own table is used and says so."""
+    io = _variant(tmp_path, lambda d: (d["tools"].append("openFPGALoader"), d["jtag"].update({"210319A8C7D1": ["0x0362D093"]})))
+    r = recon.run(io)
+    fpga = target_named(r.bench, "Xilinx XC7A35T")
+    assert any("benchscout table" in e.detail for e in fpga.evidence)
+
+
+def test_openfpgaloader_only_targets_ftdi_jtag(tmp_path):
+    io = _variant(tmp_path, lambda d: d["tools"].append("openFPGALoader"))
+    recon.run(io)
+    scanned = [c[1] for c in io.calls if c[0] == "jtag_scan"]
+    assert scanned == ["210319A8C7D1"]  # the FT2232H board, not the ESP32's USB-JTAG

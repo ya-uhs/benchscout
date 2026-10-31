@@ -1,0 +1,32 @@
+{
+  "_comment": "Simulated bench: Arty-style Digilent board (FT2232H), ESP32-S3 on native USB, unknown board on CH340, ST-Link on a Nucleo, Rigol scope over USBTMC, Siglent PSU over LAN.",
+  "tools": ["esptool.py"],
+  "usb": [
+    {"name": "Digilent USB Device", "vendor": "Digilent", "vid": "0x0403", "pid": "0x6010", "serial": "210319A8C7D1", "location": "0x01110000"},
+    {"name": "USB JTAG/serial debug unit", "vendor": "Espressif", "vid": "0x303a", "pid": "0x1001", "serial": "F4:12:FA:3B:9C:10", "location": "0x01120000"},
+    {"name": "USB Serial", "vendor": "QinHeng", "vid": "0x1a86", "pid": "0x7523", "serial": null, "location": "0x01130000"},
+    {"name": "STLINK-V3", "vendor": "STMicroelectronics", "vid": "0x0483", "pid": "0x374e", "serial": "0039003A3133510637363934", "location": "0x01140000"},
+    {"name": "DS1000Z Series", "vendor": "Rigol", "vid": "0x1ab1", "pid": "0x04ce", "serial": "DS1ZA201804321", "location": "0x01150000"},
+    {"name": "Keychron Receiver", "vendor": "Keychron", "vid": "0x3434", "pid": "0xd027", "serial": "F9F17C3DF18CE435", "location": "0x02140000"}
+  ],
+  "serial": [
+    {"device": "/dev/cu.usbserial-210319A8C7D10", "vid": "0x0403", "pid": "0x6010", "serial_number": "210319A8C7D1", "channel": 0, "description": "Digilent USB Device"},
+    {"device": "/dev/cu.usbserial-210319A8C7D11", "vid": "0x0403", "pid": "0x6010", "serial_number": "210319A8C7D1", "channel": 1, "description": "Digilent USB Device"},
+    {"device": "/dev/cu.usbmodem1101", "vid": "0x303a", "pid": "0x1001", "serial_number": "F4:12:FA:3B:9C:10", "description": "USB JTAG/serial debug unit"},
+    {"device": "/dev/cu.usbserial-10", "vid": "0x1a86", "pid": "0x7523", "serial_number": null, "description": "USB Serial"},
+    {"device": "/dev/cu.usbmodem21403", "vid": "0x0483", "pid": "0x374e", "serial_number": "0039003A3133510637363934", "description": "STLINK-V3"}
+  ],
+  "visa": {
+    "USB0::0x1AB1::0x04CE::DS1ZA201804321::INSTR": {"*IDN?": "RIGOL TECHNOLOGIES,DS1054Z,DS1ZA201804321,00.04.04.SP4"},
+    "TCPIP0::192.168.1.50::INSTR": {"*IDN?": "Siglent Technologies,SPD3303X,SPD3XIDQ4R1234,1.01.01.02.07R2,V3.0"}
+  },
+  "listen": {
+    "/dev/cu.usbmodem1101": "ESP-ROM:esp32s3-20210327\nrst:0xf (BROWNOUT_RST),boot:0x8 (SPI_FAST_FLASH_BOOT)\nI (312) cpu_start: ESP-IDF v5.3.1\nI (845) wifi:connected with lab-ap\nBrownout detector was triggered\n",
+    "/dev/cu.usbserial-210319A8C7D11": "",
+    "/dev/cu.usbmodem21403": "[00:00:01.204] app: sensor ok\n[00:00:02.204] app: sensor ok\n",
+    "/dev/cu.usbserial-10": "[I] sensor ok\n[I] sensor ok\n"
+  },
+  "jtag": {
+    "210319A8C7D1": ["0x0362D093"]
+  }
+}

@@ -1,0 +1,20 @@
+[project]
+name = "benchscout"
+version = "0.1.0"
+description = "Bench recon broker: finds what is plugged in, says what it is (with evidence), and gates what an agent may do to it."
+requires-python = ">=3.11"
+dependencies = ["pyserial>=3.5"]
+
+[project.optional-dependencies]
+mcp = ["mcp>=2.3"]
+visa = ["pyvisa>=1.13", "pyvisa-py>=0.7"]
+
+[project.scripts]
+benchscout = "benchscout.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
