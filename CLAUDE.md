@@ -32,9 +32,9 @@ load in `bench-session/`, which must look exactly like an end user's workspace.
   channel (its stdin/stdout): approvals, selection. The agent reaches the core only through
   `benchscout mcp`, a relay with tools and no way to approve (design.md section 3, 15 R3).
 - **Recon and the first read are deterministic** (rules/data), shown at once; the LLM starts
-  when the user picks devices (R4). Expert behaviour ships as a skill in `.claude/skills/`, which
-  both Copilot (VS Code) and Claude Code read; the few rules that must hold are also in the MCP
-  instructions (S4). Target agents: Copilot, Claude Code, OpenAI-compatible APIs incl. local LLMs
+  when the user picks devices (R4). Expert behaviour ships as one skill source, placed in
+  `.claude/skills/` for Claude Code and `.agents/skills/` for the others; the few rules that must
+  hold are also in the MCP instructions (S4). Calls needing approval wait for the panel (S3). Target agents: Copilot, Claude Code, OpenAI-compatible APIs incl. local LLMs
   (used through Copilot's own-model support).
 - **One core per VS Code window**, a child of the extension; devices are guarded by per-device
   locks and OS-level exclusive open; the MCP relay never starts a core (S1).
