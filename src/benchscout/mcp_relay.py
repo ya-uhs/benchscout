@@ -29,6 +29,7 @@ INSTRUCTIONS = """benchscout gives you the hardware bench. Rules that always hol
 - Reach hardware only through these tools. Never open serial ports, run esptool, openocd or SCPI scripts yourself.
 - Never try to approve anything yourself. Approvals and device selection are made by the human in the benchscout panel.
 - Only devices the human selected can be used; if a call returns not_selected, ask the human to select it.
+- When you need a decision from the human, call ask_user with short options instead of guessing or stopping.
 - Name a part only when the evidence proves it; otherwise say it is unknown and list the facts.
 - When a proposal or impact carries a reason (why:), quote it; do not invent another one."""
 
@@ -110,6 +111,16 @@ Actions:
 {catalog}""")
     async def bench_do(action: str, port: str, args: dict | None = None, approval_id: str | None = None) -> str:
         return await _call("do", {"action": action, "port": port, "args": args, "approval_id": approval_id},
+                           timeout=APPROVAL_WAIT_S + 60)
+
+    @mcp.tool()
+    async def ask_user(question: str, options: list[str], question_id: str | None = None) -> str:
+        """Ask the human a question with options to pick from; it appears as a card in the
+        benchscout inbox, where they can also write their own reply. Use it whenever you need
+        a decision (what to look at next, which hypothesis to test) instead of guessing.
+        Keep options short (2-5). The call waits for the answer; if it returns status
+        "waiting", call again with the question_id."""
+        return await _call("ask", {"question": question, "options": options, "question_id": question_id},
                            timeout=APPROVAL_WAIT_S + 60)
 
     @mcp.prompt()

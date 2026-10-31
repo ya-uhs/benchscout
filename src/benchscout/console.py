@@ -36,6 +36,13 @@ def format_human(msg: dict, broker) -> str | None:
         return (f"\n>>> APPROVAL NEEDED  [{a['effect'].upper()}]  {a['action']} on {a['port']}  {a['args']}\n"
                 f"   why: {imp['reason']}{also}\n"
                 f"   approve {a['id']}  (once) |{scope.removeprefix('  ')}deny {a['id']}")
+    if ev == "question_asked":
+        q = msg["question"]
+        opts = "  |  ".join(q["options"])
+        return f"\n??? QUESTION {q['id']}: {q['text']}\n   options: {opts}\n   answer {q['id']} <option or your own words>"
+    if ev == "question_answered":
+        q = msg["question"]
+        return f"<<< {q['id']}: {q['choice'] or q['reply']}"
     if ev == "approval_decided":
         a = msg["approval"]
         return f"<<< {a['id']}: {a['status']}" + (f" ({a['scope']})" if a["status"] == "granted" else "")

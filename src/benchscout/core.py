@@ -34,7 +34,7 @@ from .report import render
 
 # ---- agent channel --------------------------------------------------------------
 
-AGENT_METHODS = ("scan", "inventory", "impact", "do", "actions")
+AGENT_METHODS = ("scan", "inventory", "impact", "do", "actions", "ask")
 
 
 def agent_dispatch(broker: Broker, method: str, params: dict) -> Any:
@@ -47,6 +47,8 @@ def agent_dispatch(broker: Broker, method: str, params: dict) -> Any:
         return broker.impact(params["action"], params["port"], params.get("args")).to_dict()
     if method == "do":
         return broker.request(params["action"], params["port"], params.get("args"), params.get("approval_id"))
+    if method == "ask":
+        return broker.ask(params.get("question", ""), params.get("options") or [], params.get("question_id"))
     if method == "actions":
         return catalog()
     raise ValueError(f"no method {method!r} on the agent channel (available: {', '.join(AGENT_METHODS)})")
@@ -142,6 +144,10 @@ def parse_shorthand(line: str) -> dict:
         return {"method": "decide", "params": params}
     if cmd == "select":
         return {"method": "select", "params": {"devices": args}}
+    if cmd == "answer":  # answer <id> <option text or free reply>
+        if len(args) < 2:
+            raise ValueError("usage: answer <question_id> <option or reply>")
+        return {"method": "answer", "params": {"question_id": args[0], "reply": " ".join(args[1:])}}
     if cmd in ("scan", "pending", "inventory", "quit"):
         return {"method": "shutdown" if cmd == "quit" else cmd, "params": {}}
     raise ValueError(f"unknown command {cmd!r}. Type a device number to select it (e.g. 1), or: "
@@ -161,6 +167,10 @@ def control_dispatch(broker: Broker, method: str, params: dict) -> Any:
         return broker.decide(params["approval_id"], bool(params["granted"]), params.get("scope", "once"))
     if method == "pending":
         return [asdict(a) for a in broker.approvals.pending()]
+    if method == "answer":
+        return broker.answer(params["question_id"], params.get("choice"), params.get("reply"))
+    if method == "questions":
+        return [asdict(q) for q in broker.questions.pending()]
     raise ValueError(f"unknown control method {method!r}")
 
 

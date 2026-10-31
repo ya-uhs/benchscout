@@ -386,3 +386,31 @@ def test_serial_send_writes_once_and_reads_the_answer(tmp_path):
     assert done["status"] == "done" and done["result"]["preview"].endswith("ok\n")
     assert ("serial_send", VCP, b"status\n") in io.calls
     assert br.request("serial.send", VCP, {"data": "?", "eol": "", "seconds": 0.1})["status"] == "approval_required"
+
+
+def test_agent_question_waits_for_the_human_and_only_control_answers(io, tmp_path):
+    br = broker_with(io, tmp_path, wait=5)
+    seen = []
+    br.on_event = lambda e: seen.append(e) if e["event"] == "question_asked" else None
+
+    def human():
+        for _ in range(500):
+            if seen:
+                br.answer(seen[0]["question"]["id"], reply="look at the CH340")  # typed, matches an option
+                return
+            time.sleep(0.01)
+
+    threading.Thread(target=human, daemon=True).start()
+    res = agent_dispatch(br, "ask", {"question": "What next?", "options": ["look at the CH340", "stop"]})
+    assert res["status"] == "answered" and res["choice"] == "look at the CH340" and res["answered_by"].startswith("the human")
+    with pytest.raises(ValueError, match="agent channel"):
+        agent_dispatch(br, "answer", {"question_id": "x", "reply": "y"})
+
+
+def test_unanswered_question_can_be_waited_on_again(io, tmp_path):
+    br = broker_with(io, tmp_path, wait=0)
+    first = agent_dispatch(br, "ask", {"question": "Which rail?", "options": ["3V3", "5V"]})
+    assert first["status"] == "waiting"
+    br.answer(first["question_id"], reply="the probe is on VBAT, not either")  # free text
+    again = agent_dispatch(br, "ask", {"question_id": first["question_id"]})
+    assert again["status"] == "answered" and again["choice"] is None and "VBAT" in again["reply"]

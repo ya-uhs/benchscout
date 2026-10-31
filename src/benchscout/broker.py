@@ -40,6 +40,9 @@ class Broker:
         self.on_event = on_event  # set by the core to forward events to the control channel
         self.approval_wait = approval_wait  # seconds a request waits for the human (S3)
         self.approvals = ApprovalBook(self.state / "audit.jsonl", on_event=self._emit)
+        from .questions import QuestionBook
+
+        self.questions = QuestionBook(on_event=self._emit)
         self.selected: set[str] = set()  # device ids in this session
         # Output heard from each target, kept across re-scans so what was learned is not lost
         # when the graph is rebuilt (design.md section 10). Per target: the latest output, plus
@@ -128,6 +131,27 @@ class Broker:
         if len(hits) == 1:
             return hits[0]
         raise KeyError(f"device {ref!r} matches {len(hits)} devices; known: {', '.join(devs)}")
+
+    # ---- questions from the agent (answered by the human, control channel only) ---------
+    def ask(self, text: str, options: list[str], question_id: str | None = None, wait: float | None = None) -> dict:
+        """The agent asks the human. Waits like an approval; on time-out, call again with the id."""
+        from dataclasses import asdict
+
+        wait = self.approval_wait if wait is None else wait
+        q = self.questions.wait(question_id, 0) if question_id else self.questions.ask(text, options)
+        if q is None:
+            return {"status": "unknown_question", "question_id": question_id}
+        q = self.questions.wait(q.id, wait)
+        if q.status == "pending":
+            return {"status": "waiting", "question_id": q.id,
+                    "tell_user": "The question is waiting in the benchscout inbox. Call again with this question_id to keep waiting."}
+        return {"status": q.status, "question_id": q.id, "choice": q.choice, "reply": q.reply,
+                "answered_by": "the human, in the benchscout inbox"}
+
+    def answer(self, question_id: str, choice: str | None = None, reply: str | None = None) -> dict:
+        from dataclasses import asdict
+
+        return asdict(self.questions.answer(question_id, choice, reply))
 
     def decide(self, approval_id: str, granted: bool, scope: Scope = "once") -> dict:
         from dataclasses import asdict
