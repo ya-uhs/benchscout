@@ -23,18 +23,24 @@ device's output and benchscout found the quote in what it captured. Memory loose
 ("this port does not reset on open") needs a human to confirm; everything else is written
 without asking and can be edited or deleted in the panel.
 
-## Where it is going
+## Where it is
 
-| | Now | Target |
-|---|---|---|
-| Entry | the user's agent + MCP (`benchscout setup --agent claude|copilot`) | same; no agent embedded, no LLM of our own |
-| UI | VS Code extension in `vscode/` (minimal); a terminal running `benchscout core` for debugging | panel with devices, approvals, memory, timeline; shipped as .vsix with the core inside |
-| Core | `benchscout core` per folder; `benchscout mcp` relays to it | same, frozen with PyInstaller |
-| Approval | in the core's memory, from the control channel only; calls wait for the decision | same, from panel buttons |
-| Identification | shipped tables and log patterns (prototype; being removed) | the agent, with quotes checked by `bench_identify` |
-| Memory | per-process only | automatic, per device and per workspace, editable in the panel |
-| Writing | not in benchscout | FPGA SRAM / flash as one DANGEROUS action defined as data |
-| Platforms | macOS, Linux, Windows (Windows not yet tried on real hardware; CI on all three) | same |
+| | Today |
+|---|---|
+| Entry | the user's own agent + MCP; benchscout wakes it: Claude Code via `claude -p`, others (Copilot CLI) via ACP |
+| UI | VS Code extension in `vscode/`: an inbox of questions, approvals, reports, notices and memory |
+| Loop | benchscout asks what to look at, wakes the agent, watches the chosen devices, notices crashes and resets, wakes the agent again (autonomy: auto / suggest; hourly budget) |
+| Safety | approvals only from the panel (the agent's channel cannot approve); cautious defaults; selected ports held exclusively |
+| Identification | the agent, with a quote of the device's output that benchscout checks (`bench_identify`) |
+| Memory | automatic, per device and per folder, plain TOML; only safety-loosening entries wait for the human |
+| Writing | FPGA SRAM and ESP flash as DANGEROUS actions defined as data (`packs/bench/data/tools.toml`); users add their own tools |
+| Packaging | `packaging/build_core.py` + `npm run package:platform` -> a .vsix per OS/CPU with the frozen core |
+| Platforms | macOS (real bench), Linux and Windows (tests; not yet on real hardware) |
+
+Checked on a real bench (ESP32-S3 + Tang Nano 9K with the firmware/bitstream in `testbench/`): after the
+human picked the ESP32, an injected crash was noticed, the agent was woken, it read the log, named the chip
+from a quoted ROM banner, remembered it, asked what next, and reported; the next session's first read
+already said ESP32-S3.
 
 ```
 benchscout scan                           # recon, safe probes only
