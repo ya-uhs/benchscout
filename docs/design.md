@@ -116,8 +116,8 @@ Grok Bot の弱点として指摘されている「モデルを選べない」�
 
 | 方式 | 中身 | 位置づけ |
 |---|---|---|
-| Claude Agent SDK(Python) | Claude Code と同じエンジンをライブラリとして埋め込む。ツールごとの許可コールバック、hooks、MCP、セッション再開 | 最初に実装する |
-| GitHub Copilot SDK(Python、technical preview) | Copilot CLI をサーバーモードで起動し JSON-RPC でつなぐ。権限ハンドラ、MCP、カスタムツール、ストリーミング | 2本目 |
+| Claude Agent SDK(Python / TypeScript) | Claude Code と同じエンジンをライブラリとして埋め込む(Python 版は CLI 同梱)。ツールごとの許可コールバック、hooks、MCP、セッション再開 | 最初に実装する |
+| GitHub Copilot SDK(2026-06 GA。Node/TS・Python・Go・.NET ほか) | Copilot CLI をサーバーモードで起動し JSON-RPC でつなぐ(Python 版は CLI 同梱)。権限ハンドラ、MCP、カスタムツール、ストリーミング | 2本目 |
 | ACP(Agent Client Protocol) | エディタとエージェントの共通プロトコル。Copilot CLI はネイティブ(preview)、Claude Code はコミュニティのアダプタ | 将来。Codex など他のエージェントを載せる口 |
 | CLI のヘッドレス実行(`claude -p` など) | 子プロセス | 使わない(制御が効かない) |
 
@@ -128,7 +128,7 @@ Grok Bot の弱点として指摘されている「モデルを選べない」�
 2. **GUI にエージェントの動きを流せる。** 発言、ツール呼び出し、承認待ちがイベントとして届く
 3. **起動プロンプト、skill、MCP の設定をコードで渡せる。** 作業フォルダに設定ファイルを書かなくてよい
 
-バックエンドの差は薄いアダプタ(L3)だけで吸収する。SDK は preview のものもあるので、アダプタの外に SDK の型を漏らさない。
+バックエンドの差は薄いアダプタ(L3)だけで吸収する。SDK は版が変わりやすいので、アダプタの外に SDK の型を漏らさない。
 外から素の Claude Code で使う道(`benchscout setup` で `.mcp.json` と skill を置く)も残す。
 認証と課金はバックエンドごとに違う(Copilot はサブスクの premium request か BYOK、Claude Agent SDK は要確認)。
 
@@ -304,8 +304,9 @@ dev pack を足すとグラフに「ソース → ファームウェアイメー
   - https://about.fb.com/news/2026/09/introducing-muse-personal-ai-agent/
 - **Grok Bot**(xAI、2026-08 ベータ):常駐、Routines、操作の種類ごとの承認、成功した手順の skill 化、connector 優先
   - https://composio.dev/content/guide-to-frok-bot 、弱点の分析 https://beam.ai/agentic-insights/grok-bot-enterprise-ai-agents
-- **Claude Agent SDK** / **GitHub Copilot SDK**(2026-01 technical preview)/ **ACP**:既存エージェントの埋め込み
-  - https://infoworld.com/article/4121634/github-copilot-sdk-allows-developers-to-build-copilot-agents-into-apps.html
+- **Claude Agent SDK** / **GitHub Copilot SDK**(2026-01 technical preview、2026-06 GA)/ **ACP**:既存エージェントの埋め込み
+  - https://github.com/anthropics/claude-agent-sdk-python
+  - https://github.blog/changelog/2026-06-02-copilot-sdk-is-now-generally-available/
 - **AMD Ross**(2026、early access):Vivado / Vitis HLS 向けの組み込み開発エージェント。中身は **MCP サーバー + 知識ベース +
   専門家が書いた Agent Skills** で、LLM とフロントエンド(Claude Code、Cursor、VS Code、OpenCode CLI など MCP クライアントなら何でも)は
   利用者が選ぶ。LLM の切り替えを自前で実装せず、エージェント側に任せている。benchscout の §3 の判断と同じ考え方
@@ -372,7 +373,7 @@ dev pack を足すとグラフに「ソース → ファームウェアイメー
 未決のこと:
 
 - **データファイルの形式**:TOML 案(Python 標準の `tomllib` で読める)。未確定
-- **GUI の実装方式**:Python なのでローカル Web(ブラウザで開く)が一番安い、という案。未確定
+- **技術スタックと GUI の実装方式**:§14 の案(Python のコア + Web の画面、境界は WebSocket のイベント)。未確定
 - **認証と課金**:Claude Agent SDK をサブスクで使えるか。Copilot SDK は premium request か BYOK
 - **bench モードでエージェントに何を許すか**:ファイル書き込みやシェルをどこまで許可するか(SDK の許可判定で決める)
 - **承認を会話の中で済ませる**:GUI のボタンが本命。MCP elicitation も選択肢
@@ -421,3 +422,57 @@ src/benchscout/
 ```
 
 将来の dev pack は `packs/dev/` として並べる。`core/` から `packs/` を import しない。
+
+## 14. 技術スタック(案。2026-10-31 時点で未決)
+
+「Python のままで良いか」を、層ごとに必要なものから検討した。
+
+### 層ごとの比較
+
+| 層 | 必要なもの | Python | TypeScript / Node | Rust |
+|---|---|---|---|---|
+| ハードウェア | シリアル、VISA、USB 列挙、esptool など | ◎ pyserial、pyvisa-py(純 Python、NI-VISA 不要)、esptool 自体が Python、pytest-embedded、labgrid | △ serialport はあるが、VISA は実用的なものがない | △ serialport はある。VISA は NI-VISA が必要 |
+| エージェント SDK | Claude Agent SDK、Copilot SDK | ◎ 両方あり、どちらも CLI 同梱 | ◎ 両方あり | △ Copilot のみ、Claude はなし |
+| MCP サーバー | ブローカーの口 | ◎ 公式(使用中) | ◎ 公式 | ○ rmcp |
+| 数値処理 | 波形を数値で報告する | ◎ numpy | △ | △ |
+| GUI | 一覧、ログ、会話、承認 | △ Qt(PySide6)は重い。Web にするなら結局 TS が要る | ◎ | ○ Tauri(画面は Web) |
+| 配布 | ハードウェア技術者の Mac / Win / Linux | ○ `uv tool install`。単体バイナリは手間 | ◎ Electron(重い) | ◎ Tauri(軽い) |
+| 既存資産 | 約 1250 行 + テスト | ◎ そのまま | × 書き直し | × 書き直し |
+
+### 判断
+
+- **一番置き換えにくいのはハードウェアの層**(特に VISA と esptool)で、ここは Python がほぼ唯一の選択肢
+- **エージェント SDK は Python と TS で差がない**(どちらも公式、CLI 同梱)。TS に移る理由にならない
+- **GUI は、どの言語を選んでも Web 技術(TS)になる**。なら、コアと画面を言語で分けてよい
+
+### 案:Python のコア + Web の画面(TS)、境界はイベントのプロトコル
+
+```
+[ブラウザ or デスクトップの殻]  TypeScript + Vite(フレームワークは未決)
+        ↑↓ WebSocket(JSON のイベントとコマンド。スキーマは pydantic から JSON Schema で出す)
+[benchscout コア]  Python。ブローカー、ポリシー、偵察、プロトコル層、MCP の口、バックエンドアダプタ
+        ↓
+[実機 / 外部ツール]
+```
+
+- **画面とコアは別プロセス。** 画面からも承認をすり抜けられない(承認はブローカーにしかない、§3)
+- **境界をイベントのプロトコルとして文書化する。** 画面の言語や、将来コアの一部を別の言語にすることも差し替えられる
+- 当面はローカル Web(コアが配信し、ブラウザで開く)。デスクトップアプリが必要になったら、Tauri や pywebview の殻で包む
+  (コアは PyInstaller などでサイドカーにする)
+
+### Python の中での選択
+
+| 用途 | 選択 | 理由 |
+|---|---|---|
+| 版と環境 | Python 3.11+、uv、hatchling | 今のまま。`tomllib` が標準で使える |
+| 型と検証 | pydantic v2 | action の引数、設定ファイル、イベントのスキーマを1か所で定義し、JSON Schema にも出せる。mcp の依存として既に入っている |
+| 並行処理 | asyncio(anyio) | エージェント SDK と MCP が非同期。pyserial などの同期 I/O はスレッドで包む |
+| Web サーバー | Starlette + uvicorn | mcp の依存として既に入っている。新しい依存を増やさない |
+| データ形式 | TOML | 標準の `tomllib` で読める(§4) |
+| 品質 | pytest(今のまま)、ruff、pyright | 型付きの action やイベントを入れるので、静的チェックを足す |
+
+### 見直す条件(ここに当たったら再検討)
+
+- エンジニア以外にワンクリックで配る必要が出て、Python の同梱が重荷になった
+- ロジアナなど高レートのデータを流す必要が出て、Python が遅い。その経路だけを Rust などに出す
+- Claude Agent SDK の Python 版が TS 版より明らかに遅れ、必要な機能が使えない
