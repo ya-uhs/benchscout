@@ -14,6 +14,7 @@ import json
 import shutil
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -23,6 +24,8 @@ from .approvals import ApprovalBook, Scope
 from .io import Io
 from .locks import DeviceLocks
 from .policy import Effect, Impact, classify
+
+RECENT_FOR_QUOTES = 2 * 1024 * 1024  # how much recent output a quote is checked against
 
 
 class Broker:
@@ -46,6 +49,9 @@ class Broker:
         self.questions.on_answer = self._on_answer
         self.selected: set[str] = set()  # device ids in this session
         self.watches: dict = {}  # port id -> PortWatch (selected devices' ports held open)
+        from .memory import Memory
+
+        self.memory = Memory(self.state.parent)  # design.md section 6
         # Output heard from each target, kept across re-scans so what was learned is not lost
         # when the graph is rebuilt (design.md section 10). Per target: the latest output, plus
         # the latest one that named the part and the latest one that raised an alert, so a later
@@ -71,8 +77,8 @@ class Broker:
                     if kind in kept and kept[kind][1] not in seen_texts:
                         seen_texts.append(kept[kind][1])
                         R.apply_log([self.last.bench.targets[tid]], kept[kind][1], seen=kept[kind][0])
-            if self.observed:
-                self.last.proposals = R.propose(self.last.bench)
+            self._apply_memory(self.last.bench)
+            self.last.proposals = R.propose(self.last.bench)
             (self.state / "inventory.json").write_text(json.dumps(self.last.to_dict(), indent=2, default=str))
         self._emit({"event": "scanned", "devices": list(self.last.bench.devices)})
         return self.last
@@ -192,6 +198,170 @@ class Broker:
 
         return asdict(self.approvals.decide(approval_id, granted, scope))
 
+    # ---- memory (design.md section 6) ---------------------------------------------------------
+    def _key(self, dev) -> str:
+        from .memory import device_key
+
+        return device_key(dev.vid, dev.pid, dev.serial)
+
+    def _header(self, dev) -> dict:
+        from . import knowledge as K
+
+        return {"device": dev.name, "vid": f"{dev.vid or 0:04x}", "pid": f"{dev.pid or 0:04x}", "serial": dev.serial or "",
+                "shared_serial": dev.serial in K.SHARED_SERIALS}
+
+    def _apply_memory(self, bench) -> None:
+        """What was learned before shows up in the first read, without an LLM."""
+        from . import knowledge as K
+        from .model import Confidence, Evidence
+
+        self.patterns: dict[str, list[dict]] = {}
+        for dev in bench.devices.values():
+            shared = dev.serial in K.SHARED_SERIALS
+            targets = [t for p in bench.ports_of(dev.id) for t in bench.targets_via(p.id)]
+            for e in self.memory.entries(self._key(dev)):
+                if e.status != "active":
+                    continue
+                when = f"{e.time[:10]}, {e.source}"
+                if e.kind == "identity" and e.target in bench.targets:
+                    t = bench.targets[e.target]
+                    if t.confidence != Confidence.IDENTIFIED:
+                        t.name, t.confidence = e.text, Confidence.IDENTIFIED
+                    t.evidence.append(Evidence("learned", f"{e.text}: \"{e.evidence}\" ({when})"))
+                elif e.kind == "safety":
+                    if shared:
+                        continue  # another unit of this model may answer to the same serial: never loosen safety on it
+                    if e.target in bench.ports and e.data.get("listen_safe"):
+                        bench.ports[e.target].may_reset_on_open = False
+                elif e.kind == "interpretation" and e.data.get("pattern"):
+                    self.patterns.setdefault(dev.id, []).append(e.data)
+                else:
+                    for t in targets[:1]:
+                        t.facts.append(f"remembered: {e.text} ({when})")
+
+    def _observe_open(self, port_id: str, text: str | None) -> None:
+        """benchscout's own observation, written without asking: opening a port that may reset did
+        not make it vanish. After two, propose (pending the human) treating listening as SAFE."""
+        from .io import VANISHED_MARK
+        from .memory import Entry
+
+        port = self.bench.ports[port_id]
+        if not port.may_reset_on_open or text is None or VANISHED_MARK in text:
+            return
+        dev = self.bench.devices[port.device_id]
+        key = self._key(dev)
+        self.memory.add(key, Entry(kind="observation", source="benchscout", target=port_id,
+                                   text=f"opened {port.path} and it did not vanish (no re-enumeration seen)",
+                                   time=time.strftime("%Y-%m-%dT%H:%M:%S")), self._header(dev))
+        entries = self.memory.entries(key)
+        seen = sum(1 for e in entries if e.kind == "observation" and e.target == port_id and "did not vanish" in e.text)
+        if seen >= 2 and not any(e.kind == "safety" and e.target == port_id and e.status in ("pending", "active", "rejected") for e in entries):
+            e = self.memory.add(key, Entry(kind="safety", source="benchscout", target=port_id, status="pending",
+                                           text=f"Listening to {port.path} did not reset {dev.name} ({seen} times). Treat listening as SAFE?",
+                                           data={"listen_safe": True}), self._header(dev))
+            self._memory_event(dev, e)
+
+    def _memory_event(self, dev, entry) -> None:
+        from dataclasses import asdict
+
+        self._emit({"event": "memory_added", "key": self._key(dev), "device": dev.id, "device_name": dev.name, "entry": asdict(entry)})
+
+    def remember(self, ref: str, kind: str, text: str, evidence: str = "", data: dict | None = None, source: str = "agent") -> dict:
+        """Written without asking (design.md 6). Safety-loosening entries wait for the human."""
+        from .memory import Entry
+
+        with self._lock:
+            dev, target = self._resolve_ref(ref)
+            if kind == "safety":
+                allowed = {"listen_safe"}
+                if not data or set(data) - allowed:
+                    return {"status": "rejected", "message": f"a safety entry needs data with only: {', '.join(sorted(allowed))}"}
+                port = next((p.id for p in self.bench.ports_of(dev.id) if p.id == ref or p.path == ref), None)
+                if not port:
+                    return {"status": "rejected", "message": "a safety entry is about one port: give its id or path"}
+                target = port
+            e = Entry(kind=kind, text=text, source=source, evidence=evidence, target=target or "",
+                      status="pending" if kind == "safety" else "active", data=data or {})
+            e = self.memory.add(self._key(dev), e, self._header(dev))
+        self._memory_event(dev, e)
+        return {"status": "pending_human" if e.status == "pending" else "remembered", "id": e.id}
+
+    def recall(self, ref: str | None = None) -> list[dict]:
+        from dataclasses import asdict
+
+        devs = [self._resolve_ref(ref)[0]] if ref else [self.bench.devices[d] for d in sorted(self.selected)] or list(self.bench.devices.values())
+        return [{"device": d.name, "key": self._key(d), "entries": [asdict(e) for e in self.memory.entries(self._key(d))]} for d in devs]
+
+    def decide_memory(self, key: str, entry_id: str, accept: bool) -> dict:
+        """Control channel only: the human confirms (or rejects) a safety-loosening entry."""
+        from dataclasses import asdict
+
+        e = self.memory.set_status(key, entry_id, "active" if accept else "rejected")
+        if accept and e.kind == "safety" and self.last and e.target in self.last.bench.ports and e.data.get("listen_safe"):
+            self.last.bench.ports[e.target].may_reset_on_open = False
+        self._emit({"event": "memory_decided", "key": key, "entry": asdict(e)})
+        return asdict(e)
+
+    def _resolve_ref(self, ref: str):
+        """A device, port or target reference -> (device, target id or "")."""
+        b = self.bench
+        if ref in b.targets:
+            port = b.ports_reaching(ref)[0]
+            return b.devices[port.device_id], ref
+        try:
+            pid = self.resolve_port(ref)
+            port = b.ports[pid]
+            ts = b.targets_via(pid)
+            return b.devices[port.device_id], ts[0].id if ts else ""
+        except KeyError:
+            dev = b.devices[self._resolve_device(ref)]
+            ts = [t for p in b.ports_of(dev.id) for t in b.targets_via(p.id)]
+            return dev, ts[0].id if len(ts) == 1 else ""
+
+    def identify(self, ref: str, name: str, quote: str) -> dict:
+        """The agent names a part, quoting the device's own output. benchscout checks the quote is
+        really in what it captured from that device (design.md section 3, "名前の付け方")."""
+        from .memory import Entry
+        from .model import Confidence, Evidence
+
+        q = (quote or "").strip()
+        with self._lock:
+            dev, tid = self._resolve_ref(ref)
+            if not tid:
+                return {"status": "rejected", "message": "say which target (a port of it, or the target id): the device has several"}
+            t = self.bench.targets[tid]
+            if len(q) < 6:
+                return {"status": "rejected", "message": "the quote is too short to be evidence; quote the device's output line"}
+            where = self._find_quote(tid, q)
+            if not where:
+                guess = f"guess (not verified): {name}"
+                if guess not in t.facts:
+                    t.facts.append(guess)
+                return {"status": "unverified", "message": "the quote is not in anything benchscout captured from this device; "
+                                                           "recorded as a guess, not as its name"}
+            t.name, t.confidence = name, Confidence.IDENTIFIED
+            t.evidence.append(Evidence("agent-read", f"\"{q}\" ({where})"))
+            e = self.memory.add(self._key(dev), Entry(kind="identity", text=name, source="agent", evidence=q, target=tid), self._header(dev))
+        self._memory_event(dev, e)
+        return {"status": "identified", "target": tid, "found_in": where}
+
+    def _find_quote(self, target_id: str, quote: str) -> str | None:
+        texts: list[tuple[str, str]] = []
+        for p in self.bench.ports_reaching(target_id):
+            w = self.watches.get(p.id)
+            if w:
+                texts.append(("the watched log", w.recent(RECENT_FOR_QUOTES)))
+            log = self.state / "logs" / (p.id.replace(":", "_") + ".log")
+            if log.exists():
+                texts.append((log.name, log.read_bytes()[-RECENT_FOR_QUOTES:].decode("utf-8", errors="replace")))
+            for f in sorted(self.artifacts.glob(f"*{p.id.replace(':', '_')}*"))[-20:]:
+                texts.append((f.name, f.read_text(errors="replace")))
+        for kind, (when, text) in self.observed.get(target_id, {}).items():
+            texts.append((f"output seen {when}", text))
+        for ev in self.bench.targets[target_id].evidence:
+            texts.append((ev.source, ev.detail))
+        return next((where for where, text in texts if quote in text), None)
+
     # ---- watching (design.md section 17) -------------------------------------------------
     def _autowatch(self) -> list[str]:
         """Selected devices' serial ports that are SAFE to open are watched right away; the others
@@ -209,7 +379,8 @@ class Broker:
         from .watch import PortWatch
 
         port = self.bench.ports[port_id]
-        w = PortWatch(self.io, port_id, port.path, self.state / "logs", self._device_event, baud, port.open_lines)
+        w = PortWatch(self.io, port_id, port.path, self.state / "logs", self._device_event, baud, port.open_lines,
+                      patterns=getattr(self, "patterns", {}).get(port.device_id, []))
         try:
             w.start()
         except Exception as e:  # busy elsewhere, gone: a fact, not a crash
@@ -338,6 +509,7 @@ class Broker:
                                  exclusive=True, baud=args["baud"], lines=port.open_lines)
             self.last.proposals = R.propose(self.bench)  # what we heard may change the next steps
             self._remember(port_id, text)
+            self._observe_open(port_id, text)
             if text is None:
                 detail = next((f for t in self.bench.targets_via(port_id) for f in reversed(t.facts) if "port disappeared" in f), "")
                 return {"error": "port disappeared while listening; the device likely reset or re-enumerated",

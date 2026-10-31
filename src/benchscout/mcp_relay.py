@@ -30,6 +30,7 @@ INSTRUCTIONS = """benchscout gives you the hardware bench. Rules that always hol
 - Never try to approve anything yourself. Approvals and device selection are made by the human in the benchscout panel.
 - Only devices the human selected can be used; if a call returns not_selected, use request_devices to ask for them.
 - When you need a decision from the human, call ask_user with short options instead of guessing or stopping.
+- Name a part only with bench_identify and a quote of the device's own output. Remember what you learn with bench_remember.
 - Name a part only when the evidence proves it; otherwise say it is unknown and list the facts.
 - When a proposal or impact carries a reason (why:), quote it; do not invent another one."""
 
@@ -122,6 +123,29 @@ Actions:
         "waiting", call again with the question_id."""
         return await _call("ask", {"question": question, "options": options, "question_id": question_id},
                            timeout=APPROVAL_WAIT_S + 60)
+
+    @mcp.tool()
+    async def bench_identify(target: str, name: str, quote: str) -> str:
+        """Name a part, quoting the device's own output that proves it (e.g. a ROM banner line).
+        `target` is a port id/path or target id from bench_scan. benchscout checks the quote is
+        really in what it captured from that device; if so the part is identified and remembered
+        for next time, otherwise it is kept only as a guess. Never name a part without this."""
+        return await _call("identify", {"target": target, "name": name, "quote": quote})
+
+    @mcp.tool()
+    async def bench_remember(ref: str, kind: str, text: str, evidence: str = "", data: dict | None = None) -> str:
+        """Remember something about a device for next time, without asking the human (they can
+        edit or delete it in the panel). `ref` is a device/port/target from bench_scan. `kind`:
+        observation (what it does), config (wiring, probe nets the human told you), interpretation
+        (data {"pattern": regex, "alert": text}: a line that means trouble on this device; it will be
+        watched for), command (a firmware command and what it does). kind "safety" (data
+        {"listen_safe": true} for one port) waits for the human to confirm. Quote evidence when you have it."""
+        return await _call("remember", {"ref": ref, "kind": kind, "text": text, "evidence": evidence, "data": data})
+
+    @mcp.tool()
+    async def bench_recall(ref: str | None = None) -> str:
+        """What is remembered about a device (or the selected devices), with dates and sources."""
+        return await _call("recall", {"ref": ref})
 
     @mcp.tool()
     async def request_devices(devices: list[str], reason: str, question_id: str | None = None) -> str:

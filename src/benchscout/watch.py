@@ -26,7 +26,7 @@ COOLDOWN_S = 30.0  # the same alert on the same port is reported at most this of
 
 class PortWatch:
     def __init__(self, io, port_id: str, path: str, log_dir: Path, on_event: Callable[[dict], None],
-                 baud: int = 115200, lines: str = "low"):
+                 baud: int = 115200, lines: str = "low", patterns: list[dict] | None = None):
         self.io, self.port_id, self.path = io, port_id, path
         self.baud, self.lines = baud, lines
         self.log = Path(log_dir) / (port_id.replace(":", "_") + ".log")
@@ -41,6 +41,11 @@ class PortWatch:
         self._last_alert: dict[str, float] = {}
         self._thread: threading.Thread | None = None
         self.alive = False
+        # lines this device is known to print when something is wrong, learned into memory (design.md 6)
+        import re as _re
+
+        self.patterns = [(_re.compile(p["pattern"]), p.get("alert", "remembered pattern")) for p in (patterns or [])
+                         if p.get("pattern")]
 
     # ---- lifecycle ------------------------------------------------------------------
     def start(self) -> None:
@@ -126,7 +131,7 @@ class PortWatch:
         text = self._partial + chunk.decode("utf-8", errors="replace")
         *lines, self._partial = text.split("\n")
         for line in lines:
-            alerts = K.classify_log(line)["alerts"]
+            alerts = K.classify_log(line)["alerts"] + [a for rx, a in self.patterns if rx.search(line)]
             for a in alerts:
                 now = time.monotonic()
                 if now - self._last_alert.get(a, -COOLDOWN_S) >= COOLDOWN_S:

@@ -34,7 +34,7 @@ from .report import render
 
 # ---- agent channel --------------------------------------------------------------
 
-AGENT_METHODS = ("scan", "inventory", "impact", "do", "actions", "ask", "request_devices")
+AGENT_METHODS = ("scan", "inventory", "impact", "do", "actions", "ask", "request_devices", "identify", "remember", "recall")
 
 
 def agent_dispatch(broker: Broker, method: str, params: dict) -> Any:
@@ -47,6 +47,12 @@ def agent_dispatch(broker: Broker, method: str, params: dict) -> Any:
         return broker.impact(params["action"], params["port"], params.get("args")).to_dict()
     if method == "do":
         return broker.request(params["action"], params["port"], params.get("args"), params.get("approval_id"))
+    if method == "identify":
+        return broker.identify(params["target"], params["name"], params.get("quote", ""))
+    if method == "remember":
+        return broker.remember(params["ref"], params["kind"], params["text"], params.get("evidence", ""), params.get("data"))
+    if method == "recall":
+        return broker.recall(params.get("ref"))
     if method == "request_devices":
         return broker.request_devices(params.get("devices") or [], params.get("reason", ""), params.get("question_id"))
     if method == "ask":
@@ -171,6 +177,13 @@ def control_dispatch(broker: Broker, method: str, params: dict) -> Any:
         return [asdict(a) for a in broker.approvals.pending()]
     if method == "answer":
         return broker.answer(params["question_id"], params.get("choice"), params.get("reply"))
+    if method == "memory":
+        return broker.recall(params.get("ref"))
+    if method == "memory_decide":
+        return broker.decide_memory(params["key"], params["id"], bool(params["accept"]))
+    if method == "memory_delete":
+        broker.memory.delete(params["key"], params["id"])
+        return {"deleted": params["id"]}
     if method == "questions":
         return [asdict(q) for q in broker.questions.pending()]
     raise ValueError(f"unknown control method {method!r}")
