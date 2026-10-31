@@ -9,7 +9,7 @@
 ## 0. 1分で読む要約
 
 - **何か**:PC に刺さった FPGA / MCU / 測定器を起動時に自分で偵察し、見立てを添えて「どれを見ますか?」と聞き、
-  選ばれた機器の観察・診断・実機操作をエージェントが進めるホストアプリ(GUI)
+  選ばれた機器の観察・診断・実機操作をエージェントが進めるホストアプリ(GUI。Tauri の単体バイナリで配布、§14)
 - **思想**:中身は skills と MCP のまま。違うのは **向こうから動く** こと(proactive + situated)
 - **頭脳は既存エージェント**:LLM の推論、ファイル操作、シェル、会話管理は Claude Code / GitHub Copilot に任せる。
   benchscout は LLM 機能を自前で作らず、**SDK で既存エージェントを内部に埋め込む**
@@ -288,7 +288,7 @@ dev pack を足すとグラフに「ソース → ファームウェアイメー
 
 ## 7. 画面ラフ(未実装)
 
-**GUI を作る**(CLI / TUI は開発・デバッグ用に残す)。実装方式は未決(§12)。
+**GUI を作る**(CLI / TUI は開発・デバッグ用に残す)。Tauri のデスクトップアプリとして配布する(§14)。
 
 **起動直後**:上にバックエンドの選択と「何を見たい?」の入力欄。中央に見つかったデバイスのカード(同定済み/不明、根拠つき、
 異常は先頭)。おすすめの組み合わせが初期選択された状態で「これを見る」(複数選択可)。下に提案カード(許可/スキップのボタン)。
@@ -358,6 +358,8 @@ dev pack を足すとグラフに「ソース → ファームウェアイメー
 | 2026-10-31 | プロトコルはコマンド辞書 / Codec / Transport の3段。ユーザーが足すのは辞書 | ― |
 | 2026-10-31 | MCP ツールは汎用(`bench_commands` / `bench_call`)。コマンドごとに生成しない | Octopus Protocol 流のツール生成:バックエンドごとに見え方が変わり、ツール数が増える |
 | 2026-10-31 | ハードコードしない。知識・プロトコル・設定はデータ | ― |
+| 2026-10-31 | exe などの単体バイナリで配布する。殻は Tauri | Electron:重い。`uv tool install` だけの配布:エンジニア以外に配れない |
+| 2026-10-31 | コアは Python のまま、Tauri のサイドカーにする(案、§14) | Rust 書き直し:VISA と Claude Agent SDK がない。TS コア:Node の同梱が要り Electron を避けた意味が薄れる |
 
 ## 12. 未解決・次にやること
 
@@ -373,7 +375,8 @@ dev pack を足すとグラフに「ソース → ファームウェアイメー
 未決のこと:
 
 - **データファイルの形式**:TOML 案(Python 標準の `tomllib` で読める)。未確定
-- **技術スタックと GUI の実装方式**:§14 の案(Python のコア + Web の画面、境界は WebSocket のイベント)。未確定
+- **コアを Python のままにすること**:§14 の案(Tauri の殻 + TS の画面 + Python のサイドカー)。サイドカーのサイズと起動時間を実測してから確定する
+- **画面のフレームワーク**(React / Svelte など):GUI に着手するときに決める
 - **認証と課金**:Claude Agent SDK をサブスクで使えるか。Copilot SDK は premium request か BYOK
 - **bench モードでエージェントに何を許すか**:ファイル書き込みやシェルをどこまで許可するか(SDK の許可判定で決める)
 - **承認を会話の中で済ませる**:GUI のボタンが本命。MCP elicitation も選択肢
@@ -414,7 +417,7 @@ src/benchscout/
 ├── core/              ドメイン非依存:グラフ、ポリシー、ブローカー、承認、レジストリ
 │   └── protocol/      Transport と Codec(汎用の仕組み:serial / tcp / visa、line-shell / scpi / at / binary)
 ├── backends/          L3 アダプタ:claude_sdk、copilot_sdk(SDK の型はここから外に出さない)
-├── ui/                GUI
+├── server/            画面向けの WebSocket(イベントとコマンド)
 ├── mcp_server.py      MCP の口
 ├── cli.py
 └── packs/
@@ -423,48 +426,72 @@ src/benchscout/
 
 将来の dev pack は `packs/dev/` として並べる。`core/` から `packs/` を import しない。
 
-## 14. 技術スタック(案。2026-10-31 時点で未決)
+画面と殻はリポジトリ直下に置く(GUI に着手するときに作る):
 
-「Python のままで良いか」を、層ごとに必要なものから検討した。
+```
+benchscout/
+├── src/benchscout/   Python のコア(サイドカーになる)
+├── app/              Tauri の殻(src-tauri/)と画面(TypeScript)
+└── docs/ fixtures/ tests/
+```
+
+## 14. 技術スタック
+
+2026-10-31 に決めたこと:**exe などの単体バイナリで配布する。デスクトップの殻は Electron ではなく Tauri。**
+コアを Python のままにするかは、この前提で検討し直した(下の「判断」)。
 
 ### 層ごとの比較
 
 | 層 | 必要なもの | Python | TypeScript / Node | Rust |
 |---|---|---|---|---|
 | ハードウェア | シリアル、VISA、USB 列挙、esptool など | ◎ pyserial、pyvisa-py(純 Python、NI-VISA 不要)、esptool 自体が Python、pytest-embedded、labgrid | △ serialport はあるが、VISA は実用的なものがない | △ serialport はある。VISA は NI-VISA が必要 |
-| エージェント SDK | Claude Agent SDK、Copilot SDK | ◎ 両方あり、どちらも CLI 同梱 | ◎ 両方あり | △ Copilot のみ、Claude はなし |
+| エージェント SDK | Claude Agent SDK、Copilot SDK | ◎ 両方あり、どちらも CLI 同梱 | ◎ 両方あり(ただし Node の実行環境が要る) | △ Copilot のみ、Claude はなし |
 | MCP サーバー | ブローカーの口 | ◎ 公式(使用中) | ◎ 公式 | ○ rmcp |
 | 数値処理 | 波形を数値で報告する | ◎ numpy | △ | △ |
-| GUI | 一覧、ログ、会話、承認 | △ Qt(PySide6)は重い。Web にするなら結局 TS が要る | ◎ | ○ Tauri(画面は Web) |
-| 配布 | ハードウェア技術者の Mac / Win / Linux | ○ `uv tool install`。単体バイナリは手間 | ◎ Electron(重い) | ◎ Tauri(軽い) |
+| GUI | 一覧、ログ、会話、承認 | △ 単体では弱い | ◎(画面) | ◎ Tauri(画面は Web) |
+| 単体バイナリ | Win / Mac / Linux | △ PyInstaller などで固める。大きく、手間がある | △ Node ごと同梱(Electron 相当) | ◎ |
 | 既存資産 | 約 1250 行 + テスト | ◎ そのまま | × 書き直し | × 書き直し |
 
 ### 判断
 
-- **一番置き換えにくいのはハードウェアの層**(特に VISA と esptool)で、ここは Python がほぼ唯一の選択肢
-- **エージェント SDK は Python と TS で差がない**(どちらも公式、CLI 同梱)。TS に移る理由にならない
-- **GUI は、どの言語を選んでも Web 技術(TS)になる**。なら、コアと画面を言語で分けてよい
+- **殻は Tauri(Rust)、画面は TS、コアは Python のまま。** コアは Tauri のサイドカー(同梱の別バイナリ)として PyInstaller で固める
+- Tauri にしても、コアを Rust に書き直す理由は弱い。VISA が NI-VISA 頼みになり、Claude Agent SDK に Rust 版がなく、既存資産も捨てることになる
+- TS コアは、SDK を動かすために Node を同梱することになり、Electron を避けた意味が薄れる
+- 境界をイベントのプロトコルにしておけば、サイドカーの負担が大きくなったときに、コアの一部(ブローカーやポートの持ち主)を後から Rust に移せる
 
-### 案:Python のコア + Web の画面(TS)、境界はイベントのプロトコル
+### 構成
 
 ```
-[ブラウザ or デスクトップの殻]  TypeScript + Vite(フレームワークは未決)
-        ↑↓ WebSocket(JSON のイベントとコマンド。スキーマは pydantic から JSON Schema で出す)
-[benchscout コア]  Python。ブローカー、ポリシー、偵察、プロトコル層、MCP の口、バックエンドアダプタ
+benchscout.exe / .app / AppImage  (Tauri)
+├── 殻(Rust、薄く保つ)  ウィンドウ、サイドカーの起動と監視、終了処理、自動更新
+├── 画面(TypeScript + Vite、フレームワークは未決)
+│       ↑↓ WebSocket(127.0.0.1 のみ、起動ごとのトークン必須。JSON のイベントとコマンド、スキーマは pydantic から JSON Schema で出す)
+└── サイドカー:benchscout-core(Python を PyInstaller で固めたもの)
+        ブローカー、ポリシー、偵察、プロトコル層、MCP の口、バックエンドアダプタ(SDK と同梱の CLI)
         ↓
-[実機 / 外部ツール]
+    実機 / 外部ツール(openFPGALoader、openocd などは当面 PATH から探す。esptool は Python なので同梱できる)
 ```
 
-- **画面とコアは別プロセス。** 画面からも承認をすり抜けられない(承認はブローカーにしかない、§3)
-- **境界をイベントのプロトコルとして文書化する。** 画面の言語や、将来コアの一部を別の言語にすることも差し替えられる
-- 当面はローカル Web(コアが配信し、ブラウザで開く)。デスクトップアプリが必要になったら、Tauri や pywebview の殻で包む
-  (コアは PyInstaller などでサイドカーにする)
+- **画面とコアは別プロセス。** 承認はブローカーにしかないので、画面からもすり抜けられない(§3)
+- **殻にロジックを持たせない。** Rust 側はプロセスの管理だけ。ポリシーや承認を殻に書かない
+- **WebSocket はトークンで守る。** 同じ PC の別のプロセスやブラウザのページが、ブローカーに承認を送れてはいけない。
+  殻が起動のたびに乱数のトークンを作り、サイドカーと画面にだけ渡す
+- **開発中は殻なしで動く。** `uv run benchscout serve` でコアを起動し、画面はブラウザで開く。CLI と MCP の口(素の Claude Code から使う道)もそのまま残す
+
+### バイナリ配布で増える仕事
+
+- OS ごとにビルドが要る(クロスコンパイルはできない)→ CI で Win / Mac / Linux を作る
+- 署名:macOS は署名と公証が要り、殻とサイドカーの両方が対象。Windows も署名がないと SmartScreen に止められやすい。
+  PyInstaller の exe はウイルス対策ソフトに誤検知されることがある
+- サイズ:Python の実行環境に加え、エージェント SDK が同梱する CLI も入るので大きくなる(数値は実測してから記録する)
+- エージェントの認証(Claude / Copilot のログインや API キー)は利用者がする。アプリに鍵を埋め込まない
 
 ### Python の中での選択
 
 | 用途 | 選択 | 理由 |
 |---|---|---|
 | 版と環境 | Python 3.11+、uv、hatchling | 今のまま。`tomllib` が標準で使える |
+| 固め方 | PyInstaller(第一候補)、Nuitka(比較用) | Tauri のサイドカーで実績が多い。起動時間とサイズが問題なら Nuitka を試す |
 | 型と検証 | pydantic v2 | action の引数、設定ファイル、イベントのスキーマを1か所で定義し、JSON Schema にも出せる。mcp の依存として既に入っている |
 | 並行処理 | asyncio(anyio) | エージェント SDK と MCP が非同期。pyserial などの同期 I/O はスレッドで包む |
 | Web サーバー | Starlette + uvicorn | mcp の依存として既に入っている。新しい依存を増やさない |
@@ -473,6 +500,6 @@ src/benchscout/
 
 ### 見直す条件(ここに当たったら再検討)
 
-- エンジニア以外にワンクリックで配る必要が出て、Python の同梱が重荷になった
-- ロジアナなど高レートのデータを流す必要が出て、Python が遅い。その経路だけを Rust などに出す
+- サイドカーの起動時間、サイズ、誤検知、署名の手間が許容できない → ブローカーとポートの持ち主から Rust に移す
+- ロジアナなど高レートのデータで Python が遅い → その経路だけを Rust に出す
 - Claude Agent SDK の Python 版が TS 版より明らかに遅れ、必要な機能が使えない

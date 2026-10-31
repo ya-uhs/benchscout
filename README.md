@@ -13,7 +13,7 @@ source of truth; this README is a summary of it.
 
 | | Now | Target |
 |---|---|---|
-| Host | `benchscout start` launches Claude Code | benchscout is a GUI app that embeds the agent via its SDK (Claude Agent SDK, then Copilot SDK) |
+| Host | `benchscout start` launches Claude Code | a Tauri desktop app shipped as a single binary (exe/.app); the Python core runs as its sidecar and embeds the agent via its SDK (Claude Agent SDK, then Copilot SDK) |
 | LLM / file ops | Claude Code | still the existing agent; benchscout never runs its own LLM loop |
 | Approval | `benchscout approve <id>` on the CLI | a button in the GUI, enforced by the SDK's tool-permission callback |
 | Protocols | hard-coded in Python | command dictionary / codec / transport; user-defined commands added by config |

@@ -27,6 +27,9 @@ load in `bench-session/`, which must look exactly like an end user's workspace.
   existing agents (Claude Code, GitHub Copilot). Do not build an agent loop or an LLM provider layer.
 - **Embed those agents through their SDKs** (Claude Agent SDK first, then Copilot SDK, ACP later),
   with benchscout as the host app (GUI). The plain Claude Code path (`benchscout setup`) stays.
+- **Ship as a single binary via Tauri** (not Electron): thin Rust shell + TypeScript UI + this
+  Python core as a PyInstaller sidecar, talking over a token-protected localhost WebSocket.
+  No policy or approval logic in the shell (design.md section 14).
 - **benchscout owns**: startup recon, the broker (safety gate), knowledge and protocol definitions
   as data, and the proposal/approval UI.
 - **Scope is bench observation, diagnosis and hardware operation.** No edit/build/flash workflow,
