@@ -74,12 +74,13 @@ def cmd_core(a) -> None:
 
     ws = Path(a.workspace).resolve()
     broker = Broker(_io(), ws / ".benchscout", locks=DeviceLocks(owner_info(ws)), approval_wait=a.wait)
-    core = Core(broker, agent_address(ws)[0])
+    human = sys.stdin.isatty() and not a.json
+    core = Core(broker, agent_address(ws)[0], human=human)
     broker.on_event = core.emit
-    if sys.stdin.isatty():
-        print("benchscout core: this terminal is the control channel. Commands: scan | select <device>... | "
-              "approve <id> [once|session|<N>m] | deny <id> | pending | quit", file=sys.stderr)
-    core.run()
+    try:
+        core.run()
+    except KeyboardInterrupt:
+        pass  # run() already stopped the core and released the devices
 
 
 def cmd_mcp(a) -> None:
@@ -149,6 +150,7 @@ def main(argv: list[str] | None = None) -> None:
     c = sub.add_parser("core", help="run the core for a folder; stdin/stdout is the control channel")
     c.add_argument("--workspace", default=".")
     c.add_argument("--wait", type=float, default=100.0, help="seconds a call waits for a decision")
+    c.add_argument("--json", action="store_true", help="JSON lines even at a terminal (what the extension uses)")
     c.set_defaults(fn=cmd_core)
     m = sub.add_parser("mcp", help="MCP server for agents; relays to the folder's core")
     m.add_argument("--workspace", default=None)

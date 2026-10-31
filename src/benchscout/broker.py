@@ -102,6 +102,8 @@ class Broker:
         devs = b.devices
         if ref in devs:
             return ref
+        if ref.isdigit() and 1 <= int(ref) <= len(devs):  # the number shown in the console's list
+            return list(devs)[int(ref) - 1]
         # also accept what people see: a port id or path (usbserial-10), or part of the name
         names = {d: [d, devs[d].name.lower()] + [x for p in b.ports_of(d) for x in (p.id, p.path or "")] for d in devs}
         hits = [d for d, keys in names.items() if any(ref.lower() in k.lower() for k in keys if k)]
@@ -181,10 +183,12 @@ class Broker:
         port = self.bench.ports[port_id]
         if action == "serial.listen":
             text = R.listen_into(self.io, port.path, self.bench.targets_via(port_id), args["seconds"],
-                                 exclusive=True, baud=args["baud"])
+                                 exclusive=True, baud=args["baud"], lines=port.open_lines)
             self.last.proposals = R.propose(self.bench)  # what we heard may change the next steps
             if text is None:
-                return {"error": "port disappeared while listening; the device likely reset or re-enumerated"}
+                detail = next((f for t in self.bench.targets_via(port_id) for f in reversed(t.facts) if "port disappeared" in f), "")
+                return {"error": "port disappeared while listening; the device likely reset or re-enumerated",
+                        "detail": detail}
             return self._save_artifact(f"{port_id}-listen-{args['baud']}.txt", text, preview=text[-2000:])
         if action in ("scpi.query", "scpi.write"):
             return self.io.visa_query(port.path, args["command"])

@@ -254,3 +254,20 @@ def test_openfpgaloader_only_targets_ftdi_jtag(tmp_path):
     recon.run(io)
     scanned = [c[1] for c in io.calls if c[0] == "jtag_scan"]
     assert scanned == ["210319A8C7D1"]  # the FT2232H board, not the ESP32's USB-JTAG
+
+
+def test_port_that_vanishes_and_comes_back_still_yields_the_boot_log(tmp_path):
+    """Real bench, 2026-10-31: opening the ESP32's native USB port reset it; the port vanished
+    and came back about a second later. Reading on catches the boot banner."""
+    boot = "ESP-ROM:esp32s3-20210327\nrst:0x15 (USB_UART_CHIP_RESET),boot:0x8 (SPI_FAST_FLASH_BOOT)\n"
+    io = _variant(tmp_path, lambda d: d["listen"].update({"/dev/cu.usbmodem1101": {"then": boot}}))
+    br = Broker(io, tmp_path / "s")
+    br.scan()
+    br.select([br.bench.ports["serial:usbmodem1101"].device_id])
+    aid = br.request("serial.listen", "serial:usbmodem1101")["approval_id"]
+    br.decide(aid, True)
+    assert br.request("serial.listen", "serial:usbmodem1101", approval_id=aid)["status"] == "done"
+    esp = target_named(br.bench, "ESP32-S3")
+    assert any("vanished" in f and "came back" in f for f in esp.facts)
+    assert not any("benchscout]" in f for f in esp.facts)  # our marker is not reported as device output
+    assert io.lines[-1] == "asserted"  # dropping DTR/RTS reset this chip on every open

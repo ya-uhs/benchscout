@@ -48,6 +48,9 @@ class Port:
     interface: int | None = None
     # Opening this serial port may pulse DTR/RTS into an auto-reset circuit.
     may_reset_on_open: bool = False
+    # How to set DTR/RTS when opening: "low" (drop both; avoids Arduino-style DTR resets) or
+    # "asserted" (leave them as the OS opened them; for chips that reset on the transition).
+    open_lines: str = "low"
     evidence: list[Evidence] = field(default_factory=list)
 
 

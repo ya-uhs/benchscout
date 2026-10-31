@@ -161,10 +161,11 @@ def control_dispatch(broker: Broker, method: str, params: dict) -> Any:
 
 
 class Core:
-    def __init__(self, broker: Broker, address: str | Path, out: IO[str] = sys.stdout):
+    def __init__(self, broker: Broker, address: str | Path, out: IO[str] = sys.stdout, human: bool = False):
         self.broker = broker
         self.address = str(address)
         self._out: IO[str] | None = out
+        self.human = human  # readable text for a person at a terminal instead of JSON lines
         self._out_lock = threading.Lock()
         self.server: AgentServer | None = None
 
@@ -173,7 +174,15 @@ class Core:
             if self._out is None:
                 return
             try:
-                self._out.write(json.dumps(msg, default=str) + "\n")
+                if self.human:
+                    from .console import format_human
+
+                    text = format_human(msg, self.broker)
+                    if text is None:
+                        return
+                    self._out.write(text + "\n")
+                else:
+                    self._out.write(json.dumps(msg, default=str) + "\n")
                 self._out.flush()
             except (BrokenPipeError, ValueError, OSError):
                 self._out = None  # the controller is gone; stop() still frees the devices

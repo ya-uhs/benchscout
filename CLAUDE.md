@@ -58,7 +58,9 @@ uv run benchscout scan                                                  # recon 
 BENCHSCOUT_FIXTURE=fixtures/bench_example.json uv run benchscout core   # core without hardware; type commands to approve
 ```
 
-Until the VS Code extension exists, the terminal running `benchscout core` is the control channel.
+Until the VS Code extension exists, the terminal running `benchscout core` is the control channel:
+at a terminal it prints a readable view (devices numbered, approvals with the commands to answer
+them); `--json` or a pipe gives the JSON lines the extension will use.
 
 `~/.local/bin/benchscout` is a `uv tool` editable install of this directory, so code
 changes reach the CLI and the MCP server without reinstalling (reconnect with `/mcp`).
@@ -82,9 +84,14 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
 
 ## Working in this repo
 
-- Do not touch hardware from this session: no opening `/dev/cu.*`, no esptool,
-  openocd or SCPI scripts. New behaviour is tested against `FixtureIo` first; add a
-  fixture case to `fixtures/` or the test instead of probing the real bench.
+- Real hardware from this session goes through the product path only: `benchscout core`
+  (with `bench-session` as its workspace) and the MCP relay, the same gate any agent gets.
+  Never open `/dev/cu.*` or run esptool, openocd or SCPI scripts directly. SAFE actions are
+  fine; anything that is not SAFE (it resets or writes something) only after the user says OK
+  in chat for that action. Why: this session has a shell and can edit code, so a direct probe
+  could reset or rewrite a board the user is working on, and would test a path no user takes.
+- New behaviour is tested against `FixtureIo` first. When the real bench shows something,
+  record it in `fixtures/` or a test so the suite keeps covering it without hardware.
 - Real-hardware checks happen in `../bench-session`, a workspace set up exactly as an end user
   would get it (today by `benchscout setup` for Claude Code; later by opening it in VS Code with
   the extension). Do not hand-edit its `.mcp.json` or `.claude/`; if they are wrong, fix
@@ -111,6 +118,11 @@ Causes are known (design.md section 10).
   (`actions.py`), e.g. {"seconds": 3, "baud": 9600}, with ranges; bad args are rejected.
 - The fabric UART on the Tang Nano is silent at 9600-230400 baud (checked 2026-10-31), so it is
   not a common-baud problem; whether the bitstream drives the UART is still unknown.
+- ESP32 native USB: dropping DTR/RTS after opening reset the chip on every (re)open. Opened with
+  the lines left asserted (knowledge `open_lines: asserted`) it did not reset and its firmware
+  output was read (`sample: uptime_ms=...`). One observation; listen stays DISRUPTIVE until
+  confirmed again. No reset means no boot log, so the exact chip is still unknown.
+- Re-scanning rebuilds the graph and drops what earlier listens found (design.md section 10).
 - Fixed: MCP clients start the relay with a trimmed environment (no TMPDIR), so the runtime
   dir now depends only on the home directory. Keep anything the core and relay must agree on
   independent of environment variables.

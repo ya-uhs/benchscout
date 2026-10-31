@@ -334,3 +334,25 @@ def test_setup_re_enables_a_server_disabled_earlier(tmp_path):
     settings = json.loads((tmp_path / ".claude/settings.local.json").read_text())
     assert settings["disabledMcpjsonServers"] == ["other"]
     assert "benchscout" in settings["enabledMcpjsonServers"]
+
+
+def test_console_view_is_readable(io, tmp_path, addr):
+    out = stdio.StringIO()
+    br = Broker(io, tmp_path)
+    core = Core(br, addr, out, human=True)
+    br.on_event = core.emit
+    core.run(stdio.StringIO("select 3\npending\n"), initial_scan=True)
+    text = out.getvalue()
+    assert "{" not in text.split("Devices")[1].split("Selected")[0]  # no raw JSON
+    assert "  3. WCH CH340" in text and "Selected: WCH CH340" in text
+    assert "devices released" in text
+
+
+def test_console_shows_approvals_with_the_commands_to_answer(io, tmp_path, addr):
+    out = stdio.StringIO()
+    br = broker_with(io, tmp_path, CH340)
+    core = Core(br, addr, out, human=True)
+    br.on_event = core.emit
+    aid = br.request("serial.listen", CH340)["approval_id"]
+    text = out.getvalue()
+    assert "APPROVAL NEEDED  [DISRUPTIVE]" in text and f"approve {aid}" in text and f"approve {aid} session" in text

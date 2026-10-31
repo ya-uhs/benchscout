@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Callable
 
 from . import knowledge as K
-from .io import Io
+from .io import VANISHED_MARK, Io
 from .model import Bench, Confidence, Device, Evidence, Port, Target
 from .policy import Effect, Impact, classify
 
@@ -135,6 +135,7 @@ def _apply_usb_knowledge(b: Bench, dev: Device, info: dict, serials: list[dict],
                                 facts=[info["family"]], evidence=[Evidence("usb-descriptor", f"{info['name']} enumerates from the chip itself")]))
         for s in serials:
             p = _serial_port(b, dev, s, may_reset=info.get("may_reset_on_open", False))
+            p.open_lines = info.get("open_lines", "low")
             b.link(p.id, t.id, "uart", Evidence("usb-descriptor", "CDC-ACM of the chip"))
         if info.get("jtag"):
             p = b.add_port(Port(f"jtag:{short}", dev.id, "jtag", evidence=[Evidence("usb-descriptor", "built-in USB-JTAG interface")]))
@@ -271,16 +272,21 @@ def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] 
 
 
 def listen_into(io: Io, path: str, targets: list[Target], seconds: float, exclusive: bool = False,
-                baud: int = 115200) -> str | None:
+                baud: int = 115200, lines: str = "low") -> str | None:
     """Listen and fold what was heard into the targets. A port that vanishes mid-read
     (USB re-enumeration, usually a reset) is recorded as a fact, not a crash."""
     try:
-        text = io.serial_listen(path, seconds, baud, exclusive)
+        text = io.serial_listen(path, seconds, baud, exclusive, lines)
     except Exception as e:  # serial.SerialException / OSError: device went away
         for t in targets:
             t.facts.append(f"ALERT: port disappeared while listening ({e}); the device likely reset or re-enumerated")
         return None
-    apply_log(targets, text)
+    if VANISHED_MARK in text:
+        for t in targets:
+            fact = "the port vanished while listening (the device reset or re-enumerated) and came back; kept listening"
+            if fact not in t.facts:
+                t.facts.append(fact)
+    apply_log(targets, "\n".join(l for l in text.splitlines() if VANISHED_MARK not in l))
     return text
 
 

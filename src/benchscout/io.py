@@ -16,6 +16,12 @@ import time
 from pathlib import Path
 from typing import Protocol
 
+# A listen that loses its port (reset, re-enumeration) waits for it and reads on.
+VANISHED_MARK = "[benchscout] port vanished (device reset or re-enumerated)"
+REOPENS = 2
+REAPPEAR_S = 3.0
+AFTER_REOPEN_S = 2.0
+
 TOOLS = ("esptool.py", "esptool", "openocd", "openFPGALoader", "probe-rs", "sigrok-cli")
 
 
@@ -28,7 +34,7 @@ class Io(Protocol):
 
     # access: opens things; callers go through policy first
     def visa_query(self, resource: str, command: str) -> str | None: ...
-    def serial_listen(self, path: str, seconds: float, baud: int, exclusive: bool = False) -> str: ...
+    def serial_listen(self, path: str, seconds: float, baud: int, exclusive: bool = False, lines: str = "low") -> str: ...
     def jtag_scan(self, usb_serial: str | None) -> list[dict]: ...  # [{idcode, manufacturer, model}]
 
 
@@ -127,28 +133,68 @@ class LiveIo:
         except Exception:
             return None
 
-    def serial_listen(self, path: str, seconds: float, baud: int = 115200, exclusive: bool = False) -> str:
+    def serial_listen(self, path: str, seconds: float, baud: int = 115200, exclusive: bool = False,
+                      lines: str = "low") -> str:
+        """Read for `seconds`. If the port vanishes (a native-USB chip resets on open and
+        re-enumerates; real bench 2026-10-31), wait for it to come back and keep reading, so
+        the boot log is caught. Reopening can reset the chip again, so at most REOPENS times."""
         import serial
 
-        s = serial.Serial()
-        s.port, s.baudrate, s.timeout = path, baud, 0.1
-        if exclusive and platform.system() != "Windows":
-            # TIOCEXCL: while we hold a selected device's port, nothing else (an agent's
-            # shell, another tool) can open it. Windows COM ports are exclusive anyway.
-            s.exclusive = True
-        # Preset both lines low so opening does not request a reset/bootloader.
-        # Some OS drivers still pulse DTR on open; policy marks those ports.
-        s.dtr = False
-        s.rts = False
-        s.open()
+        def open_port():
+            s = serial.Serial()
+            s.port, s.baudrate, s.timeout = path, baud, 0.1
+            if exclusive and platform.system() != "Windows":
+                # TIOCEXCL: while we hold a selected device's port, nothing else (an agent's
+                # shell, another tool) can open it. Windows COM ports are exclusive anyway.
+                s.exclusive = True
+            if lines == "low":
+                # Preset both lines low so opening does not request a reset/bootloader.
+                # Some OS drivers still pulse DTR on open; policy marks those ports.
+                s.dtr = False
+                s.rts = False
+            s.open()
+            return s
+
+        start = time.monotonic()
+        end = start + seconds
         buf = bytearray()
+        s = open_port()
+        reopens = 0
         try:
-            end = time.monotonic() + seconds
             while time.monotonic() < end:
-                buf += s.read(4096)
+                try:
+                    buf += s.read(4096)
+                    continue
+                except (serial.SerialException, OSError) as e:
+                    s.close()
+                    gone_at = time.monotonic() - start
+                    s = None
+                    if reopens < REOPENS:
+                        s = self._wait_reopen(open_port, max(end, time.monotonic() + REAPPEAR_S))
+                    if s is None:
+                        why = f"vanished again after {reopens} reopen(s)" if reopens >= REOPENS else "did not come back"
+                        if not buf.strip():
+                            raise OSError(6, f"port {why} (at {gone_at:.1f} s): {e}") from e
+                        # keep what was heard; it may hold the boot log
+                        buf += f"\n{VANISHED_MARK} at {gone_at:.1f} s; {why}\n".encode()
+                        return buf.decode("utf-8", errors="replace")
+                    reopens += 1
+                    buf += f"\n{VANISHED_MARK} at {gone_at:.1f} s; reopened at {time.monotonic() - start:.1f} s\n".encode()
+                    end = max(end, time.monotonic() + AFTER_REOPEN_S)  # give the boot log time to arrive
         finally:
-            s.close()
+            if s is not None:
+                s.close()
         return buf.decode("utf-8", errors="replace")
+
+    @staticmethod
+    def _wait_reopen(open_port, deadline: float):
+        while time.monotonic() < deadline:
+            time.sleep(0.1)
+            try:
+                return open_port()
+            except Exception:
+                continue
+        return None
 
     def jtag_scan(self, usb_serial: str | None) -> list[dict]:
         exe = shutil.which("openFPGALoader")
@@ -234,6 +280,7 @@ class FixtureIo:
         self.calls: list[tuple] = []  # what access was attempted, for tests/audit
         self.exclusive_opens: list[str] = []
         self.bauds: list[int] = []
+        self.lines: list[str] = []
 
     def usb_devices(self) -> list[dict]:
         return [dict(d, vid=int(d["vid"], 16), pid=int(d["pid"], 16)) for d in self.data.get("usb", [])]
@@ -252,13 +299,17 @@ class FixtureIo:
         self.calls.append(("visa_query", resource, command))
         return self.data.get("visa", {}).get(resource, {}).get(command)
 
-    def serial_listen(self, path: str, seconds: float, baud: int = 115200, exclusive: bool = False) -> str:
+    def serial_listen(self, path: str, seconds: float, baud: int = 115200, exclusive: bool = False,
+                      lines: str = "low") -> str:
         self.calls.append(("serial_listen", path))
+        self.lines.append(lines)
         if exclusive:
             self.exclusive_opens.append(path)
         self.bauds.append(baud)
         v = self.data.get("listen", {}).get(path, "")
-        if isinstance(v, dict) and "error" in v:  # simulate a port that vanishes mid-read
+        if isinstance(v, dict) and "then" in v:  # vanishes, comes back, keeps printing
+            return f"\n{VANISHED_MARK} at 0.1 s; reopened at 0.9 s\n" + v["then"]
+        if isinstance(v, dict) and "error" in v:  # simulate a port that vanishes for good
             raise OSError(6, v["error"])
         return v
 

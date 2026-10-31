@@ -30,6 +30,8 @@ USB_IDS: dict[tuple[int, int], dict] = {
         # Observed on a real bench (macOS): opening the CDC port reset the chip and the
         # USB device re-enumerated mid-read. Treat opening as disruptive.
         "may_reset_on_open": True,
+        # Real bench 2026-10-31: dropping DTR/RTS after open reset it on every (re)open.
+        "open_lines": "asserted",
     },
     (0x0483, 0x374B): {"name": "ST-LINK/V2-1", "role": "probe", "probe": "swd"},
     (0x0483, 0x374E): {"name": "STLINK-V3", "role": "probe", "probe": "swd"},
