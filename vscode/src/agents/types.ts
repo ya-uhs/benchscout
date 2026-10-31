@@ -50,7 +50,9 @@ export interface AgentDriver {
 }
 
 /** Names of benchscout's MCP tools, to recognise them in permission requests. */
-export const BENCHSCOUT_TOOLS = ["bench_scan", "bench_inventory_json", "bench_impact", "bench_do", "ask_user", "request_devices"];
+// Kept in sync with mcp_relay.py by tests/test_relay_tools.py.
+export const BENCHSCOUT_TOOLS = ["bench_scan", "bench_inventory_json", "bench_impact", "bench_do", "bench_log",
+  "bench_identify", "bench_remember", "bench_recall", "ask_user", "request_devices"];
 
 export function isBenchscoutTool(name: string): boolean {
   const n = name.replace(/^mcp__benchscout__/, "").replace(/^benchscout[-_]/, "");

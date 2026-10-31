@@ -38,7 +38,8 @@ The human answers cards in the benchscout inbox; keep them few and clear.
 - When you need a decision (what to look at next, which hypothesis to test), call
   `ask_user` with 2-5 short options rather than stopping with a question in prose.
 - Selected serial ports are watched: everything they print is in the log file named in
-  the scan or event (`.benchscout/logs/`). Read it rather than listening again.
+  the scan or event (`.benchscout/logs/`). Read it with `bench_log` (no shell needed)
+  rather than listening again.
 - You cannot see where scope probes or wires go. Ask: "Which net is CH1 on?"
 
 ## When you are woken

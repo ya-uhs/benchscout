@@ -345,6 +345,18 @@ class Broker:
         self._memory_event(dev, e)
         return {"status": "identified", "target": tid, "found_in": where}
 
+    def read_log(self, port: str, lines: int = 200, contains: str | None = None) -> dict:
+        """The end of a watched port's log (SAFE: it reads a file benchscout wrote)."""
+        pid = self.resolve_port(port)
+        log = self.state / "logs" / (pid.replace(":", "_") + ".log")
+        if not log.exists():
+            return {"status": "no_log", "message": f"{pid} has not been watched in this folder yet; use serial.watch"}
+        text = log.read_bytes()[-RECENT_FOR_QUOTES:].decode("utf-8", errors="replace").splitlines()
+        if contains:
+            text = [l for l in text if contains in l]
+        tail = text[-max(1, min(lines, 2000)):]
+        return {"status": "done", "log": str(log.resolve()), "lines": len(tail), "text": "\n".join(tail)}
+
     def _find_quote(self, target_id: str, quote: str) -> str | None:
         texts: list[tuple[str, str]] = []
         for p in self.bench.ports_reaching(target_id):

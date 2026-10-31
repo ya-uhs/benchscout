@@ -125,6 +125,12 @@ Actions:
                            timeout=APPROVAL_WAIT_S + 60)
 
     @mcp.tool()
+    async def bench_log(port: str, lines: int = 200, contains: str | None = None) -> str:
+        """Read the end of a watched serial port's log (everything it printed since it was
+        watched). Safe: it only reads the file. `contains` keeps only lines with that text."""
+        return await _call("log", {"port": port, "lines": lines, "contains": contains})
+
+    @mcp.tool()
     async def bench_identify(target: str, name: str, quote: str) -> str:
         """Name a part, quoting the device's own output that proves it (e.g. a ROM banner line).
         `target` is a port id/path or target id from bench_scan. benchscout checks the quote is
