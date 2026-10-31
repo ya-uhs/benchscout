@@ -17,6 +17,17 @@ class ArgError(ValueError):
     pass
 
 
+class FilePath(str):
+    """A file argument (checked to exist, relative to the workspace, when the action runs)."""
+
+
+class FlashMap(list):
+    """Pairs of flash offset and image file: "0x0:boot.bin,0x10000:app.bin" or {"0x0": "boot.bin"}."""
+
+
+_TYPES = {"str": str, "int": int, "float": float, "bool": bool, "file": FilePath, "flash_map": FlashMap}
+
+
 @dataclass(frozen=True)
 class Param:
     name: str
@@ -26,8 +37,30 @@ class Param:
     required: bool = False
     min: float | None = None
     max: float | None = None
+    ext: tuple[str, ...] = ()  # for files: accepted extensions
 
     def coerce(self, value):
+        if self.type is FilePath:
+            v = FilePath(str(value))
+            if self.ext and not v.lower().endswith(tuple(e.lower() for e in self.ext)):
+                raise ArgError(f"{self.name} must be a {'/'.join(self.ext)} file, got {value!r}")
+            return v
+        if self.type is FlashMap:
+            items = value.items() if isinstance(value, dict) else [x.split(":", 1) for x in str(value).split(",") if x.strip()]
+            out = FlashMap()
+            for addr, path in items:
+                try:
+                    out.append([int(str(addr).strip(), 0), FilePath(str(path).strip())])
+                except ValueError:
+                    raise ArgError(f"{self.name}: {addr!r} is not a flash offset (like 0x10000)") from None
+            if not out:
+                raise ArgError(f"{self.name} needs at least one offset:file pair")
+            return out
+        if self.type is int and isinstance(value, str):
+            try:
+                return self._range(int(value, 0))
+            except ValueError:
+                raise ArgError(f"{self.name} must be int, got {value!r}") from None
         if self.type is bool:
             if isinstance(value, bool):
                 return value
@@ -38,12 +71,17 @@ class Param:
             raise ArgError(f"{self.name} must be {self.type.__name__}, got {value!r}") from None
         if self.type is float and isinstance(value, str) and not value.strip():
             raise ArgError(f"{self.name} must be a number")
+        return self._range(v)
+
+    def _range(self, v):
         if self.min is not None and v < self.min or self.max is not None and v > self.max:
             raise ArgError(f"{self.name}={v} is out of range [{self.min}, {self.max}]")
         return v
 
     def describe(self) -> str:
-        bits = [self.type.__name__]
+        bits = [{FilePath: "file", FlashMap: "offset:file,..."}.get(self.type, self.type.__name__)]
+        if self.ext:
+            bits.append("/".join(self.ext))
         if self.required:
             bits.append("required")
         elif self.default is not None:
@@ -62,6 +100,12 @@ class Action:
     doc: str
     params: tuple[Param, ...] = field(default_factory=tuple)
     implemented: bool = True
+    # defined as data (design.md section 4): an external tool run with these arguments, no shell
+    argv: tuple[str, ...] = ()
+    port_kinds: tuple[str, ...] = ()  # which kinds of port it applies to ("" = any)
+    releases_device: bool = False  # the tool opens the device itself: stop watching it meanwhile
+    timeout: float = 60.0
+    version: dict = field(default_factory=dict)  # {"argv": [...], "min": "5.0", "why": "..."}
 
     def normalize(self, args: dict | None) -> dict:
         if args is not None and not isinstance(args, dict):
@@ -79,7 +123,7 @@ class Action:
             elif p.required:
                 raise ArgError(f"{self.name} needs {p.describe()}")
             elif p.default is not None:
-                out[p.name] = p.default
+                out[p.name] = p.coerce(p.default)  # defaults go through the same checks
         return out
 
     def describe_params(self) -> str:
@@ -92,7 +136,7 @@ _LISTEN = (
 )
 _COMMAND = (Param("command", str, "SCPI command line", required=True),)
 
-ACTIONS: dict[str, Action] = {a.name: a for a in (
+BUILTIN: dict[str, Action] = {a.name: a for a in (
     Action("serial.listen", Effect.SAFE, False, "passively reads console output",
            "listen to a serial port and save what it prints", _LISTEN),
     Action("serial.watch", Effect.SAFE, False, "keeps the port open and reads it continuously",
@@ -104,27 +148,45 @@ ACTIONS: dict[str, Action] = {a.name: a for a in (
             Param("eol", str, "appended to data: \"\\n\" (default), \"\\r\\n\", or \"\" for single-byte commands", "\n"),
             Param("seconds", float, "how long to read the answer", 1.0, min=0.05, max=30),
             Param("baud", int, "baud rate", 115200, min=50, max=12_000_000))),
-    Action("esptool.chip_id", Effect.DISRUPTIVE, True,
-           "reads chip ID but resets the chip into the ROM bootloader via DTR/RTS", "read the exact ESP chip with esptool"),
-    Action("esptool.write_flash", Effect.DANGEROUS, True, "overwrites flash", "write an image to flash",
-           (Param("address", int, "flash offset", required=True), Param("image", str, "image file", required=True)),
-           implemented=False),
     Action("jtag.scan", Effect.SAFE, False, "reads IDCODEs; needs exclusive use of the probe channel",
            "read the IDCODEs on a JTAG chain"),
     Action("jtag.halt", Effect.DISRUPTIVE, True, "stops the CPU", "halt the CPU over JTAG", implemented=False),
-    Action("fpga.program", Effect.DANGEROUS, True, "reconfigures the FPGA; everything inside the fabric restarts",
-           "load a bitstream into the FPGA (SRAM only)", (Param("bitstream", str, "bitstream file", required=True),),
-           implemented=False),
     Action("scpi.query", Effect.SAFE, False, "query only (ends with '?')", "send a SCPI query and read the answer", _COMMAND),
     Action("scpi.write", Effect.DISRUPTIVE, False, "changes instrument settings the user may be looking at",
            "send a SCPI command that changes settings", _COMMAND),
 )}
 
 
+def from_data(e: dict) -> Action:
+    """An external-tool action as written in packs/bench/data/tools.toml (or a user's own file)."""
+    params = tuple(Param(n, _TYPES[p.get("type", "str")], p.get("doc", ""), p.get("default"), bool(p.get("required", False)),
+                         p.get("min"), p.get("max"), tuple(p.get("ext", ()))) for n, p in e.get("args", {}).items())
+    effect = Effect[e.get("effect", "dangerous").upper()]  # no declared effect -> DANGEROUS
+    return Action(e["name"], effect, bool(e.get("disturbs", effect > Effect.SAFE)), e.get("reason", "external tool"),
+                  e.get("doc", ""), params, True, tuple(e["argv"]), tuple(e.get("port_kinds", ())),
+                  bool(e.get("releases_device", False)), float(e.get("timeout", 60)), dict(e.get("version", {})))
+
+
+def all_actions() -> dict[str, Action]:
+    from . import knowledge as K
+
+    out = dict(BUILTIN)
+    for e in K.TOOLS.values():
+        out[e["name"]] = from_data(e)
+    return out
+
+
+def __getattr__(name: str):  # ACTIONS stays importable and always reflects the loaded data
+    if name == "ACTIONS":
+        return all_actions()
+    raise AttributeError(name)
+
+
 def get(name: str) -> Action:
-    if name not in ACTIONS:
-        raise ArgError(f"unknown action {name!r}; actions: {', '.join(ACTIONS)}")
-    return ACTIONS[name]
+    acts = all_actions()
+    if name not in acts:
+        raise ArgError(f"unknown action {name!r}; actions: {', '.join(acts)}")
+    return acts[name]
 
 
 def canonical(args: dict) -> str:
@@ -136,7 +198,7 @@ def catalog() -> str:
     """For tool descriptions: every action with its arguments."""
     lines = ["(The effect in brackets is the base one. The port can raise it, e.g. opening a port that "
              "resets the device; bench_impact gives the actual effect.)"]
-    for a in ACTIONS.values():
+    for a in all_actions().values():
         state = "" if a.implemented else " (not implemented yet)"
         params = f" args: {a.describe_params()}" if a.params else ""
         lines.append(f"- {a.name} [{a.effect.name}]{state}: {a.doc}.{params}")

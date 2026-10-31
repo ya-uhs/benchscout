@@ -143,7 +143,7 @@ def test_dangerous_cannot_be_granted_beyond_one_use(io, tmp_path):
 
 def test_unimplemented_actions_are_not_put_to_the_human(io, tmp_path):  # fpga.program for now
     br = broker_with(io, tmp_path, "jtag:210319A8C7D1")
-    assert br.request("fpga.program", "jtag:210319A8C7D1", {"bitstream": "x.fs"})["status"] == "not_implemented"
+    assert br.request("jtag.halt", "jtag:210319A8C7D1")["status"] == "not_implemented"
     assert br.approvals.pending() == []
 
 

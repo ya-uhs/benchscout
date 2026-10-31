@@ -46,9 +46,9 @@ def _is_pure_query(cmd: str) -> bool:
 
 
 def _base(action: str) -> tuple[Effect, bool, str]:
-    from .actions import ACTIONS
+    from .actions import all_actions
 
-    a = ACTIONS.get(action)
+    a = all_actions().get(action)
     return (a.effect, a.disturbs, a.reason) if a else (Effect.DANGEROUS, True, "unknown action")
 
 

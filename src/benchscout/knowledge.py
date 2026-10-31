@@ -30,6 +30,7 @@ SHARED_SERIALS: set[str] = set()
 IDCODES: dict[int, dict] = {}
 LOG_SIGNATURES: list[tuple[re.Pattern, dict]] = []
 INSTRUMENT_KINDS: list[tuple[re.Pattern, str]] = []
+TOOLS: dict[str, dict] = {}  # external-tool actions defined as data (design.md section 4)
 SOURCES: list[Path] = []  # files actually read, for `benchscout knowledge` / debugging
 
 
@@ -56,6 +57,7 @@ def load(workspace: Path | None = None) -> None:
     idcodes: dict[int, dict] = {}
     logs: list[tuple[re.Pattern, dict]] = []
     instruments: list[tuple[re.Pattern, str]] = []
+    tools: dict[str, dict] = {}
     sources: list[Path] = []
     for d in layers(workspace):
         if not d.is_dir():
@@ -74,11 +76,13 @@ def load(workspace: Path | None = None) -> None:
             for e in data.get("log", []):
                 flags = (re.I if e.get("ignore_case") else 0) | (re.M if e.get("multiline") else 0)
                 logs.append((re.compile(e["pattern"], flags), e))
+            for e in data.get("tool", []):
+                tools[e["name"]] = e  # a later layer replaces a tool of the same name
             for e in reversed(data.get("instrument", [])):
                 instruments.insert(0, (re.compile(e["model"], re.I), e["kind"]))
-    global USB_IDS, MULTI_CHANNEL_BOARDS, SHARED_SERIALS, IDCODES, LOG_SIGNATURES, INSTRUMENT_KINDS, SOURCES
+    global USB_IDS, MULTI_CHANNEL_BOARDS, SHARED_SERIALS, IDCODES, LOG_SIGNATURES, INSTRUMENT_KINDS, SOURCES, TOOLS
     USB_IDS, MULTI_CHANNEL_BOARDS, SHARED_SERIALS = usb, boards, shared
-    IDCODES, LOG_SIGNATURES, INSTRUMENT_KINDS, SOURCES = idcodes, logs, instruments, sources
+    IDCODES, LOG_SIGNATURES, INSTRUMENT_KINDS, SOURCES, TOOLS = idcodes, logs, instruments, sources, tools
 
 
 def _board(e: dict) -> dict:

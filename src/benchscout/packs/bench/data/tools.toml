@@ -1,0 +1,41 @@
+# External tools benchscout runs as actions (design.md section 4). Each one is run without a shell,
+# with the arguments below; {port.path}, {device.serial} and the action's own args are filled in.
+# A tool that opens the device itself (releases_device) gets it: benchscout stops watching the
+# device's ports while it runs and starts again afterwards. An action with no effect is DANGEROUS.
+# Add your own in ~/.config/benchscout/knowledge/*.toml or <workspace>/.benchscout/knowledge/*.toml.
+
+[[tool]]
+name = "fpga.program"
+doc = "load a bitstream into the FPGA's SRAM (gone at power-off; nothing is written to flash)"
+effect = "dangerous"
+reason = "reconfigures the FPGA; everything inside the fabric restarts"
+port_kinds = ["jtag"]
+argv = ["openFPGALoader", "--ftdi-serial", "{device.serial}", "{bitstream}"]
+releases_device = true
+timeout = 120
+args.bitstream = { type = "file", required = true, ext = [".fs", ".bit", ".bin"], doc = "bitstream file, relative to the workspace" }
+
+[[tool]]
+name = "esptool.chip_id"
+doc = "read the exact ESP chip with esptool"
+effect = "disruptive"
+reason = "reads chip ID but resets the chip into the ROM bootloader via DTR/RTS"
+port_kinds = ["serial"]
+argv = ["esptool", "--port", "{port.path}", "chip-id"]
+releases_device = true
+timeout = 60
+# Real bench 2026-10-31: esptool.py 4.5.1 (bundled with PlatformIO) stalled right after the stub
+# started on an ESP32-S3's USB-Serial/JTAG; esptool 5.6.0 worked.
+version = { argv = ["esptool", "version"], min = "5.0", why = "esptool 4.x stalled on the ESP32-S3 USB-Serial/JTAG; 5.x worked" }
+
+[[tool]]
+name = "esptool.write_flash"
+doc = "write images to an ESP chip's flash, e.g. images 0x0:bootloader.bin,0x8000:partitions.bin,0x10000:firmware.bin"
+effect = "dangerous"
+reason = "overwrites flash; keep a backup to go back"
+port_kinds = ["serial"]
+argv = ["esptool", "--port", "{port.path}", "write-flash", "{images*}"]
+releases_device = true
+timeout = 300
+version = { argv = ["esptool", "version"], min = "5.0", why = "esptool 4.x stalled on the ESP32-S3 USB-Serial/JTAG; 5.x worked" }
+args.images = { type = "flash_map", required = true, doc = "offset:file pairs, files relative to the workspace" }

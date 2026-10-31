@@ -444,6 +444,9 @@ class Broker:
             refused = self._outside_session(port_id)
             if refused:
                 return refused
+            kind = self.bench.ports[port_id].kind
+            if spec.port_kinds and kind not in spec.port_kinds:
+                return {"status": "invalid_args", "message": f"{action} works on {'/'.join(spec.port_kinds)} ports, not on a {kind} port"}
             impact = classify(self.bench, action, port_id, args)
             w = self.watches.get(port_id)
             if w and w.alive and action in ("serial.listen", "serial.watch"):
@@ -490,6 +493,9 @@ class Broker:
 
     def _execute(self, action: str, port_id: str, args: dict):
         port = self.bench.ports[port_id]
+        spec = A.get(action)
+        if spec.argv:
+            return self._run_tool(spec, port, args)
         w = self.watches.get(port_id)
         if w and w.alive and action in ("serial.listen", "serial.send") and args["baud"] != w.baud:
             # a different rate was asked for: reopen the watch at it (the port is SAFE to open, it was watched)
@@ -537,23 +543,86 @@ class Broker:
             return self._save_artifact(f"{port_id}-send-{safe_name}.txt", text, preview=text[-2000:])
         if action in ("scpi.query", "scpi.write"):
             return self.io.visa_query(port.path, args["command"])
-        if action == "esptool.chip_id":
-            exe = shutil.which("esptool.py") or shutil.which("esptool")
-            if not exe:
-                return {"error": "esptool not installed"}
-            # hand the port over: esptool opens it itself (design.md section 3)
-            baud = w.baud if w else None
-            self._unwatch(port_id)
-            try:
-                out = subprocess.run([exe, "--port", port.path, "chip_id"], capture_output=True, text=True, timeout=30)
-            finally:
-                if baud:
-                    self._watch(port_id, baud)
-            return out.stdout[-2000:] or out.stderr[-2000:]
         if action == "jtag.scan":
             dev = self.bench.devices[port.device_id]
             return [dict(d, idcode=f"0x{d['idcode']:08X}") for d in self.io.jtag_scan(dev.serial)]
         return {"error": f"{action} is classified but not implemented in this prototype"}
+
+    # ---- external tools defined as data (design.md section 4) ------------------------------
+    def _run_tool(self, spec, port, args: dict) -> dict:
+        exe = self._which(spec.argv[0])
+        if not exe:
+            return {"error": f"{spec.argv[0]} is not installed", "fix": f"install {spec.argv[0]} and make sure it is on PATH"}
+        if spec.version:
+            problem = self._version_problem(spec.version)
+            if problem:
+                return {"error": problem}
+        ws = self.state.parent
+        dev = self.bench.devices[port.device_id]
+
+        def path(p) -> str:
+            f = (ws / p) if not Path(p).is_absolute() else Path(p)
+            if not f.is_file():
+                raise FileNotFoundError(f"{p} (looked in {ws})")
+            return str(f.resolve())
+
+        try:
+            argv = [exe]
+            for a in spec.argv[1:]:
+                if a.startswith("{") and a.endswith("*}"):  # a list argument expands to several
+                    for off, f in args[a[1:-2]]:
+                        argv += [hex(off), path(f)]
+                    continue
+                val = a.replace("{port.path}", port.path or "").replace("{device.serial}", dev.serial or "")
+                for p in spec.params:
+                    if "{" + p.name + "}" in val:
+                        v = args.get(p.name)
+                        val = val.replace("{" + p.name + "}", path(v) if p.type is A.FilePath else str(v))
+                argv.append(val)
+        except FileNotFoundError as e:
+            return {"error": f"file not found: {e}"}
+        # hand the device over: the tool opens it itself (design.md section 3); take it back after
+        watched = [(p.id, self.watches[p.id].baud) for p in self.bench.ports_of(dev.id) if p.id in self.watches] \
+            if spec.releases_device else []
+        for pid, _ in watched:
+            self._unwatch(pid)
+        try:
+            out = subprocess.run(argv, capture_output=True, text=True, timeout=spec.timeout, cwd=ws)
+            text, code = (out.stdout or "") + (out.stderr or ""), out.returncode
+        except subprocess.TimeoutExpired as e:
+            text, code = f"{e}", None
+        finally:
+            for pid, baud in watched:
+                self._watch(pid, baud)
+        res = self._save_artifact(f"{port.id}-{spec.name}.txt", " ".join(argv) + "\n\n" + text, preview=text[-2000:])
+        return dict(res, returncode=code, argv=argv)
+
+    @staticmethod
+    def _which(exe: str) -> str | None:
+        found = shutil.which(exe)
+        if found:
+            return found
+        for d in (Path.home() / ".local" / "bin", Path("/opt/homebrew/bin"), Path("/usr/local/bin")):
+            if (d / exe).exists():
+                return str(d / exe)
+        return None
+
+    def _version_problem(self, v: dict) -> str | None:
+        import re
+
+        exe = self._which(v["argv"][0])
+        try:
+            out = subprocess.run([exe or v["argv"][0], *v["argv"][1:]], capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return f"could not check the version of {v['argv'][0]}: {e}"
+        m = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", out.stdout + out.stderr)
+        if not m:
+            return None
+        have = tuple(int(x or 0) for x in m.groups())
+        need = tuple(int(x) for x in (v["min"].split(".") + ["0", "0"])[:3])
+        if have < need:
+            return f"{v['argv'][0]} {'.'.join(map(str, have))} is too old; need {v['min']} or newer: {v.get('why', '')}"
+        return None
 
     def _remember(self, port_id: str, text: str | None) -> None:
         if not (text and text.strip()):
