@@ -279,8 +279,8 @@ effect = "disruptive"
 | 場所 | 中身 | 移す先 |
 |---|---|---|
 | `knowledge.py` | USB_IDS、IDCODES、LOG_SIGNATURES、基板の配線(lambda でのマッチ)、測定器の種類 | 知識データファイル。既存 DB(USB ID、openFPGALoader、udev ルール)を優先し、自前の表は補助 |
-| `policy.py` の `ACTIONS`、`_ENERGIZING` | 操作ごとの影響度 | 各 action / コマンドが自分で宣言する |
-| `broker._execute` | 操作ごとの if の連鎖 | Action レジストリ(名前、影響度、引数の型、実行) |
+| `policy.py` の `ACTIONS`、`_ENERGIZING` | 操作ごとの影響度 | `ACTIONS` は `actions.py` に移した。ポート固有の引き上げ(リセット、通電)はまだ `policy.py` |
+| `broker._execute` | 操作ごとの if の連鎖 | Action レジストリ(名前、影響度、引数の型は `actions.py` に移した。実行部分はまだ if の連鎖) |
 | `recon.run` | `port.kind` での分岐、`vid == 0x0403` の判定 | Probe のレジストリ |
 | `recon.propose` | `"ESP32"` の文字列判定、`"3V3 rail"`、`":SINGle"` | 提案・見立てのルールのデータ |
 | `cli.py` | `BACKENDS`、`OPENING_PROMPT`、`LANGUAGE_NAMES` | 最初のプロンプトは MCP の prompts とデータへ。エージェントの起動テンプレートは不要になる |
@@ -364,11 +364,10 @@ VS Code の中にいるので、ビルドや書き込みは既存の拡張(ESP-I
 
 ## 10. 実機で見つかり、原因は分かったが未修正のもの
 
-1. **`serial.listen` の `arg=9600` が 120 秒以上返らない。** `broker._execute` が `arg` を **秒数** として `float(arg)` している
-   (9600 秒待っていた)。baud は `recon.listen_into` で 115200 に固定で、変える手段がない。
-   → Action レジストリで引数に型を付け(秒と baud を分ける)、MCP の docstring にも書く
+1. ~~`serial.listen` の `arg=9600` が 120 秒以上返らない~~ → 直した(2026-10-31):`arg` を廃止し、操作ごとに型と範囲の決まった
+   `args` にした(`actions.py`)。listen は `{"seconds": 0.05〜60, "baud": …}`。範囲外や知らない引数は、正しい引数の一覧付きで断る
 2. ~~`port="/dev/cu.usbmodem1101"` だと黙って失敗する~~ → 直した(2026-10-31):id でもパスでも引け、分からなければ id とパスの一覧を返す
-3. **Tang Nano のファブリック UART が既定のレートで無音。** 上の 1 のせいで baud を変えて試せず、baud か bitstream かは未切り分け
+3. **Tang Nano のファブリック UART が既定のレートで無音。** baud を変えて試せるようになったので、次の実機確認で切り分ける
 4. ~~承認をファイルの書き換えで偽造できる~~ → 直した(2026-10-31):承認はコアのメモリだけ。`audit.jsonl` は記録で、書き換えても何も許可されない(§15 R3)
 
 ## 11. 決定ログ
@@ -406,7 +405,7 @@ VS Code の中にいるので、ビルドや書き込みは既存の拡張(ESP-I
 1. (済 2026-10-31)コアと制御の経路:`benchscout core` が stdin/stdout を制御の経路にし、エージェントの経路は Unix ソケット。承認はメモリ、
    待つ承認、範囲付きの許可、`benchscout mcp` は中継、機器のロック、OS の排他(§15 R2、R3、R8、S1、S3)。拡張ができるまでは、
    `benchscout core` を起動した端末が操作盤(`select` / `approve` / `deny` を打つ)。Windows は未対応(ロックとソケット、R6)
-2. §10 の不具合2件を、Action レジストリ化(引数に型を付ける)を兼ねて直す
+2. (済 2026-10-31)Action レジストリ(`actions.py`):操作ごとの影響度、型付きの引数、説明を1か所に。承認は (操作, 口, 既定値を埋めた引数) に紐付く
 3. 一覧と見立てをルール(データ)で出す(§15 R4)。MCP の instructions / prompts に振る舞いを移す(§15 S4)
 4. VS Code 拡張の最小版:コアの起動、機器の一覧、承認ボタン、MCP サーバーの登録、.vsix のビルド
 5. 知識をデータファイルへ出す、プロトコル層(§4)

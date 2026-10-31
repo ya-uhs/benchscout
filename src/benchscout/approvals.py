@@ -2,7 +2,7 @@
 
 - Only the control channel (the human's panel) calls `decide`. The agent's channel has
   no method that reaches it.
-- DANGEROUS: granted once, bound to (action, port, arg).
+- DANGEROUS: granted once, bound to (action, port, args).
 - DISRUPTIVE: may instead be granted for (action, port) for the session or N minutes.
 - The audit log is append-only output. Nothing reads it back to decide anything, so
   editing it grants nothing.
@@ -28,7 +28,7 @@ class Approval:
     id: str
     action: str
     port: str
-    arg: str | None
+    args: str  # canonical JSON of the action's arguments (actions.canonical)
     effect: str
     impact: dict
     status: str = "pending"  # pending | granted | denied | used | withdrawn
@@ -54,8 +54,8 @@ class ApprovalBook:
         self._grants: list[Grant] = []
 
     # ---- agent side (via the broker) ------------------------------------------
-    def open(self, impact: Impact, arg: str | None) -> Approval:
-        a = Approval(uuid.uuid4().hex[:6], impact.action, impact.port_id, arg, impact.effect.name.lower(), impact.to_dict())
+    def open(self, impact: Impact, args: str) -> Approval:
+        a = Approval(uuid.uuid4().hex[:6], impact.action, impact.port_id, args, impact.effect.name.lower(), impact.to_dict())
         with self._cond:
             self._items[a.id] = a
         self._log("requested", a)
@@ -77,7 +77,7 @@ class ApprovalBook:
                     return "pending"
                 self._cond.wait(min(left, 1.0))
 
-    def consume(self, approval_id: str, action: str, port: str, arg: str | None) -> str:
+    def consume(self, approval_id: str, action: str, port: str, args: str) -> str:
         """Use a granted approval for exactly this call. Returns "ok" or why not."""
         with self._cond:
             a = self._items.get(approval_id)
@@ -85,7 +85,7 @@ class ApprovalBook:
                 return "unknown_approval"
             if a.status != "granted":
                 return a.status
-            if (a.action, a.port, a.arg) != (action, port, arg):
+            if (a.action, a.port, a.args) != (action, port, args):
                 return "approval_mismatch"
             a.status = "used"
         self._log("used", a)
@@ -139,6 +139,6 @@ class ApprovalBook:
     def _log(self, what: str, a: Approval) -> None:
         if self._audit:
             rec = {"t": time.time(), "what": what, "id": a.id, "action": a.action, "port": a.port,
-                   "arg": a.arg, "effect": a.effect, "scope": a.scope}
+                   "args": a.args, "effect": a.effect, "scope": a.scope}
             with open(self._audit, "a") as f:
                 f.write(json.dumps(rec) + "\n")

@@ -229,6 +229,7 @@ class FixtureIo:
         self.data = json.loads(Path(path).read_text())
         self.calls: list[tuple] = []  # what access was attempted, for tests/audit
         self.exclusive_opens: list[str] = []
+        self.bauds: list[int] = []
 
     def usb_devices(self) -> list[dict]:
         return [dict(d, vid=int(d["vid"], 16), pid=int(d["pid"], 16)) for d in self.data.get("usb", [])]
@@ -251,6 +252,7 @@ class FixtureIo:
         self.calls.append(("serial_listen", path))
         if exclusive:
             self.exclusive_opens.append(path)
+        self.bauds.append(baud)
         v = self.data.get("listen", {}).get(path, "")
         if isinstance(v, dict) and "error" in v:  # simulate a port that vanishes mid-read
             raise OSError(6, v["error"])

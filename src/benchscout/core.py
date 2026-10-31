@@ -27,13 +27,14 @@ from typing import IO, Any
 
 from multiprocessing.connection import Client, Listener
 
+from .actions import catalog
 from .broker import Broker
 from .runtime import address_family
 from .report import render
 
 # ---- agent channel --------------------------------------------------------------
 
-AGENT_METHODS = ("scan", "inventory", "impact", "do")
+AGENT_METHODS = ("scan", "inventory", "impact", "do", "actions")
 
 
 def agent_dispatch(broker: Broker, method: str, params: dict) -> Any:
@@ -43,9 +44,11 @@ def agent_dispatch(broker: Broker, method: str, params: dict) -> Any:
     if method == "inventory":
         return (broker.last or broker.scan()).to_dict()
     if method == "impact":
-        return broker.impact(params["action"], params["port"], params.get("arg")).to_dict()
+        return broker.impact(params["action"], params["port"], params.get("args")).to_dict()
     if method == "do":
-        return broker.request(params["action"], params["port"], params.get("arg"), params.get("approval_id"))
+        return broker.request(params["action"], params["port"], params.get("args"), params.get("approval_id"))
+    if method == "actions":
+        return catalog()
     raise ValueError(f"no method {method!r} on the agent channel (available: {', '.join(AGENT_METHODS)})")
 
 
@@ -161,14 +164,19 @@ class Core:
     def __init__(self, broker: Broker, address: str | Path, out: IO[str] = sys.stdout):
         self.broker = broker
         self.address = str(address)
-        self._out = out
+        self._out: IO[str] | None = out
         self._out_lock = threading.Lock()
         self.server: AgentServer | None = None
 
     def emit(self, msg: dict) -> None:
         with self._out_lock:
-            self._out.write(json.dumps(msg, default=str) + "\n")
-            self._out.flush()
+            if self._out is None:
+                return
+            try:
+                self._out.write(json.dumps(msg, default=str) + "\n")
+                self._out.flush()
+            except (BrokenPipeError, ValueError, OSError):
+                self._out = None  # the controller is gone; stop() still frees the devices
 
     def start(self) -> None:
         self.server = AgentServer(self.address, self.broker)

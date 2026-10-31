@@ -229,7 +229,7 @@ def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] 
             continue
 
         if port.kind in ("usbtmc", "lan-scpi"):
-            if classify(b, "scpi.query", port.id, "*IDN?").effect == Effect.SAFE:
+            if classify(b, "scpi.query", port.id, {"command": "*IDN?"}).effect == Effect.SAFE:
                 r.ran.append(f"scpi.query *IDN? {port.path}")
                 idn = io.visa_query(port.path, "*IDN?")
                 for t in targets:
@@ -270,11 +270,12 @@ def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] 
     return r
 
 
-def listen_into(io: Io, path: str, targets: list[Target], seconds: float, exclusive: bool = False) -> str | None:
+def listen_into(io: Io, path: str, targets: list[Target], seconds: float, exclusive: bool = False,
+                baud: int = 115200) -> str | None:
     """Listen and fold what was heard into the targets. A port that vanishes mid-read
     (USB re-enumeration, usually a reset) is recorded as a fact, not a crash."""
     try:
-        text = io.serial_listen(path, seconds, 115200, exclusive)
+        text = io.serial_listen(path, seconds, baud, exclusive)
     except Exception as e:  # serial.SerialException / OSError: device went away
         for t in targets:
             t.facts.append(f"ALERT: port disappeared while listening ({e}); the device likely reset or re-enumerated")
@@ -330,7 +331,7 @@ def propose(b: Bench) -> list[Proposal]:
             if any("brownout" in f for f in t.facts):
                 if scopes:
                     scope_port = b.ports_reaching(scopes[0].id)[0]
-                    imp = classify(b, "scpi.write", scope_port.id, ":SINGle")
+                    imp = classify(b, "scpi.write", scope_port.id, {"command": ":SINGle"})
                     out.append(_from_impact(
                         f"{t.name or t.id} is browning out. Capture the 3V3 rail on {scopes[0].name} during the reset",
                         imp, "which net is the scope probe on?"))

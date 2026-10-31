@@ -51,7 +51,8 @@ summarize what is plugged in and propose what to look at, without waiting to be 
   supply rail on a scope with a single-shot falling trigger near the brownout threshold
   during the event (ask which net the probe is on first). Read PSU current if available.
 - Silent serial port: wrong baud, or the firmware is not printing. Propose listening at
-  other common rates, or a reset (needs approval) to catch the boot banner.
+  other common rates (`serial.listen` with args like {"baud": 9600, "seconds": 3}), or a
+  reset (needs approval) to catch the boot banner.
 - FPGA with unknown part: JTAG IDCODE scan is safe; reading DONE/status is safe;
   programming is dangerous.
 - Save captures and logs as artifacts (the broker returns `saved_to`); report the path

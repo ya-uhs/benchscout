@@ -93,7 +93,7 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
   behaviour. `setup` copies it into the workspace, so after editing it re-run
   `benchscout setup` in `../bench-session`.
 - MCP tool docstrings and INSTRUCTIONS in `mcp_relay.py` are what the agent sees; keep them accurate,
-  including what `arg` means for each action.
+  including each action's `args` (generated from `actions.py`).
 - What the real bench showed beats fixtures. Record each real-hardware behaviour in
   `fixtures/` or a test (e.g. ESP32 native USB resets on open; Tang Nano serials are shared).
 - For identification, prefer the external tool's own database (openFPGALoader, USB ID lists)
@@ -107,8 +107,7 @@ Bench: Espressif USB-Serial/JTAG (ESP32 native USB) + Sipeed Tang Nano (GW1N(R)-
 Causes are known (design.md section 10).
 
 - Fixed: ports can be given as id or path; an unknown one lists the known ids and paths.
-- `bench_do serial.listen serial:usbserial-101 arg=9600` did not return within 120 s.
-  Cause: `Broker._execute` treats `arg` as seconds (`float(arg)`), so it listened for
-  9600 s; baud is fixed at 115200 in `recon.listen_into`. Give actions typed arguments.
-- The fabric UART on the Tang Nano was silent at the default rate; baud vs bitstream is
-  not yet known because the baud could not be changed (previous item).
+- Fixed: `serial.listen arg=9600` listened for 9600 s. Actions now take typed `args`
+  (`actions.py`), e.g. {"seconds": 3, "baud": 9600}, with ranges; bad args are rejected.
+- The fabric UART on the Tang Nano was silent at the default rate; now that the baud can be
+  changed, check baud vs bitstream on the next real-hardware run.

@@ -18,6 +18,7 @@ from pathlib import Path
 import anyio
 from mcp.server.mcpserver import MCPServer
 
+from .actions import catalog as actions_catalog
 from .runtime import address_family, agent_address
 
 # How long a call that needs approval waits for the human in the panel (S3). Kept under
@@ -89,22 +90,26 @@ def build_server(client: CoreClient, language: str = "English") -> MCPServer:
         """Full bench graph (devices, ports, targets, links) as JSON from the last scan."""
         return await _call("inventory")
 
-    @mcp.tool()
-    async def bench_impact(action: str, port: str, arg: str | None = None) -> str:
-        """Explain what an action would disturb before doing it. `port` is a port id
-        (serial:usbmodem1101) or its path (/dev/cu.usbmodem1101). Actions: serial.listen,
-        serial.send, esptool.chip_id, jtag.scan, jtag.halt, fpga.program, scpi.query, scpi.write."""
-        return await _call("impact", {"action": action, "port": port, "arg": arg})
+    catalog = actions_catalog()
 
-    @mcp.tool()
-    async def bench_do(action: str, port: str, arg: str | None = None, approval_id: str | None = None) -> str:
-        """Perform an action on a port of a selected device. `port` is a port id or its path.
-        For serial.listen, `arg` is the listen time in seconds (baud is 115200 for now).
-        Safe actions run at once. Others wait while the human decides in the benchscout
-        panel, then run or return denied. If the wait runs out you get approval_required with
-        an approval_id: tell the user it is waiting in the panel, and call again with that
-        approval_id to keep waiting. Never try to reach the hardware any other way."""
-        return await _call("do", {"action": action, "port": port, "arg": arg, "approval_id": approval_id},
+    @mcp.tool(description=f"""Explain what an action would disturb before doing it. `port` is a port id
+(serial:usbmodem1101) or its path (/dev/cu.usbmodem1101). `args` are the action's arguments.
+Actions:
+{catalog}""")
+    async def bench_impact(action: str, port: str, args: dict | None = None) -> str:
+        return await _call("impact", {"action": action, "port": port, "args": args})
+
+    @mcp.tool(description=f"""Perform an action on a port of a selected device. `port` is a port id or its
+path. `args` is an object with the action's arguments, e.g. {{"seconds": 3, "baud": 9600}} for
+serial.listen; unknown or out-of-range arguments are rejected with the valid ones listed.
+Safe actions run at once. Others wait while the human decides in the benchscout panel, then
+run or return denied. If the wait runs out you get approval_required with an approval_id:
+tell the user it is waiting in the panel, and call again with the same action, port, args
+and that approval_id. Never try to reach the hardware any other way.
+Actions:
+{catalog}""")
+    async def bench_do(action: str, port: str, args: dict | None = None, approval_id: str | None = None) -> str:
+        return await _call("do", {"action": action, "port": port, "args": args, "approval_id": approval_id},
                            timeout=APPROVAL_WAIT_S + 60)
 
     @mcp.prompt()

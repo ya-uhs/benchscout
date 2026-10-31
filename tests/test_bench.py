@@ -103,9 +103,9 @@ def test_esptool_read_is_disruptive_and_hits_jtag(r):
 
 def test_scpi_classification(r):
     psu = next(p for p in r.bench.ports.values() if "192.168.1.50" in p.id)
-    assert classify(r.bench, "scpi.query", psu.id, "MEAS:CURR? CH1").effect == Effect.SAFE
-    assert classify(r.bench, "scpi.query", psu.id, ":TRIG:MODE SING").effect == Effect.DISRUPTIVE
-    assert classify(r.bench, "scpi.query", psu.id, "OUTP CH1,ON").effect == Effect.DANGEROUS
+    assert classify(r.bench, "scpi.query", psu.id, {"command": "MEAS:CURR? CH1"}).effect == Effect.SAFE
+    assert classify(r.bench, "scpi.query", psu.id, {"command": ":TRIG:MODE SING"}).effect == Effect.DISRUPTIVE
+    assert classify(r.bench, "scpi.query", psu.id, {"command": "OUTP CH1,ON"}).effect == Effect.DANGEROUS
 
 
 def test_proposals(r):
@@ -177,7 +177,7 @@ def test_approval_gate(io, tmp_path):
     assert br.request("serial.listen", "serial:usbserial-10", approval_id=aid)["status"] == "approval_required"
     br.decide(aid, True)
     # an approval cannot be reused for a different action
-    assert br.request("serial.send", "serial:usbserial-10", "help", approval_id=aid)["status"] == "approval_mismatch"
+    assert br.request("serial.listen", "serial:usbserial-10", {"seconds": 1}, approval_id=aid)["status"] == "approval_mismatch"
     done = br.request("serial.listen", "serial:usbserial-10", approval_id=aid)
     assert done["status"] == "done"
     assert Path(done["result"]["saved_to"]).read_text().startswith("[I] sensor ok")

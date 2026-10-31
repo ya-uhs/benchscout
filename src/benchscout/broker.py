@@ -17,6 +17,7 @@ import threading
 from pathlib import Path
 from typing import Callable
 
+from . import actions as A
 from . import recon as R
 from .approvals import ApprovalBook, Scope
 from .io import Io
@@ -68,9 +69,9 @@ class Broker:
         known = ", ".join(f"{p.id} ({p.path})" if p.path else p.id for p in b.ports.values())
         raise KeyError(f"unknown port {port!r}; known ports: {known}")
 
-    def impact(self, action: str, port: str, arg: str | None = None) -> Impact:
+    def impact(self, action: str, port: str, args: dict | None = None) -> Impact:
         with self._lock:
-            return classify(self.bench, action, self.resolve_port(port), arg)
+            return classify(self.bench, action, self.resolve_port(port), A.get(action).normalize(args))
 
     # ---- session (human, control channel) --------------------------------------
     def select(self, device_ids: list[str]) -> dict:
@@ -121,9 +122,19 @@ class Broker:
             self.approvals.end_session()
 
     # ---- the one entry point the agent uses -----------------------------------
-    def request(self, action: str, port: str, arg: str | None = None, approval_id: str | None = None,
+    def request(self, action: str, port: str, args: dict | None = None, approval_id: str | None = None,
                 wait: float | None = None) -> dict:
+        """`args` are the action's typed arguments (see actions.py). An approval is bound to
+        (action, port, args) after defaults are filled in."""
         wait = self.approval_wait if wait is None else wait
+        try:
+            spec = A.get(action)
+            args = spec.normalize(args)
+        except A.ArgError as e:
+            return {"status": "invalid_args", "message": str(e)}
+        if not spec.implemented:
+            return {"status": "not_implemented", "message": f"{action} is classified but not implemented yet"}
+        key = A.canonical(args)
         with self._lock:
             try:
                 port_id = self.resolve_port(port)
@@ -132,11 +143,11 @@ class Broker:
             refused = self._outside_session(port_id)
             if refused:
                 return refused
-            impact = classify(self.bench, action, port_id, arg)
+            impact = classify(self.bench, action, port_id, args)
             if impact.effect == Effect.SAFE or (approval_id is None and self.approvals.covered(action, port_id, impact.effect)):
-                return self._run(impact, arg)
+                return self._run(impact, args)
             if approval_id is None:
-                approval_id = self.approvals.open(impact, arg).id
+                approval_id = self.approvals.open(impact, key).id
 
         status = self.approvals.wait(approval_id, wait)  # the human decides in the panel (S3)
 
@@ -150,10 +161,10 @@ class Broker:
             refused = self._outside_session(port_id)  # the device may have left the session meanwhile
             if refused:
                 return refused
-            used = self.approvals.consume(approval_id, action, port_id, arg)
+            used = self.approvals.consume(approval_id, action, port_id, key)
             if used != "ok":
                 return {"status": used, "approval_id": approval_id}
-            return self._run(impact, arg)
+            return self._run(impact, args)
 
     def _outside_session(self, port_id: str) -> dict | None:
         dev = self.bench.ports[port_id].device_id
@@ -163,20 +174,20 @@ class Broker:
                 "message": f"{self.bench.devices[dev].name} is not in this session. Ask the user to select it "
                            f"in the benchscout panel; only selected devices can be used."}
 
-    def _run(self, impact: Impact, arg: str | None) -> dict:
-        return {"status": "done", "impact": impact.to_dict(), "result": self._execute(impact.action, impact.port_id, arg)}
+    def _run(self, impact: Impact, args: dict) -> dict:
+        return {"status": "done", "impact": impact.to_dict(), "result": self._execute(impact.action, impact.port_id, args)}
 
-    def _execute(self, action: str, port_id: str, arg: str | None):
+    def _execute(self, action: str, port_id: str, args: dict):
         port = self.bench.ports[port_id]
         if action == "serial.listen":
-            secs = float(arg) if arg else 3.0
-            text = R.listen_into(self.io, port.path, self.bench.targets_via(port_id), secs, exclusive=True)
+            text = R.listen_into(self.io, port.path, self.bench.targets_via(port_id), args["seconds"],
+                                 exclusive=True, baud=args["baud"])
             self.last.proposals = R.propose(self.bench)  # what we heard may change the next steps
             if text is None:
                 return {"error": "port disappeared while listening; the device likely reset or re-enumerated"}
-            return self._save_artifact(f"{port_id}-listen.txt", text, preview=text[-2000:])
+            return self._save_artifact(f"{port_id}-listen-{args['baud']}.txt", text, preview=text[-2000:])
         if action in ("scpi.query", "scpi.write"):
-            return self.io.visa_query(port.path, arg or "*IDN?")
+            return self.io.visa_query(port.path, args["command"])
         if action == "esptool.chip_id":
             exe = shutil.which("esptool.py") or shutil.which("esptool")
             if not exe:

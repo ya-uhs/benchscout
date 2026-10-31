@@ -66,12 +66,12 @@ def test_unselected_device_is_refused_even_for_safe_actions(io, tmp_path):
     assert res["status"] == "not_selected" and "panel" in res["message"]
     assert len(io.calls) == before  # nothing was opened
     br.select([br.bench.ports[br.resolve_port(VCP)].device_id])
-    assert br.request("serial.listen", VCP, "0.1")["status"] == "done"
+    assert br.request("serial.listen", VCP, {"seconds": 0.1})["status"] == "done"
 
 
 def test_port_can_be_given_as_path_and_unknown_port_names_the_ids(io, tmp_path):
     br = broker_with(io, tmp_path, VCP)
-    assert br.request("serial.listen", VCP, "0.1")["status"] == "done"
+    assert br.request("serial.listen", VCP, {"seconds": 0.1})["status"] == "done"
     res = br.request("serial.listen", "/dev/cu.nothing")
     assert res["status"] == "unknown_port" and "serial:usbserial-10" in res["message"]
 
@@ -79,7 +79,7 @@ def test_port_can_be_given_as_path_and_unknown_port_names_the_ids(io, tmp_path):
 def test_selected_ports_open_exclusively_recon_does_not(io, tmp_path):
     br = broker_with(io, tmp_path, VCP)
     assert io.exclusive_opens == []  # recon listened to the VCP without locking others out
-    br.request("serial.listen", VCP, "0.1")
+    br.request("serial.listen", VCP, {"seconds": 0.1})
     assert io.exclusive_opens == [VCP]
 
 
@@ -91,12 +91,14 @@ def test_waiting_request_runs_as_soon_as_the_human_approves(io, tmp_path):
     br.on_event = lambda e: seen.append(e) if e["event"] == "approval_requested" else None
 
     def human():
-        while not seen:
+        for _ in range(500):
+            if seen:
+                br.decide(seen[0]["approval"]["id"], True)
+                return
             time.sleep(0.01)
-        br.decide(seen[0]["approval"]["id"], True)
 
-    threading.Thread(target=human).start()
-    res = br.request("serial.listen", CH340, "0.1")
+    threading.Thread(target=human, daemon=True).start()
+    res = br.request("serial.listen", CH340, {"seconds": 0.1})
     assert res["status"] == "done"
     assert ("serial_listen", "/dev/cu.usbserial-10") in io.calls
 
@@ -120,18 +122,48 @@ def test_nothing_on_disk_grants_anything(io, tmp_path):
 
 def test_session_grant_covers_repeated_disruptive_calls(io, tmp_path):
     br = broker_with(io, tmp_path, CH340)
-    aid = br.request("serial.listen", CH340, "0.1")["approval_id"]
+    aid = br.request("serial.listen", CH340, {"seconds": 0.1})["approval_id"]
     br.decide(aid, True, "session")
-    assert br.request("serial.listen", CH340, "0.1", approval_id=aid)["status"] == "done"
-    assert br.request("serial.listen", CH340, "0.1")["status"] == "done"  # no new approval needed
-    assert br.request("serial.send", CH340, "help")["status"] == "approval_required"  # other action: not covered
+    assert br.request("serial.listen", CH340, {"seconds": 0.1}, approval_id=aid)["status"] == "done"
+    assert br.request("serial.listen", CH340, {"seconds": 0.1})["status"] == "done"  # no new approval needed
+    assert br.request("esptool.chip_id", CH340)["status"] == "approval_required"  # other action: not covered
+
+
+PSU = "visa:TCPIP0::192.168.1.50::INSTR"
 
 
 def test_dangerous_cannot_be_granted_beyond_one_use(io, tmp_path):
-    br = broker_with(io, tmp_path, "jtag:210319A8C7D1")
-    aid = br.request("fpga.program", "jtag:210319A8C7D1")["approval_id"]
+    br = broker_with(io, tmp_path, PSU)
+    res = br.request("scpi.write", PSU, {"command": "OUTP CH1,ON"})
+    assert res["impact"]["effect"] == "dangerous"
     with pytest.raises(ValueError, match="only DISRUPTIVE"):
-        br.decide(aid, True, "session")
+        br.decide(res["approval_id"], True, "session")
+
+
+def test_unimplemented_actions_are_not_put_to_the_human(io, tmp_path):
+    br = broker_with(io, tmp_path, "jtag:210319A8C7D1")
+    assert br.request("fpga.program", "jtag:210319A8C7D1", {"bitstream": "x.fs"})["status"] == "not_implemented"
+    assert br.approvals.pending() == []
+
+
+def test_listen_args_are_typed_and_checked(io, tmp_path):
+    """Real bench, 2026-10-31: `arg=9600` meant a baud rate but was read as 9600 seconds."""
+    br = broker_with(io, tmp_path, VCP)
+    assert br.request("serial.listen", VCP, {"seconds": 0.1, "baud": 9600})["status"] == "done"
+    assert io.bauds[-1] == 9600
+    too_long = br.request("serial.listen", VCP, {"seconds": 9600})
+    assert too_long["status"] == "invalid_args" and "out of range" in too_long["message"]
+    bad = br.request("serial.listen", VCP, {"rate": 9600})
+    assert bad["status"] == "invalid_args" and "baud" in bad["message"]
+    assert br.request("serial.listen", VCP, "9600")["status"] == "invalid_args"
+
+
+def test_approval_is_bound_to_the_filled_in_args(io, tmp_path):
+    br = broker_with(io, tmp_path, CH340)
+    aid = br.request("serial.listen", CH340, {"baud": 9600})["approval_id"]
+    br.decide(aid, True)
+    assert br.request("serial.listen", CH340, {"baud": 115200}, approval_id=aid)["status"] == "approval_mismatch"
+    assert br.request("serial.listen", CH340, {"baud": 9600, "seconds": 3}, approval_id=aid)["status"] == "done"
 
 
 def test_timed_grant_expires(io, tmp_path):
@@ -148,11 +180,11 @@ def test_timed_grant_expires(io, tmp_path):
 
 def test_deselecting_a_device_withdraws_its_grants(io, tmp_path):
     br = broker_with(io, tmp_path, CH340, VCP)
-    aid = br.request("serial.listen", CH340, "0.1")["approval_id"]
+    aid = br.request("serial.listen", CH340, {"seconds": 0.1})["approval_id"]
     br.decide(aid, True, "session")
     br.select([br.bench.ports[br.resolve_port(VCP)].device_id])
     br.select([br.bench.ports[br.resolve_port(p)].device_id for p in (CH340, VCP)])
-    assert br.request("serial.listen", CH340, "0.1")["status"] == "approval_required"
+    assert br.request("serial.listen", CH340, {"seconds": 0.1})["status"] == "approval_required"
 
 
 # ---- device locks between windows (S1) -----------------------------------------
@@ -196,7 +228,7 @@ def test_end_to_end_agent_waits_while_human_approves_on_control(io, tmp_path, ad
 
         client = CoreClient(addr)
         got = {}
-        t = threading.Thread(target=lambda: got.update(client.call("do", {"action": "serial.listen", "port": CH340, "arg": "0.1"})))
+        t = threading.Thread(daemon=True, target=lambda: got.update(client.call("do", {"action": "serial.listen", "port": CH340, "args": {"seconds": 0.1}})))
         t.start()
         aid = None
         for _ in range(200):
@@ -233,6 +265,20 @@ def test_closing_the_control_channel_stops_the_core_and_frees_devices(io, tmp_pa
     br.scan()
     dev = br.bench.ports[CH340].device_id
     core.run(stdio.StringIO(f'{json.dumps({"method": "select", "params": {"devices": [dev]}})}\n'), initial_scan=False)
+    assert not locks.holds(dev) and gone(addr)
+
+
+def test_controller_vanishing_does_not_crash_the_core(io, tmp_path, addr):
+    class Gone(stdio.StringIO):
+        def write(self, _):
+            raise BrokenPipeError(32, "Broken pipe")
+
+    locks = DeviceLocks({"pid": 1, "workspace": "/w"}, root=tmp_path / "rt")
+    br = Broker(io, tmp_path, locks=locks)
+    br.scan()
+    dev = br.bench.ports[CH340].device_id
+    br.select([dev])
+    Core(br, addr, Gone()).run(stdio.StringIO(""), initial_scan=False)
     assert not locks.holds(dev) and gone(addr)
 
 
