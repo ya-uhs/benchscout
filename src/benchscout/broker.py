@@ -38,6 +38,9 @@ class Broker:
         self.approval_wait = approval_wait  # seconds a request waits for the human (S3)
         self.approvals = ApprovalBook(self.state / "audit.jsonl", on_event=self._emit)
         self.selected: set[str] = set()  # device ids in this session
+        # Last output heard from each target, kept across re-scans so what was learned (a boot
+        # banner naming the chip) is not lost when the graph is rebuilt (design.md section 10).
+        self.observed: dict[str, tuple[str, str]] = {}  # target id -> (time, text)
         self._lock = threading.RLock()
         self.last: R.Recon | None = None
 
@@ -50,6 +53,11 @@ class Broker:
         with self._lock:
             busy = self.locks.holder if self.locks else None
             self.last = R.run(self.io, busy=busy)
+            for tid, (when, text) in self.observed.items():
+                if tid in self.last.bench.targets:
+                    R.apply_log([self.last.bench.targets[tid]], text, seen=when)
+            if self.observed:
+                self.last.proposals = R.propose(self.last.bench)
             (self.state / "inventory.json").write_text(json.dumps(self.last.to_dict(), indent=2, default=str))
         self._emit({"event": "scanned", "devices": list(self.last.bench.devices)})
         return self.last
@@ -185,11 +193,20 @@ class Broker:
             text = R.listen_into(self.io, port.path, self.bench.targets_via(port_id), args["seconds"],
                                  exclusive=True, baud=args["baud"], lines=port.open_lines)
             self.last.proposals = R.propose(self.bench)  # what we heard may change the next steps
+            self._remember(port_id, text)
             if text is None:
                 detail = next((f for t in self.bench.targets_via(port_id) for f in reversed(t.facts) if "port disappeared" in f), "")
                 return {"error": "port disappeared while listening; the device likely reset or re-enumerated",
                         "detail": detail}
             return self._save_artifact(f"{port_id}-listen-{args['baud']}.txt", text, preview=text[-2000:])
+        if action == "serial.send":
+            text = self.io.serial_listen(port.path, args["seconds"], args["baud"], True, port.open_lines,
+                                         send=(args["data"] + args["eol"]).encode())
+            R.apply_log(self.bench.targets_via(port_id), text)  # the answer can name the part too
+            self.last.proposals = R.propose(self.bench)
+            self._remember(port_id, text)
+            safe_name = "".join(c if c.isalnum() else "_" for c in args["data"])[:24]
+            return self._save_artifact(f"{port_id}-send-{safe_name}.txt", text, preview=text[-2000:])
         if action in ("scpi.query", "scpi.write"):
             return self.io.visa_query(port.path, args["command"])
         if action == "esptool.chip_id":
@@ -202,6 +219,13 @@ class Broker:
             dev = self.bench.devices[port.device_id]
             return [dict(d, idcode=f"0x{d['idcode']:08X}") for d in self.io.jtag_scan(dev.serial)]
         return {"error": f"{action} is classified but not implemented in this prototype"}
+
+    def _remember(self, port_id: str, text: str | None) -> None:
+        if text and text.strip():
+            import time
+
+            for t in self.bench.targets_via(port_id):
+                self.observed[t.id] = (time.strftime("%H:%M:%S"), text)
 
     def _save_artifact(self, name: str, content: str, preview: str) -> dict:
         p = self.artifacts / name.replace(":", "_")

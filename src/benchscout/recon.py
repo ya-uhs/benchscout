@@ -290,22 +290,26 @@ def listen_into(io: Io, path: str, targets: list[Target], seconds: float, exclus
     return text
 
 
-def apply_log(t_list: list[Target], text: str) -> None:
+def apply_log(t_list: list[Target], text: str, seen: str | None = None) -> None:
+    """Fold console output into the targets. `seen` marks output heard earlier (before this
+    scan): it still proves what the part is, but its lines are labelled with when."""
     c = K.classify_log(text)
+    when = f" (seen {seen})" if seen else ""
     for t in t_list:
         if not text.strip():
-            t.facts.append("silent for the listen window")
+            if not seen:
+                t.facts.append("silent for the listen window")
             continue
         if c["exact"]:
             t.name, t.confidence = c["exact"], Confidence.IDENTIFIED
             t.kind = "mcu" if t.kind == "unknown" else t.kind
-            t.evidence.append(Evidence("boot-log", f"ESP-ROM banner -> {c['exact']}"))
+            t.evidence.append(Evidence("boot-log", f"ESP-ROM banner -> {c['exact']}{when}"))
         elif c["family"] and t.confidence == Confidence.UNKNOWN:
             t.confidence = Confidence.FAMILY
             t.facts.append(c["family"])
-        t.facts += c["facts"]
-        t.facts += [f"ALERT: {a}" for a in c["alerts"]]
-        t.facts += [f"log: {line}" for line in c["sample"]]
+        t.facts += [f + when for f in c["facts"]]
+        t.facts += [f"ALERT: {a}{when}" for a in c["alerts"]]
+        t.facts += [f"{'earlier log' if seen else 'log'}: {line}" for line in c["sample"]]
 
 
 def _from_impact(text: str, imp: Impact, needs: str | None = None) -> Proposal:

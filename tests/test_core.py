@@ -140,7 +140,7 @@ def test_dangerous_cannot_be_granted_beyond_one_use(io, tmp_path):
         br.decide(res["approval_id"], True, "session")
 
 
-def test_unimplemented_actions_are_not_put_to_the_human(io, tmp_path):
+def test_unimplemented_actions_are_not_put_to_the_human(io, tmp_path):  # fpga.program for now
     br = broker_with(io, tmp_path, "jtag:210319A8C7D1")
     assert br.request("fpga.program", "jtag:210319A8C7D1", {"bitstream": "x.fs"})["status"] == "not_implemented"
     assert br.approvals.pending() == []
@@ -369,3 +369,19 @@ def test_console_explains_wrong_input(io, tmp_path, addr):
     text = out.getvalue()
     assert "Nothing is waiting" in text and "Type a device number" in text
     assert "KeyError" not in text and "ValueError" not in text
+
+
+def test_serial_send_writes_once_and_reads_the_answer(tmp_path):
+    data = json.loads(FIXTURE.read_text())
+    data["replies"] = {VCP: {"status\n": "uptime_ms=1200 boot=3\nok\n"}}
+    f = tmp_path / "bench.json"
+    f.write_text(json.dumps(data))
+    io = FixtureIo(f)
+    br = broker_with(io, tmp_path / "s", VCP)
+    res = br.request("serial.send", VCP, {"data": "status"})
+    assert res["status"] == "approval_required"  # sending can make the firmware act
+    br.decide(res["approval_id"], True)
+    done = br.request("serial.send", VCP, {"data": "status"}, approval_id=res["approval_id"])
+    assert done["status"] == "done" and done["result"]["preview"].endswith("ok\n")
+    assert ("serial_send", VCP, b"status\n") in io.calls
+    assert br.request("serial.send", VCP, {"data": "?", "eol": "", "seconds": 0.1})["status"] == "approval_required"

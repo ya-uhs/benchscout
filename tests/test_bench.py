@@ -271,3 +271,25 @@ def test_port_that_vanishes_and_comes_back_still_yields_the_boot_log(tmp_path):
     assert any("vanished" in f and "came back" in f for f in esp.facts)
     assert not any("benchscout]" in f for f in esp.facts)  # our marker is not reported as device output
     assert io.lines[-1] == "asserted"  # dropping DTR/RTS reset this chip on every open
+
+
+def test_what_was_heard_survives_a_rescan(tmp_path):
+    """Real bench, 2026-10-31: a reboot printed the ESP-ROM banner, then bench_scan rebuilt the
+    graph and the ESP32 was back to "family only"."""
+    boot = "ok\nESP-ROM:esp32s3-20210327\nrst:0xc (RTC_SW_CPU_RST),boot:0x28 (SPI_FAST_FLASH_BOOT)\n"
+    data = json.loads(FIXTURE.read_text())
+    data["replies"] = {"/dev/cu.usbmodem1101": {"reboot\n": boot}}
+    f = tmp_path / "bench.json"
+    f.write_text(json.dumps(data))
+    br = Broker(FixtureIo(f), tmp_path / "s")
+    br.scan()
+    br.select([br.bench.ports["serial:usbmodem1101"].device_id])
+    aid = br.request("serial.send", "serial:usbmodem1101", {"data": "reboot"})["approval_id"]
+    br.decide(aid, True)
+    br.request("serial.send", "serial:usbmodem1101", {"data": "reboot"}, approval_id=aid)
+    assert target_named(br.bench, "ESP32-S3")  # the answer itself identifies the chip
+    br.scan()
+    esp = target_named(br.bench, "ESP32-S3")
+    assert esp.confidence == Confidence.IDENTIFIED
+    assert any(e.source == "boot-log" and "(seen " in e.detail for e in esp.evidence)
+    assert not any(f.startswith("log:") for f in esp.facts)  # old lines are labelled as earlier

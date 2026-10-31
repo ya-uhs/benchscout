@@ -34,7 +34,8 @@ class Io(Protocol):
 
     # access: opens things; callers go through policy first
     def visa_query(self, resource: str, command: str) -> str | None: ...
-    def serial_listen(self, path: str, seconds: float, baud: int, exclusive: bool = False, lines: str = "low") -> str: ...
+    def serial_listen(self, path: str, seconds: float, baud: int, exclusive: bool = False, lines: str = "low",
+                      send: bytes | None = None) -> str: ...  # `send` is written once, right after opening
     def jtag_scan(self, usb_serial: str | None) -> list[dict]: ...  # [{idcode, manufacturer, model}]
 
 
@@ -134,8 +135,8 @@ class LiveIo:
             return None
 
     def serial_listen(self, path: str, seconds: float, baud: int = 115200, exclusive: bool = False,
-                      lines: str = "low") -> str:
-        """Read for `seconds`. If the port vanishes (a native-USB chip resets on open and
+                      lines: str = "low", send: bytes | None = None) -> str:
+        """Read for `seconds` (after writing `send`, if given). If the port vanishes (a native-USB chip resets on open and
         re-enumerates; real bench 2026-10-31), wait for it to come back and keep reading, so
         the boot log is caught. Reopening can reset the chip again, so at most REOPENS times."""
         import serial
@@ -159,6 +160,9 @@ class LiveIo:
         end = start + seconds
         buf = bytearray()
         s = open_port()
+        if send:
+            s.write(send)
+            s.flush()
         reopens = 0
         try:
             while time.monotonic() < end:
@@ -300,7 +304,10 @@ class FixtureIo:
         return self.data.get("visa", {}).get(resource, {}).get(command)
 
     def serial_listen(self, path: str, seconds: float, baud: int = 115200, exclusive: bool = False,
-                      lines: str = "low") -> str:
+                      lines: str = "low", send: bytes | None = None) -> str:
+        if send is not None:  # what a device answers is recorded per sent text in "replies"
+            self.calls.append(("serial_send", path, send))
+            return self.data.get("replies", {}).get(path, {}).get(send.decode(errors="replace"), "")
         self.calls.append(("serial_listen", path))
         self.lines.append(lines)
         if exclusive:
