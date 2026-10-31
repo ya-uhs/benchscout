@@ -24,6 +24,13 @@ load in `bench-session/`, which must look exactly like an end user's workspace.
 
 ## Direction (summary of design.md; do not drift from it)
 
+- **benchscout is the harness that runs the loop** (design.md section 17): watch the chosen devices,
+  notice events, **wake the user's agent** (Claude Code via `claude -p` stream-json; every other agent via
+  ACP with the official `@agentclientprotocol/sdk`), let it investigate with benchscout's tools, record what
+  was learned. The human answers inbox cards (questions, approvals) and can always type an intent.
+  benchscout also proposes which devices to look at. If the chosen agent cannot be woken, stop and say
+  so; never fall back to another agent or LLM on its own. Use existing protocols and official interfaces;
+  do not invent private ones.
 - **The agent is the brain.** Identifying what a device is (searching IDs, reading datasheets)
   and interpreting logs (a crash, an RTOS) is the user's agent's job (Copilot, Claude Code,
   OpenAI-compatible APIs incl. local LLMs). benchscout has no LLM features, no agent embedding.
