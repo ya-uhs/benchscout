@@ -1,0 +1,40 @@
+# Console lines benchscout reads without an LLM (layer 2):
+# - `exact`: output that proves which part it is (a ROM banner). This is evidence, not a guess.
+# - `alert`: what the first read must lead with, before any LLM is involved.
+# Anything else in a log is for the agent to interpret (layer 4), so it does not belong here.
+#
+# Each entry: pattern (Python regex, named groups usable as {name} in the texts),
+# one of exact / family / fact / alert, optional ignore_case / multiline, and for exact a
+# small rename: upper = true, replace = [[from, to]...], strip = "chars".
+
+[[log]]
+pattern = 'ESP-ROM:(?P<chip>esp32[a-z0-9]*)'
+exact = "{chip}"
+upper = true
+replace = [["ESP32", "ESP32-"]]
+strip = "-"
+
+[[log]]
+pattern = 'rst:0x[0-9a-f]+ \((?P<reason>[A-Z_]+)\)'
+fact = "ESP reset reason {reason}"
+family = "ESP32 family"
+
+[[log]]
+pattern = 'Brownout detector was triggered|rst: ?brownout|BROWNOUT_RST'
+ignore_case = true
+alert = "brownout reset seen in log"
+
+[[log]]
+pattern = 'Guru Meditation Error: (?P<what>.+)'
+alert = "crash: {what}"
+
+# Real bench 2026-10-31 (ESP32-S3): abort() prints no Guru Meditation line, and the ROM then
+# reports RTC_SW_CPU_RST, so without these the crash would not lead the first read.
+[[log]]
+pattern = 'abort\(\) was called at PC (?P<pc>0x[0-9a-fA-F]+)'
+alert = "crash: abort() at PC {pc}"
+
+[[log]]
+pattern = '^Backtrace: '
+multiline = true
+alert = "crash backtrace printed"

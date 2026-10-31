@@ -31,6 +31,9 @@ class Broker:
         self.io = io
         self.state = Path(state_dir)
         self.state.mkdir(parents=True, exist_ok=True)
+        from . import knowledge as K
+
+        K.load(self.state.parent)  # shipped + user + this workspace's .benchscout/knowledge/
         self.artifacts = self.state / "artifacts"
         self.artifacts.mkdir(exist_ok=True)
         self.locks = locks

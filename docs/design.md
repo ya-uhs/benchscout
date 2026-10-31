@@ -295,7 +295,7 @@ effect = "disruptive"
 
 | 場所 | 中身 | 移す先 |
 |---|---|---|
-| `knowledge.py` | USB_IDS、IDCODES、LOG_SIGNATURES、基板の配線(lambda でのマッチ)、測定器の種類 | 上の 4 層に分ける。2 に当たるものだけデータファイルへ、名前の表は 1 に任せて減らす |
+| `knowledge.py` | USB_IDS、IDCODES、LOG_SIGNATURES、基板の配線(lambda でのマッチ)、測定器の種類 | **済(2026-10-31)**:`packs/bench/data/*.toml` に移し、`knowledge.py` は読み込みと照合だけ。同梱 → 利用者(`~/.config/benchscout/knowledge/`)→ 作業フォルダ(`.benchscout/knowledge/`)の順に重ねる。RTOS の版の検出(4 の仕事)は削った。コードに機器名が戻らないことはテストで確認 |
 | `policy.py` の `ACTIONS`、`_ENERGIZING` | 操作ごとの影響度 | `ACTIONS` は `actions.py` に移した。ポート固有の引き上げ(リセット、通電)はまだ `policy.py` |
 | `broker._execute` | 操作ごとの if の連鎖 | Action レジストリ(名前、影響度、引数の型は `actions.py` に移した。実行部分はまだ if の連鎖) |
 | `recon.run` | `port.kind` での分岐、`vid == 0x0403` の判定 | Probe のレジストリ |

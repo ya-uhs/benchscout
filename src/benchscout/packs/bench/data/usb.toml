@@ -1,0 +1,108 @@
+# How to treat a USB interface: layer 2 of design.md section 5 (safety and the first read only).
+# Names come from the device itself (USB descriptor); `name` here is only the label of the
+# behaviour below, so a part we have no entry for is still listed under its own name.
+#
+#   role: bridge      USB-UART converter; what is behind it is unknown
+#         native      the chip itself enumerates (its family is known)
+#         multi       multi-channel FTDI-style part; channel meaning depends on the board (boards.toml)
+#         probe       debug probe (JTAG/SWD), often with a virtual COM port
+#         instrument  USBTMC/VISA instrument
+#   may_reset_on_open: opening the port can reset what is behind it -> listening needs approval
+#   open_lines: "low" (default) drop DTR/RTS after open, "asserted" leave them as the OS set them
+
+# Serial numbers burned identically into every unit of a model: not unique per board.
+shared_serials = ["FactoryAIOT Pro"]
+
+[[usb]]
+vid = 0x10C4
+pid = 0xEA60
+name = "Silicon Labs CP210x"
+role = "bridge"
+may_reset_on_open = true
+
+[[usb]]
+vid = 0x1A86
+pid = 0x7523
+name = "WCH CH340"
+role = "bridge"
+may_reset_on_open = true
+
+[[usb]]
+vid = 0x1A86
+pid = 0x55D4
+name = "WCH CH9102"
+role = "bridge"
+may_reset_on_open = true
+
+[[usb]]
+vid = 0x0403
+pid = 0x6001
+name = "FTDI FT232R"
+role = "bridge"
+may_reset_on_open = true
+
+[[usb]]
+vid = 0x0403
+pid = 0x6015
+name = "FTDI FT231X"
+role = "bridge"
+may_reset_on_open = true
+
+[[usb]]
+vid = 0x0403
+pid = 0x6010
+name = "FTDI FT2232H"
+role = "multi"
+
+[[usb]]
+vid = 0x0403
+pid = 0x6014
+name = "FTDI FT232H"
+role = "probe"
+probe = "jtag"
+
+[[usb]]
+vid = 0x303A
+pid = 0x1001
+name = "Espressif USB-Serial/JTAG"
+role = "native"
+family = "ESP32 with native USB (S3/C3/C6/H2)"
+jtag = true
+# Real bench (macOS, 2026-10-31): dropping DTR/RTS after opening reset the chip on every open;
+# left asserted it did not reset (seen twice). Listening stays DISRUPTIVE until confirmed further.
+may_reset_on_open = true
+open_lines = "asserted"
+
+[[usb]]
+vid = 0x0483
+pid = 0x374B
+name = "ST-LINK/V2-1"
+role = "probe"
+probe = "swd"
+
+[[usb]]
+vid = 0x0483
+pid = 0x374E
+name = "STLINK-V3"
+role = "probe"
+probe = "swd"
+
+[[usb]]
+vid = 0x0483
+pid = 0x3753
+name = "STLINK-V3"
+role = "probe"
+probe = "swd"
+
+[[usb]]
+vid = 0x2E8A
+pid = 0x000C
+name = "Raspberry Pi Debug Probe (CMSIS-DAP)"
+role = "probe"
+probe = "swd"
+
+[[usb]]
+vid = 0x1AB1
+pid = 0x04CE
+name = "Rigol DS1000Z"
+role = "instrument"

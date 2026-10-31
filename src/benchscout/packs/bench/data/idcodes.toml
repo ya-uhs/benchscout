@@ -1,0 +1,32 @@
+# JTAG IDCODE fallback, used only when openFPGALoader (whose own database is preferred, layer 1)
+# is not installed or does not know the part. Version nibble masked.
+[[idcode]]
+code = 0x0362D093
+name = "Xilinx XC7A35T"
+kind = "fpga"
+
+[[idcode]]
+code = 0x0362C093
+name = "Xilinx XC7A50T"
+kind = "fpga"
+
+[[idcode]]
+code = 0x03631093
+name = "Xilinx XC7A100T"
+kind = "fpga"
+
+[[idcode]]
+code = 0x03727093
+name = "Xilinx XC7Z020"
+kind = "fpga"
+
+[[idcode]]
+code = 0x0BA00477
+name = "ARM Cortex-M debug port (DAP)"
+kind = "mcu"
+
+# Confirmed on a real Tang Nano 9K: openFPGALoader reports 0x0100481B as GW1N(R)-9C.
+[[idcode]]
+code = 0x0100481B
+name = "Gowin GW1N(R)-9C"
+kind = "fpga"

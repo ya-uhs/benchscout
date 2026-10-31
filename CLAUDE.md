@@ -109,8 +109,13 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
   `fixtures/` or a test (e.g. ESP32 native USB resets on open; Tang Nano serials are shared).
 - For identification, prefer the external tool's own database (openFPGALoader, USB ID lists)
   over our tables, and say in the evidence which one decided.
-- Support for a new device, protocol or command should be data first. Do not put device or
-  protocol names into core code.
+- Knowledge lives in four layers (design.md section 5) and never in code: existing databases
+  (USB descriptor, openFPGALoader, `*IDN?`), a minimal shipped pack in
+  `src/benchscout/packs/bench/data/*.toml` (safety and the first read only), learned memory, and
+  the agent's own interpretation. Users add their own TOML in `~/.config/benchscout/knowledge/`
+  or `<workspace>/.benchscout/knowledge/`. `knowledge.py` only loads and matches;
+  `test_no_device_knowledge_in_code` keeps it that way. Before adding to the shipped pack, ask:
+  without it, would safety be judged wrong or the first read be missing? If not, it is not layer 2.
 
 ## Open findings from the first real-hardware run (2026-10-31)
 
