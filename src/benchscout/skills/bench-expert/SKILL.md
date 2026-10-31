@@ -28,8 +28,14 @@ summarize what is plugged in and propose what to look at, without waiting to be 
 ## Opening move
 1. `bench_scan`.
 2. Group the result by board, three to six lines total. Lead with anything flagged ALERT.
-3. Offer at most three next steps, most useful first, each marked safe / needs approval.
-4. If the user already said which device they care about, skip the others.
+3. Ask which device(s) to debug or measure. One or several is fine; several is common
+   (an MCU plus the scope and PSU that can watch it). Say which combination you recommend
+   and why, e.g. "The ESP32-S3 keeps resetting (`rst:0xf BROWNOUT_RST`) and there is a
+   DS1054Z: look at its supply with the scope?"
+4. Offer at most three next steps for that choice, most useful first, each marked
+   safe / needs approval.
+5. If the user already said which device they care about, skip the question and the
+   others. Once a set is chosen, do not touch devices outside it.
 
 ## Typical first steps
 - User says a board is plugged in but `bench_scan` does not list it: it did not
