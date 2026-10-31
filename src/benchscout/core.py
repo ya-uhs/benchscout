@@ -34,7 +34,7 @@ from .report import render
 
 # ---- agent channel --------------------------------------------------------------
 
-AGENT_METHODS = ("scan", "inventory", "impact", "do", "actions", "ask")
+AGENT_METHODS = ("scan", "inventory", "impact", "do", "actions", "ask", "request_devices")
 
 
 def agent_dispatch(broker: Broker, method: str, params: dict) -> Any:
@@ -47,6 +47,8 @@ def agent_dispatch(broker: Broker, method: str, params: dict) -> Any:
         return broker.impact(params["action"], params["port"], params.get("args")).to_dict()
     if method == "do":
         return broker.request(params["action"], params["port"], params.get("args"), params.get("approval_id"))
+    if method == "request_devices":
+        return broker.request_devices(params.get("devices") or [], params.get("reason", ""), params.get("question_id"))
     if method == "ask":
         return broker.ask(params.get("question", ""), params.get("options") or [], params.get("question_id"))
     if method == "actions":

@@ -22,6 +22,8 @@ class Question:
     status: str = "pending"  # pending | answered | withdrawn
     choice: str | None = None  # one of options, if picked
     reply: str | None = None  # free text, if written
+    kind: str = "question"  # "question" | "devices" (the agent asks to use devices; see Broker.request_devices)
+    data: dict = field(default_factory=dict)
     created: float = field(default_factory=time.time)
 
 
@@ -31,9 +33,10 @@ class QuestionBook:
         self._clock = clock
         self._cond = threading.Condition()
         self._items: dict[str, Question] = {}
+        self.on_answer: Callable[[Question], None] | None = None  # e.g. the broker acting on a devices request
 
-    def ask(self, text: str, options: list[str]) -> Question:
-        q = Question(uuid.uuid4().hex[:6], text, [str(o) for o in options])
+    def ask(self, text: str, options: list[str], kind: str = "question", data: dict | None = None) -> Question:
+        q = Question(uuid.uuid4().hex[:6], text, [str(o) for o in options], kind=kind, data=data or {})
         with self._cond:
             self._items[q.id] = q
         self._emit({"event": "question_asked", "question": asdict(q)})
@@ -68,6 +71,8 @@ class QuestionBook:
             q.status, q.choice, q.reply = "answered", choice, (reply or None)
             self._cond.notify_all()
         self._emit({"event": "question_answered", "question": asdict(q)})
+        if self.on_answer:
+            self.on_answer(q)
         return q
 
     def pending(self) -> list[Question]:

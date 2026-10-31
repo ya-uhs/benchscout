@@ -28,7 +28,7 @@ APPROVAL_WAIT_S = float(os.environ.get("BENCHSCOUT_APPROVAL_WAIT", "100"))
 INSTRUCTIONS = """benchscout gives you the hardware bench. Rules that always hold:
 - Reach hardware only through these tools. Never open serial ports, run esptool, openocd or SCPI scripts yourself.
 - Never try to approve anything yourself. Approvals and device selection are made by the human in the benchscout panel.
-- Only devices the human selected can be used; if a call returns not_selected, ask the human to select it.
+- Only devices the human selected can be used; if a call returns not_selected, use request_devices to ask for them.
 - When you need a decision from the human, call ask_user with short options instead of guessing or stopping.
 - Name a part only when the evidence proves it; otherwise say it is unknown and list the facts.
 - When a proposal or impact carries a reason (why:), quote it; do not invent another one."""
@@ -121,6 +121,14 @@ Actions:
         Keep options short (2-5). The call waits for the answer; if it returns status
         "waiting", call again with the question_id."""
         return await _call("ask", {"question": question, "options": options, "question_id": question_id},
+                           timeout=APPROVAL_WAIT_S + 60)
+
+    @mcp.tool()
+    async def request_devices(devices: list[str], reason: str, question_id: str | None = None) -> str:
+        """Ask the human to add devices to this session (only selected devices can be used).
+        `devices` are device ids, port names or names from bench_scan. The human decides in the
+        benchscout inbox; the call waits. Returns "selected" or "denied" (with their reply)."""
+        return await _call("request_devices", {"devices": devices, "reason": reason, "question_id": question_id},
                            timeout=APPROVAL_WAIT_S + 60)
 
     @mcp.prompt()

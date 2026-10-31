@@ -414,3 +414,18 @@ def test_unanswered_question_can_be_waited_on_again(io, tmp_path):
     br.answer(first["question_id"], reply="the probe is on VBAT, not either")  # free text
     again = agent_dispatch(br, "ask", {"question_id": first["question_id"]})
     assert again["status"] == "answered" and again["choice"] is None and "VBAT" in again["reply"]
+
+
+def test_agent_can_only_ask_for_devices_the_human_selects_them(io, tmp_path):
+    br = broker_with(io, tmp_path, wait=0)
+    res = agent_dispatch(br, "request_devices", {"devices": ["usbserial-10"], "reason": "listen to its console"})
+    assert res["status"] == "waiting" and br.selected == set()
+    q = br.questions.pending()[0]
+    assert q.kind == "devices" and q.data["names"]
+    br.answer(q.id, choice="allow")
+    assert br.selected == {br.bench.ports[CH340].device_id}
+    assert agent_dispatch(br, "request_devices", {"question_id": q.id})["status"] == "selected"
+    res2 = agent_dispatch(br, "request_devices", {"devices": ["usbmodem21403"], "reason": "x"})
+    br.answer(res2["question_id"], reply="no, leave the ST-Link alone")
+    assert agent_dispatch(br, "request_devices", {"question_id": res2["question_id"]})["status"] == "denied"
+    assert len(br.selected) == 1

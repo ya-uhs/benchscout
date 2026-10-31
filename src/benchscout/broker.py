@@ -43,6 +43,7 @@ class Broker:
         from .questions import QuestionBook
 
         self.questions = QuestionBook(on_event=self._emit)
+        self.questions.on_answer = self._on_answer
         self.selected: set[str] = set()  # device ids in this session
         # Output heard from each target, kept across re-scans so what was learned is not lost
         # when the graph is rebuilt (design.md section 10). Per target: the latest output, plus
@@ -147,6 +148,35 @@ class Broker:
                     "tell_user": "The question is waiting in the benchscout inbox. Call again with this question_id to keep waiting."}
         return {"status": q.status, "question_id": q.id, "choice": q.choice, "reply": q.reply,
                 "answered_by": "the human, in the benchscout inbox"}
+
+    def request_devices(self, devices: list[str], reason: str, question_id: str | None = None,
+                        wait: float | None = None) -> dict:
+        """The agent asks to add devices to the session. Only the human's answer selects them."""
+        wait = self.approval_wait if wait is None else wait
+        if question_id:
+            q = self.questions.wait(question_id, wait)
+        else:
+            with self._lock:
+                try:
+                    ids = [self._resolve_device(d) for d in devices]
+                except KeyError as e:
+                    return {"status": "unknown_device", "message": str(e.args[0])}
+                names = {i: self.bench.devices[i].name for i in ids}
+            q = self.questions.ask(f"The agent asks to use: {', '.join(names.values())}. Reason: {reason}",
+                                   ["allow", "deny"], kind="devices", data={"devices": ids, "names": names, "reason": reason})
+            q = self.questions.wait(q.id, wait)
+        if q is None:
+            return {"status": "unknown_question", "question_id": question_id}
+        if q.status == "pending":
+            return {"status": "waiting", "question_id": q.id,
+                    "tell_user": "Waiting for the human in the benchscout inbox. Call again with this question_id."}
+        if q.choice == "allow":
+            return {"status": "selected", "selected": sorted(self.selected), "answered_by": "the human, in the benchscout inbox"}
+        return {"status": "denied", "reply": q.reply, "answered_by": "the human, in the benchscout inbox"}
+
+    def _on_answer(self, q) -> None:
+        if q.kind == "devices" and q.choice == "allow":
+            self.select(sorted(self.selected | set(q.data["devices"])))
 
     def answer(self, question_id: str, choice: str | None = None, reply: str | None = None) -> dict:
         from dataclasses import asdict
