@@ -100,6 +100,7 @@ def test_waiting_request_runs_as_soon_as_the_human_approves(io, tmp_path):
     threading.Thread(target=human, daemon=True).start()
     res = br.request("serial.listen", CH340, {"seconds": 0.1})
     assert res["status"] == "done"
+    assert res["approval"]["granted_by"].startswith("the human") and res["approval"]["waited_s"] >= 0
     assert ("serial_listen", "/dev/cu.usbserial-10") in io.calls
 
 

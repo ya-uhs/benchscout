@@ -159,7 +159,11 @@ class Broker:
             if approval_id is None:
                 approval_id = self.approvals.open(impact, key).id
 
+        import time
+
+        t0 = time.monotonic()
         status = self.approvals.wait(approval_id, wait)  # the human decides in the panel (S3)
+        waited = round(time.monotonic() - t0, 1)
 
         with self._lock:
             if status == "pending":
@@ -174,7 +178,9 @@ class Broker:
             used = self.approvals.consume(approval_id, action, port_id, key)
             if used != "ok":
                 return {"status": used, "approval_id": approval_id}
-            return self._run(impact, args)
+            # say so, or the agent reports a long call as "ran without approval" (real bench, S5)
+            return dict(self._run(impact, args), approval={"id": approval_id, "granted_by": "the human, in the benchscout panel",
+                                                           "waited_s": waited})
 
     def _outside_session(self, port_id: str) -> dict | None:
         dev = self.bench.ports[port_id].device_id

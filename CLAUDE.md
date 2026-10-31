@@ -126,7 +126,10 @@ Causes are known (design.md section 10).
   the lines left asserted (knowledge `open_lines: asserted`) it did not reset and its firmware
   output was read (`sample: uptime_ms=...`). One observation; listen stays DISRUPTIVE until
   confirmed again. No reset means no boot log, so the exact chip is still unknown.
-- Re-scanning rebuilds the graph and drops what earlier listens found (design.md section 10).
+- Fixed: re-scanning dropped what earlier listens found; the broker now keeps the last output per
+  target and re-applies it, marked with when it was seen.
+- `testbench/` holds test firmware (ESP32-S3) and a bitstream (Tang Nano 9K) with known output;
+  see testbench/README.md. Use them to check benchscout against the real bench.
 - Fixed: MCP clients start the relay with a trimmed environment (no TMPDIR), so the runtime
   dir now depends only on the home directory. Keep anything the core and relay must agree on
   independent of environment variables.
