@@ -293,6 +293,8 @@ def test_relay_without_a_core_says_how_to_start_one(addr):
     ("deny ab12", {"method": "decide", "params": {"approval_id": "ab12", "granted": False}}),
     ("select a b", {"method": "select", "params": {"devices": ["a", "b"]}}),
     ("quit", {"method": "shutdown", "params": {}}),
+    ("1", {"method": "select", "params": {"devices": ["1"]}}),
+    ("1 2", {"method": "select", "params": {"devices": ["1", "2"]}}),
 ])
 def test_control_shorthand(line, expected):
     assert parse_shorthand(line) == expected
@@ -356,3 +358,14 @@ def test_console_shows_approvals_with_the_commands_to_answer(io, tmp_path, addr)
     aid = br.request("serial.listen", CH340)["approval_id"]
     text = out.getvalue()
     assert "APPROVAL NEEDED  [DISRUPTIVE]" in text and f"approve {aid}" in text and f"approve {aid} session" in text
+
+
+def test_console_explains_wrong_input(io, tmp_path, addr):
+    out = stdio.StringIO()
+    br = Broker(io, tmp_path)
+    core = Core(br, addr, out, human=True)
+    br.on_event = core.emit
+    core.run(stdio.StringIO("approve 1\nhello\n"), initial_scan=False)
+    text = out.getvalue()
+    assert "Nothing is waiting" in text and "Type a device number" in text
+    assert "KeyError" not in text and "ValueError" not in text

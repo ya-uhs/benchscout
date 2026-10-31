@@ -81,6 +81,8 @@ def cmd_core(a) -> None:
         core.run()
     except KeyboardInterrupt:
         pass  # run() already stopped the core and released the devices
+    except RuntimeError as e:  # another core already serves this folder
+        sys.exit(f"benchscout: {e}. Use that terminal, or quit it first.")
 
 
 def cmd_mcp(a) -> None:

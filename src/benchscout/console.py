@@ -3,8 +3,10 @@ terminal. The VS Code extension gets the same messages as JSON lines instead."""
 
 from __future__ import annotations
 
-HELP = ("Commands: select <number|port>...   approve <id> [once|session|<N>m]   deny <id>   "
-        "pending   scan   quit")
+HELP = ("1) Type the number of each device to work on (e.g. 1, or 1 2).\n"
+        "2) Ask your agent (claude, Copilot) about them in this folder.\n"
+        "3) When the agent needs something that is not SAFE, it shows up here with the exact\n"
+        "   approve/deny command to type. Other commands: pending | scan | quit")
 
 
 def _devices(bench: dict) -> list[str]:
@@ -41,11 +43,12 @@ def format_human(msg: dict, broker) -> str | None:
         busy = msg.get("busy") or {}
         held = "".join(f"\n   {_names(broker, [d])} is in use by another window ({h.get('workspace') or h.get('pid')})"
                        for d, h in busy.items())
-        return f"Selected: {_names(broker, msg['selected'])}{held}"
+        return (f"Selected: {_names(broker, msg['selected'])}{held}\n"
+                f"Now ask your agent in this folder; approvals will appear here.")
     if ev == "stopped":
         return "benchscout core stopped; devices released."
     if "error" in msg:
-        return f"error: {msg['error']}"
+        return f"error: {msg['error'].split(': ', 1)[-1].strip(chr(34))}"
     result = msg.get("result")
     if isinstance(result, dict) and "text" in result:  # a scan
         return result["text"] + "\n\nDevices (select by number or port name):\n" + "\n".join(_devices(result.get("bench", {})))

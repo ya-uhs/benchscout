@@ -105,7 +105,10 @@ class ApprovalBook:
         with self._cond:
             a = self._items.get(approval_id)
             if a is None:
-                raise KeyError(approval_id)
+                waiting = [x.id for x in self._items.values() if x.status == "pending"]
+                raise KeyError(f"no approval {approval_id!r}. " + (
+                    f"Waiting: {', '.join(waiting)}" if waiting else
+                    "Nothing is waiting; approvals appear here when the agent asks for something that is not SAFE."))
             if a.status != "pending":
                 raise ValueError(f"{approval_id} is already {a.status}")
             if granted and scope != "once":

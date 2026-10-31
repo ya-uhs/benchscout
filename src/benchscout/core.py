@@ -130,6 +130,8 @@ def parse_scope(word: str | None):
 
 def parse_shorthand(line: str) -> dict:
     words = line.split()
+    if all(w.isdigit() for w in words):  # "1" or "1 2": the numbers in the device list
+        return {"method": "select", "params": {"devices": words}}
     cmd, args = words[0], words[1:]
     if cmd in ("approve", "deny"):
         if not args:
@@ -142,7 +144,8 @@ def parse_shorthand(line: str) -> dict:
         return {"method": "select", "params": {"devices": args}}
     if cmd in ("scan", "pending", "inventory", "quit"):
         return {"method": "shutdown" if cmd == "quit" else cmd, "params": {}}
-    raise ValueError(f"unknown command {cmd!r}")
+    raise ValueError(f"unknown command {cmd!r}. Type a device number to select it (e.g. 1), or: "
+                     f"approve <id> | deny <id> | pending | scan | quit")
 
 
 def control_dispatch(broker: Broker, method: str, params: dict) -> Any:
