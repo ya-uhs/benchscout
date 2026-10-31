@@ -172,5 +172,8 @@ Actions:
 def main(workspace: str | None = None) -> None:
     from .cli import user_language
 
+    from . import knowledge as K
+
+    K.load(Path(workspace or os.getcwd()))  # so the action list includes the folder's own tools
     address = os.environ.get("BENCHSCOUT_ADDRESS") or agent_address(Path(workspace or os.getcwd()))[0]
     build_server(CoreClient(address), user_language()).run()
