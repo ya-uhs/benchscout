@@ -39,10 +39,10 @@ test("start, see devices, select, approve what the agent asks, stop", async () =
     core.start();
     const [bench, proposals] = await scanned;
     const views = deviceViews(bench);
-    const ch340 = views.find((d) => d.name === "WCH CH340");
+    const ch340 = views.find((d) => d.name === "QinHeng USB Serial");
     assert.ok(ch340 && ch340.ports.includes("usbserial-10"));
     assert.equal(ch340.things[0].status, "unknown");  // unknown stays unknown
-    const fpga = views.find((d) => d.name === "FTDI FT2232H").things.find((t) => t.inside);
+    const fpga = views.find((d) => d.name === "Digilent USB Device").things.find((t) => t.inside);
     assert.ok(fpga, "the fabric UART is shown as living inside the FPGA");
     assert.ok(proposals.length > 0 && proposals.every((p) => p.reason));
 

@@ -58,7 +58,7 @@ for (const [name, make] of [
     const { core, h, done } = await bench(make);
     try {
       const first = await until(h, (c) => c.kind === "question");
-      const ch340 = first.options.find((o) => o.label.includes("CH340"));
+      const ch340 = first.options.find((o) => o.label.includes("USB Serial"));
       assert.ok(ch340, "the first question offers each device");
       assert.ok(first.freeText, "and a way to say something else");
       void h.answer(first.id, { option: ch340.id });
@@ -139,7 +139,7 @@ test("auto: a crash on a watched device wakes the agent with the line, without t
     assert.match(alert.body, /abort\(\) was called at PC 0x42001c85/);
     assert.match(alert.detail, /\.benchscout\/logs\/serial_usbmodem21403\.log/);
     const report = await until(h, (c) => c.kind === "report" && c.status === "open" && /something to look at/.test(c.title));
-    assert.match(report.body, /got: benchscout noticed this on STLINK-V3/);
+    assert.match(report.body, /got: benchscout noticed this on STMicroelectronics STLINK-V3/);
   } finally { done(); }
 });
 
@@ -161,7 +161,7 @@ test("memory: plain entries are recorded, safety-loosening ones wait for the hum
   try {
     await until(h, (c) => c.kind === "question");
     await agentCall(env, root, "remember", { ref: "usbserial-10", kind: "config", text: "CH1 is on the 3V3 rail" });
-    const rec = await until(h, (c) => c.kind === "memory" && /Remembered about WCH CH340/.test(c.title));
+    const rec = await until(h, (c) => c.kind === "memory" && /Remembered about QinHeng USB Serial/.test(c.title));
     assert.match(rec.body, /CH1 is on the 3V3 rail/);
     assert.deepEqual(rec.options.map((o) => o.id), ["forget"]);
     const res = (await agentCall(env, root, "remember", { ref: "/dev/cu.usbserial-10", kind: "safety", text: "no auto-reset circuit", data: { listen_safe: true } })).result;

@@ -1,6 +1,8 @@
-# How to treat a USB interface: layer 2 of design.md section 5 (safety and the first read only).
-# Names come from the device itself (USB descriptor); `name` here is only the label of the
-# behaviour below, so a part we have no entry for is still listed under its own name.
+# How a USB interface behaves when benchscout opens it, and what it carries (design.md section 5,
+# layer 2). This is about safety and structure only: names come from the device itself (its USB
+# descriptor) and from the agent. Deleting this file only makes benchscout stricter: an interface
+# it knows nothing about is treated as "opening may reset what is behind it". Do not grow it into a
+# list of devices; what is learned about a particular device goes to memory (design.md section 6).
 #
 #   role: bridge      USB-UART converter; what is behind it is unknown
 #         native      the chip itself enumerates (its family is known)
@@ -15,58 +17,49 @@ shared_serials = ["FactoryAIOT Pro"]
 
 [[usb]]
 vid = 0x10C4
-pid = 0xEA60
-name = "Silicon Labs CP210x"
+pid = 0xEA60  # Silicon Labs CP210x
 role = "bridge"
 may_reset_on_open = true
 
 [[usb]]
 vid = 0x1A86
-pid = 0x7523
-name = "WCH CH340"
+pid = 0x7523  # WCH CH340
 role = "bridge"
 may_reset_on_open = true
 
 [[usb]]
 vid = 0x1A86
-pid = 0x55D4
-name = "WCH CH9102"
+pid = 0x55D4  # WCH CH9102
 role = "bridge"
 may_reset_on_open = true
 
 [[usb]]
 vid = 0x0403
-pid = 0x6001
-name = "FTDI FT232R"
+pid = 0x6001  # FTDI FT232R
 role = "bridge"
 may_reset_on_open = true
 
 [[usb]]
 vid = 0x0403
-pid = 0x6015
-name = "FTDI FT231X"
+pid = 0x6015  # FTDI FT231X
 role = "bridge"
 may_reset_on_open = true
 
 [[usb]]
 vid = 0x0403
-pid = 0x6010
-name = "FTDI FT2232H"
+pid = 0x6010  # FTDI FT2232H
 role = "multi"
 
 [[usb]]
 vid = 0x0403
-pid = 0x6014
-name = "FTDI FT232H"
+pid = 0x6014  # FTDI FT232H
 role = "probe"
 probe = "jtag"
 
 [[usb]]
 vid = 0x303A
-pid = 0x1001
-name = "Espressif USB-Serial/JTAG"
+pid = 0x1001  # Espressif USB-Serial/JTAG
 role = "native"
-family = "ESP32 with native USB (S3/C3/C6/H2)"
 jtag = true
 # Real bench (macOS, 2026-10-31): dropping DTR/RTS after opening reset the chip on every open;
 # left asserted it did not reset (seen twice). Listening stays DISRUPTIVE until confirmed further.
@@ -75,34 +68,25 @@ open_lines = "asserted"
 
 [[usb]]
 vid = 0x0483
-pid = 0x374B
-name = "ST-LINK/V2-1"
+pid = 0x374B  # ST-LINK/V2-1
 role = "probe"
 probe = "swd"
 
 [[usb]]
 vid = 0x0483
-pid = 0x374E
-name = "STLINK-V3"
+pid = 0x374E  # STLINK-V3
 role = "probe"
 probe = "swd"
 
 [[usb]]
 vid = 0x0483
-pid = 0x3753
-name = "STLINK-V3"
+pid = 0x3753  # STLINK-V3
 role = "probe"
 probe = "swd"
 
 [[usb]]
 vid = 0x2E8A
-pid = 0x000C
-name = "Raspberry Pi Debug Probe (CMSIS-DAP)"
+pid = 0x000C  # Raspberry Pi Debug Probe (CMSIS-DAP)
 role = "probe"
 probe = "swd"
 
-[[usb]]
-vid = 0x1AB1
-pid = 0x04CE
-name = "Rigol DS1000Z"
-role = "instrument"

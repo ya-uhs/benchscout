@@ -51,7 +51,7 @@ def test_safe_port_is_watched_on_selection_and_a_crash_is_noticed_once(tmp_path)
     assert len(alerts) == 1, "the same alert is reported once per cooldown"
     a = alerts[0]
     assert a["what"].startswith("crash: abort()") and a["line"] == CRASH.strip()
-    assert a["device_name"] == "STLINK-V3"
+    assert a["device_name"] == "STMicroelectronics STLINK-V3"
     assert CRASH in Path(a["log"]).read_text()
     br.end_session()
 

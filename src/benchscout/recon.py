@@ -45,17 +45,20 @@ def build(io: Io) -> Bench:
     """Discovery only: nothing is opened here."""
     b = Bench(tools={k: v for k, v in io.tools().items()})
     raw_usb: dict[str, dict] = {}
+    ports = io.serial_ports()
+    with_serial = {(s["vid"], s["pid"]) for s in ports}
 
     for u in io.usb_devices():
-        info = K.USB_IDS.get((u["vid"], u["pid"]))
-        if not info:
-            continue  # keyboards, hubs, audio... not bench hardware
+        # A USB device is bench hardware if it has a serial port or its interface is described in the
+        # data (a debug probe). Keyboards, hubs, audio have neither. Its name is what it calls itself.
+        if (u["vid"], u["pid"]) not in K.USB_IDS and (u["vid"], u["pid"]) not in with_serial:
+            continue
         did = _dev_id(u["vid"], u["pid"], u.get("serial"), u.get("location"))
         raw_usb[did] = u
         b.add_device(
             Device(
                 id=did,
-                name=info["name"],
+                name=_descriptor_name(u.get("vendor"), u.get("name")) or f"USB {_hex(u['vid'])}:{_hex(u['pid'])}",
                 transport="usb",
                 vid=u["vid"],
                 pid=u["pid"],
@@ -68,7 +71,7 @@ def build(io: Io) -> Bench:
     # Serial ports hang off USB devices; if the USB list lacks one, create the device here.
     by_dev: dict[str, list[dict]] = {}
     usb_serials = {(d.vid, d.pid, d.serial) for d in b.devices.values()}
-    for s in io.serial_ports():
+    for s in ports:
         s = _with_channel(s, usb_serials)
         did = _dev_id(s["vid"], s["pid"], s.get("serial_number"), None)
         if did not in b.devices:
@@ -76,19 +79,27 @@ def build(io: Io) -> Bench:
             if match:
                 did = match[0].id
             else:
-                info = K.USB_IDS.get((s["vid"], s["pid"]), {"name": s.get("description") or "USB serial device", "role": "unknown"})
-                b.add_device(Device(did, info["name"], "usb", s["vid"], s["pid"], s.get("serial_number"),
+                name = s.get("description") or f"USB {_hex(s['vid'])}:{_hex(s['pid'])}"
+                b.add_device(Device(did, name, "usb", s["vid"], s["pid"], s.get("serial_number"),
                                     evidence=[Evidence("serial-port", f"{_hex(s['vid'])}:{_hex(s['pid'])} {s.get('description') or ''}".strip())]))
         by_dev.setdefault(did, []).append(s)
 
     for did, dev in list(b.devices.items()):
-        info = K.USB_IDS.get((dev.vid, dev.pid), {"role": "unknown", "name": dev.name})
+        info = K.USB_IDS.get((dev.vid, dev.pid), {"role": "unknown"})
         serials = sorted(by_dev.get(did, []), key=lambda s: (s.get("channel", 99), s["device"]))
         _apply_usb_knowledge(b, dev, info, serials, raw_usb.get(did, {"serial": dev.serial}))
 
+    names = {(u["vid"], u["pid"], u.get("serial")): _descriptor_name(u.get("vendor"), u.get("name")) for u in io.usb_devices()}
     for res in io.visa_resources():
-        _add_visa(b, res)
+        _add_visa(b, res, names)
     return b
+
+
+def _descriptor_name(vendor: str | None, product: str | None) -> str:
+    vendor, product = (vendor or "").strip(), (product or "").strip()
+    if product and vendor and product.lower().startswith(vendor.lower()):
+        return product
+    return " ".join(x for x in (vendor, product) if x)
 
 
 _LINUX_IFACE = re.compile(r":\d+\.(\d+)$")  # pyserial location "1-1.2:1.1" -> interface 1
@@ -131,8 +142,9 @@ def _apply_usb_knowledge(b: Bench, dev: Device, info: dict, serials: list[dict],
     short = (dev.serial or dev.id.split(":")[-1]).replace(" ", "_")  # ids get passed as tool args
 
     if role == "native":
-        t = b.add_target(Target(f"target:{short}", None, "mcu", Confidence.FAMILY,
-                                facts=[info["family"]], evidence=[Evidence("usb-descriptor", f"{info['name']} enumerates from the chip itself")]))
+        t = b.add_target(Target(f"target:{short}", None, "mcu", Confidence.UNKNOWN,
+                                facts=["the chip enumerates on USB itself (no separate USB-UART bridge)"],
+                                evidence=[Evidence("usb-descriptor", f"{_hex(dev.vid)}:{_hex(dev.pid)} {dev.name}")]))
         for s in serials:
             p = _serial_port(b, dev, s, may_reset=info.get("may_reset_on_open", False))
             p.open_lines = info.get("open_lines", "low")
@@ -146,8 +158,6 @@ def _apply_usb_knowledge(b: Bench, dev: Device, info: dict, serials: list[dict],
         board = next((bd for bd in K.MULTI_CHANNEL_BOARDS if bd["match"](raw)), None)
         if board:
             ev = Evidence("board-knowledge", board["source"])
-            if board.get("debugger"):
-                dev.name = board["debugger"]
             if dev.serial in K.SHARED_SERIALS:
                 dev.evidence.append(Evidence("usb-descriptor", f"serial '{dev.serial}' is shared by every unit of this model; two of these boards would be indistinguishable"))
             fpga = b.add_target(Target(f"target:{short}:fpga", None, "fpga", Confidence.UNKNOWN,
@@ -168,12 +178,12 @@ def _apply_usb_knowledge(b: Bench, dev: Device, info: dict, serials: list[dict],
     if role == "probe":
         kind = info.get("probe", "jtag")
         t = b.add_target(Target(f"target:{short}", None, "unknown", Confidence.UNKNOWN,
-                                facts=[f"behind {info['name']}"], evidence=[Evidence("usb-descriptor", info["name"])]))
-        p = b.add_port(Port(f"{kind}:{short}", dev.id, kind, evidence=[Evidence("usb-descriptor", info["name"])]))
+                                facts=[f"behind {dev.name}"], evidence=[Evidence("usb-descriptor", dev.name)]))
+        p = b.add_port(Port(f"{kind}:{short}", dev.id, kind, evidence=[Evidence("usb-descriptor", dev.name)]))
         b.link(p.id, t.id, kind)
         for s in serials:  # virtual COM port of the probe goes to the same target
             sp = _serial_port(b, dev, s)
-            b.link(sp.id, t.id, "uart", Evidence("usb-descriptor", f"{info['name']} virtual COM port"))
+            b.link(sp.id, t.id, "uart", Evidence("usb-descriptor", f"{dev.name} virtual COM port"))
         return
 
     if role in ("bridge", "unknown"):
@@ -188,7 +198,7 @@ _VISA_USB = re.compile(r"USB\d*::(0x[0-9A-Fa-f]+)::(0x[0-9A-Fa-f]+)::([^:]+)::")
 _VISA_TCP = re.compile(r"TCPIP\d*::([^:]+)::")
 
 
-def _add_visa(b: Bench, res: str) -> None:
+def _add_visa(b: Bench, res: str, names: dict | None = None) -> None:
     if res.upper().startswith("ASRL"):
         # VISA also lists serial ports. Sending *IDN? there would write bytes into an
         # unknown UART, so serial ports are only handled by the serial path.
@@ -197,7 +207,7 @@ def _add_visa(b: Bench, res: str) -> None:
         vid, pid, sn = int(m.group(1), 16), int(m.group(2), 16), m.group(3)
         did = _dev_id(vid, pid, sn, None)
         if did not in b.devices:
-            b.add_device(Device(did, K.USB_IDS.get((vid, pid), {}).get("name", "USBTMC instrument"), "usb", vid, pid, sn))
+            b.add_device(Device(did, (names or {}).get((vid, pid, sn)) or f"USBTMC instrument {_hex(vid)}:{_hex(pid)}", "usb", vid, pid, sn))
         kind = "usbtmc"
     elif m := _VISA_TCP.match(res):
         did = f"lan:{m.group(1)}"
@@ -321,33 +331,18 @@ def _from_impact(text: str, imp: Impact, needs: str | None = None) -> Proposal:
 
 
 def propose(b: Bench) -> list[Proposal]:
+    """Only the generic next steps a cautious bench needs before any LLM is involved. What to do
+    about a particular device (read its chip id, capture a rail) is the agent's call (design.md 3)."""
     out: list[Proposal] = []
-    scopes = [t for t in b.targets.values() if "oscilloscope" in t.facts]
-
     for port in b.ports.values():
         for t in b.targets_via(port.id):
             if port.kind == "serial" and t.confidence != Confidence.IDENTIFIED and port.may_reset_on_open \
                     and not any(f.startswith("log:") for f in t.facts):
                 imp = classify(b, "serial.listen", port.id)
                 out.append(_from_impact(f"Listen on {port.path} to see what is behind {b.devices[port.device_id].name}", imp))
-            if t.kind == "mcu" and t.confidence == Confidence.FAMILY and "ESP32" in " ".join(t.facts):
-                has = b.tools.get("esptool.py") or b.tools.get("esptool")
-                if port.kind == "serial":
-                    imp = classify(b, "esptool.chip_id", port.id)
-                    out.append(_from_impact("Read the exact chip with esptool chip_id", imp, None if has else "install esptool"))
             if port.kind == "jtag" and t.confidence == Confidence.UNKNOWN and not b.tools.get("openFPGALoader"):
                 imp = classify(b, "jtag.scan", port.id)
                 out.append(_from_impact(f"Scan the JTAG chain on {port.id} to identify the part", imp, "install openFPGALoader"))
-            if any("brownout" in f for f in t.facts):
-                if scopes:
-                    scope_port = b.ports_reaching(scopes[0].id)[0]
-                    imp = classify(b, "scpi.write", scope_port.id, {"command": ":SINGle"})
-                    out.append(_from_impact(
-                        f"{t.name or t.id} is browning out. Capture the 3V3 rail on {scopes[0].name} during the reset",
-                        imp, "which net is the scope probe on?"))
-                else:
-                    out.append(Proposal(f"{t.name or t.id} is browning out. Check the supply rail; no oscilloscope found on the bench",
-                                        reason="nothing on the bench can capture the rail"))
     # one proposal per (text) is enough
     seen, uniq = set(), []
     for p in out:

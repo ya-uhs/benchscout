@@ -10,6 +10,7 @@ from benchscout.model import Confidence
 from benchscout.policy import Effect, classify
 
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "bench_example.json"
+REAL = Path(__file__).parent.parent / "fixtures" / "real"
 
 
 @pytest.fixture
@@ -31,21 +32,20 @@ def test_non_bench_usb_is_ignored(r):
 
 
 def esp_target(b):
-    return next(t for t in b.targets.values() if any("ESP32" in f for f in t.facts))
-
+    return b.targets_via("serial:usbmodem1101")[0]
 
 def test_one_chip_two_ports(r):
     b = r.bench
     esp = esp_target(b)
     kinds = sorted(p.kind for p in b.ports_reaching(esp.id))
     assert kinds == ["jtag", "serial"]
-    # native USB resets on open, so recon stops at the descriptor: family only
-    assert esp.confidence == Confidence.FAMILY and esp.name is None
+    # native USB resets on open, so recon stops at the descriptor; naming it is the agent's job
+    assert esp.confidence == Confidence.UNKNOWN and esp.name is None
 
 
 def test_one_usb_device_two_targets(r):
     b = r.bench
-    ftdi = next(d for d in b.devices.values() if d.name == "FTDI FT2232H")
+    ftdi = next(d for d in b.devices.values() if d.name == "Digilent USB Device")  # what it calls itself
     kinds = sorted(p.kind for p in b.ports_of(ftdi.id))
     assert kinds == ["jtag", "serial"]
     fabric = next(t for t in b.targets.values() if t.kind == "fabric-endpoint")
@@ -81,9 +81,10 @@ def test_recon_runs_only_safe_probes(io, r):
 
 def test_instruments_identified_by_idn(r):
     b = r.bench
-    assert "oscilloscope" in target_named(b, "Rigol DS1054Z").facts
-    assert "power supply" in target_named(b, "Siglent SPD3303X").facts
-
+    scope = target_named(b, "Rigol DS1054Z")
+    assert any(e.source == "scpi *IDN?" for e in scope.evidence)
+    assert target_named(b, "Siglent SPD3303X")
+    assert "oscilloscope" not in scope.facts  # what kind of instrument it is, is the agent's reading
 
 def test_fpga_program_disturbs_fabric_uart(r):
     b = r.bench
@@ -122,17 +123,18 @@ def session(io, tmp_path, *ports):
     return br
 
 
-def test_approved_listen_identifies_and_reproposes(io, tmp_path):
+def test_approved_listen_hears_the_banner_but_only_a_quoted_identify_names_the_chip(io, tmp_path):
     br = session(io, tmp_path, "serial:usbmodem1101")
     aid = br.request("serial.listen", "serial:usbmodem1101")["approval_id"]
     br.decide(aid, True)
     assert br.request("serial.listen", "serial:usbmodem1101", approval_id=aid)["status"] == "done"
-    esp = target_named(br.bench, "ESP32-S3")
-    assert any(e.source == "boot-log" for e in esp.evidence)
+    esp = esp_target(br.bench)
+    assert esp.name is None, "hearing a banner names nothing: the agent reads it"
+    assert any(f.startswith("log: ESP-ROM:esp32s3") for f in esp.facts)
+    assert br.identify("serial:usbmodem1101", "ESP32-S3", "ESP-ROM:esp32s3-20210327")["status"] == "identified"
+    assert esp_target(br.bench).name == "ESP32-S3"
     texts = " | ".join(p.text for p in br.last.proposals)
-    assert "browning out" in texts and "DS1054Z" in texts
     assert "usbmodem1101" not in texts  # already listened
-
 
 def test_every_proposal_says_why(r):
     assert r.proposals
@@ -233,7 +235,7 @@ def test_tang_nano_9k(tmp_path):
     fabric = next(t for t in r.bench.targets.values() if t.kind == "fabric-endpoint")
     assert fabric.hosted_on == fpga.id
     (dev,) = r.bench.devices.values()
-    assert "BL702" in dev.name
+    assert dev.name == "SIPEED JTAG Debugger"  # what the BL702 debugger calls itself
     assert all(" " not in pid for pid in r.bench.ports)
 
 
@@ -241,13 +243,14 @@ def test_inventory_is_json_serializable(r):
     json.dumps(r.to_dict(), default=str)
 
 
-def test_idcode_table_fallback(tmp_path):
-    """Without the tool's model line, our own table is used and says so."""
+def test_idcode_without_a_tool_database_stays_unknown(tmp_path):
+    """Without openFPGALoader's model line there is no name: benchscout keeps no IDCODE table;
+    the raw IDCODE is the clue for the agent."""
     io = _variant(tmp_path, lambda d: (d["tools"].append("openFPGALoader"), d["jtag"].update({"210319A8C7D1": ["0x0362D093"]})))
     r = recon.run(io)
-    fpga = target_named(r.bench, "Xilinx XC7A35T")
-    assert any("benchscout table" in e.detail for e in fpga.evidence)
-
+    fpga = next(t for t in r.bench.targets.values() if t.kind == "fpga")
+    assert fpga.name is None
+    assert any("0x0362D093" in e.detail for e in fpga.evidence)
 
 def test_openfpgaloader_only_targets_ftdi_jtag(tmp_path):
     io = _variant(tmp_path, lambda d: d["tools"].append("openFPGALoader"))
@@ -267,15 +270,16 @@ def test_port_that_vanishes_and_comes_back_still_yields_the_boot_log(tmp_path):
     aid = br.request("serial.listen", "serial:usbmodem1101")["approval_id"]
     br.decide(aid, True)
     assert br.request("serial.listen", "serial:usbmodem1101", approval_id=aid)["status"] == "done"
-    esp = target_named(br.bench, "ESP32-S3")
+    esp = esp_target(br.bench)
+    assert any("ESP-ROM:esp32s3" in f for f in esp.facts)
     assert any("vanished" in f and "came back" in f for f in esp.facts)
     assert not any("benchscout]" in f for f in esp.facts)  # our marker is not reported as device output
     assert io.lines[-1] == "asserted"  # dropping DTR/RTS reset this chip on every open
 
 
-def test_what_was_heard_survives_a_rescan(tmp_path):
+def test_what_was_learned_survives_a_rescan(tmp_path):
     """Real bench, 2026-10-31: a reboot printed the ESP-ROM banner, then bench_scan rebuilt the
-    graph and the ESP32 was back to "family only"."""
+    graph and the ESP32 was back to unnamed. Now the agent names it with a quote and memory keeps it."""
     boot = "ok\nESP-ROM:esp32s3-20210327\nrst:0xc (RTC_SW_CPU_RST),boot:0x28 (SPI_FAST_FLASH_BOOT)\n"
     data = json.loads(FIXTURE.read_text())
     data["replies"] = {"/dev/cu.usbmodem1101": {"reboot\n": boot}}
@@ -287,20 +291,16 @@ def test_what_was_heard_survives_a_rescan(tmp_path):
     aid = br.request("serial.send", "serial:usbmodem1101", {"data": "reboot"})["approval_id"]
     br.decide(aid, True)
     br.request("serial.send", "serial:usbmodem1101", {"data": "reboot"}, approval_id=aid)
-    assert target_named(br.bench, "ESP32-S3")  # the answer itself identifies the chip
+    assert br.identify("serial:usbmodem1101", "ESP32-S3", "ESP-ROM:esp32s3-20210327")["status"] == "identified"
     br.scan()
-    esp = target_named(br.bench, "ESP32-S3")
-    assert esp.confidence == Confidence.IDENTIFIED
-    assert any(e.source == "boot-log" and "(seen " in e.detail for e in esp.evidence)
+    esp = esp_target(br.bench)
+    assert esp.name == "ESP32-S3" and esp.confidence == Confidence.IDENTIFIED
+    assert any(e.source == "learned" and "ESP-ROM:esp32s3" in e.detail for e in esp.evidence)
     assert not any(f.startswith("log:") for f in esp.facts)  # old lines are labelled as earlier
 
-
-REAL = Path(__file__).parent.parent / "fixtures" / "real"
-
-
-def test_crash_without_guru_meditation_is_an_alert_and_identity_survives_a_quiet_answer(tmp_path):
+def test_crash_without_guru_meditation_is_an_alert_that_survives_a_quiet_answer(tmp_path):
     """Real bench 2026-10-31, ESP32-S3 test firmware: `panic` printed abort() + backtrace, then the
-    ROM banner with RTC_SW_CPU_RST. Then `hang 3` answered with nothing that names the chip."""
+    ROM banner with RTC_SW_CPU_RST. Then `hang 3` answered with nothing alarming."""
     data = json.loads(FIXTURE.read_text())
     data["replies"] = {"/dev/cu.usbmodem1101": {"panic\n": (REAL / "esp32s3-testfw-panic.txt").read_text(),
                                                  "hang 3\n": (REAL / "esp32s3-testfw-hang.txt").read_text()}}
@@ -314,6 +314,6 @@ def test_crash_without_guru_meditation_is_an_alert_and_identity_survives_a_quiet
         br.decide(aid, True)
         br.request("serial.send", "serial:usbmodem1101", {"data": cmd}, approval_id=aid)
     br.scan()
-    esp = target_named(br.bench, "ESP32-S3")
+    esp = esp_target(br.bench)
     assert any(f.startswith("ALERT: crash: abort() at PC 0x42001c85") for f in esp.facts)
-    assert not any(p.action == "esptool.chip_id" for p in br.last.proposals)  # already identified
+

@@ -57,7 +57,7 @@ def test_workspace_overrides_shipped_entry_by_entry(tmp_path):
     (ws / ".benchscout" / "knowledge" / "lab.toml").write_text("[[usb]]\nvid = 0x1A86\npid = 0x7523\nmay_reset_on_open = false\n")
     br = Broker(FixtureIo(FIXTURE), ws / ".benchscout")
     br.scan()
-    assert K.USB_IDS[(0x1A86, 0x7523)]["name"] == "WCH CH340"  # untouched fields stay
+    assert K.USB_IDS[(0x1A86, 0x7523)]["role"] == "bridge"  # untouched fields stay
     ch340 = br.bench.ports["serial:usbserial-10"]
     assert ch340.may_reset_on_open is False
 
@@ -76,3 +76,18 @@ channels = { 0 = "uart-fpga-fabric", 1 = "jtag-fpga" }
     b = recon.build(FixtureIo(FIXTURE))
     fpga = next(t for t in b.targets.values() if t.kind == "fpga")
     assert "My FT2232H dev board" in fpga.facts[0]
+
+
+def test_without_any_shipped_data_benchscout_only_gets_stricter(tmp_path, monkeypatch):
+    """design.md section 3: deleting every shipped data file must only make benchscout stricter."""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setattr(K, "SHIPPED", empty)
+    K.load()
+    io = FixtureIo(FIXTURE)
+    r = recon.run(io)
+    serial = [p for p in r.bench.ports.values() if p.kind == "serial"]
+    assert serial and all(p.may_reset_on_open for p in serial)
+    assert not any(c[0] == "serial_listen" for c in io.calls), "nothing it knows nothing about is opened"
+    monkeypatch.undo()
+    K.load()

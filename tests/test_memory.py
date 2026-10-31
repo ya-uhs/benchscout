@@ -132,6 +132,6 @@ def test_memory_files_are_plain_toml_and_entries_can_be_deleted(tmp_path):
     files = list((tmp_path / "memory" / "devices").glob("*.toml"))
     assert len(files) == 1
     data = tomllib.loads(files[0].read_text())
-    assert data["device"] == "WCH CH340" and data["entry"][0]["text"].startswith("CH1 of the scope")
+    assert data["device"] == "QinHeng USB Serial" and data["entry"][0]["text"].startswith("CH1 of the scope")
     br.memory.delete(files[0].stem, res["id"])
     assert tomllib.loads(files[0].read_text()).get("entry", []) == []
