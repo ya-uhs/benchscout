@@ -19,7 +19,7 @@ SRC = Path(K.__file__)
 def clean_user_layer(tmp_path, monkeypatch):
     monkeypatch.setenv("BENCHSCOUT_KNOWLEDGE", str(tmp_path / "user-knowledge"))
     yield
-    monkeypatch.delenv("BENCHSCOUT_KNOWLEDGE")
+    monkeypatch.delenv("BENCHSCOUT_KNOWLEDGE", raising=False)
     K.load()
 
 
@@ -82,12 +82,15 @@ def test_without_any_shipped_data_benchscout_only_gets_stricter(tmp_path, monkey
     """design.md section 3: deleting every shipped data file must only make benchscout stricter."""
     empty = tmp_path / "empty"
     empty.mkdir()
-    monkeypatch.setattr(K, "SHIPPED", empty)
-    K.load()
-    io = FixtureIo(FIXTURE)
-    r = recon.run(io)
-    serial = [p for p in r.bench.ports.values() if p.kind == "serial"]
-    assert serial and all(p.may_reset_on_open for p in serial)
-    assert not any(c[0] == "serial_listen" for c in io.calls), "nothing it knows nothing about is opened"
-    monkeypatch.undo()
-    K.load()
+    shipped = K.SHIPPED
+    K.SHIPPED = empty
+    try:
+        K.load()
+        io = FixtureIo(FIXTURE)
+        r = recon.run(io)
+        serial = [p for p in r.bench.ports.values() if p.kind == "serial"]
+        assert serial and all(p.may_reset_on_open for p in serial)
+        assert not any(c[0] == "serial_listen" for c in io.calls), "nothing it knows nothing about is opened"
+    finally:
+        K.SHIPPED = shipped
+        K.load()
