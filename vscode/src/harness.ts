@@ -50,6 +50,7 @@ export class Harness extends EventEmitter {
   private askedFirst = false;
   private lastWake = new Map<string, number>(); // device -> when the agent was last woken for it
   private busy = false;
+  private stopping = false;
 
   constructor(private core: CoreClient, private makeDriver: () => AgentDriver, private s: Strings,
               private opts: HarnessOptions = { language: "English", maxTurnsPerHour: 20 }) {
@@ -80,6 +81,7 @@ export class Harness extends EventEmitter {
   }
 
   stop(): void {
+    this.stopping = true;
     this.driver?.stop();
   }
 
@@ -189,13 +191,20 @@ export class Harness extends EventEmitter {
       "Find out what happened and why, with evidence from the device's output.",
     ].filter(Boolean).join("\n");
     const recent = Date.now() - (this.lastWake.get(dev) ?? 0) < (this.opts.wakeCooldownMs ?? 60_000);
-    if ((this.opts.autonomy ?? "auto") === "auto" && !recent) {
+    if (recent) {
+      // one crash prints several alert lines (abort, then a backtrace): the agent already woke for this
+      // device and reads the whole log, so record it, do not ask again (real bench, 2026-11-01)
+      this.add({ kind: "notify", title, body, detail: log, options: [], freeText: false, status: "closed" });
+      return;
+    }
+    if ((this.opts.autonomy ?? "auto") === "auto") {
       this.add({ kind: "notify", title, body, detail: log, options: [], freeText: false, status: "closed" });
       this.lastWake.set(dev, Date.now());
       void this.wake(request, title);
       return;
     }
-    // suggest mode, or woken for this device moments ago: offer, do not act
+    // suggest mode: offer, do not act
+    this.lastWake.set(dev, Date.now());
     this.add({ kind: "question", title, body, detail: log, freeText: true,
       options: [{ id: "go", label: this.s.investigate, primary: true }, { id: "ignore", label: this.s.ignore }] },
       (a) => (a.text ? this.wake(`${request}\n\nThe human adds: ${a.text}`, title) : a.option === "go" ? this.wake(request, title) : undefined));
@@ -210,6 +219,7 @@ export class Harness extends EventEmitter {
   }
 
   private async wake(request: string, title: string): Promise<void> {
+    if (this.stopping) return;
     if (this.overBudget()) {
       this.add({ kind: "notify", title: this.s.budget(this.opts.maxTurnsPerHour), body: "", options: [], freeText: false });
       return;
@@ -251,6 +261,7 @@ export class Harness extends EventEmitter {
       this.handlers.set(report.id, (a) => (a.text ? this.wake(a.text, a.text.slice(0, 60)) : a.option === "continue" ? this.wake("Continue.", title) : undefined));
     } catch (e) {
       report.status = "closed";
+      if (this.stopping) return; // stopped on purpose: not a failure to report
       const w = e instanceof WakeError ? e : new WakeError(String(e), "");
       this.add({ kind: "notify", title: this.s.wakeFailed(this.driver?.label ?? "agent"), body: w.message, detail: w.fix || undefined, options: [], freeText: false });
       this.driver?.stop();

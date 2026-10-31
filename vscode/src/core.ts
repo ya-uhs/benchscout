@@ -193,7 +193,8 @@ export function shortPort(p: Port): string {
 export function describeArgs(args: string): string {
   try {
     const a = JSON.parse(args);
-    return Object.entries(a).map(([k, v]) => `${k} ${v}`).join(", ");
+    // control characters (a "\n" line ending) are shown escaped, not as a real line break
+    return Object.entries(a).map(([k, v]) => `${k} ${typeof v === "string" && /[\x00-\x1f]/.test(v) ? JSON.stringify(v) : v}`).join(", ");
   } catch {
     return args;
   }

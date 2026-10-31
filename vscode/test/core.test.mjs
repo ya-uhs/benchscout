@@ -86,3 +86,7 @@ test("a missing benchscout is reported, not thrown", async () => {
 test("args read like words", () => {
   assert.equal(describeArgs('{"baud": 9600, "seconds": 3}'), "baud 9600, seconds 3");
 });
+
+test("control characters in args stay visible", () => {
+  assert.equal(describeArgs('{"data": "panic", "eol": "\\n"}'), 'data panic, eol "\\n"');
+});
