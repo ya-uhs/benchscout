@@ -1,0 +1,48 @@
+{
+  "name": "benchscout",
+  "displayName": "benchscout",
+  "description": "Finds what is on your hardware bench, lets your AI agent work on the devices you pick, and asks you before anything changes device state.",
+  "version": "0.1.0",
+  "publisher": "benchscout",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": { "vscode": "^1.101.0" },
+  "categories": ["Other"],
+  "main": "./out/extension.js",
+  "activationEvents": ["workspaceContains:.benchscout"],
+  "contributes": {
+    "commands": [
+      { "command": "benchscout.start", "title": "benchscout: Open bench", "category": "benchscout" },
+      { "command": "benchscout.rescan", "title": "benchscout: Rescan", "category": "benchscout" },
+      { "command": "benchscout.stop", "title": "benchscout: Stop", "category": "benchscout" }
+    ],
+    "viewsContainers": {
+      "activitybar": [{ "id": "benchscout", "title": "benchscout", "icon": "$(circuit-board)" }]
+    },
+    "views": {
+      "benchscout": [{ "type": "webview", "id": "benchscout.panel", "name": "Bench" }]
+    },
+    "mcpServerDefinitionProviders": [{ "id": "benchscout", "label": "benchscout" }],
+    "configuration": {
+      "title": "benchscout",
+      "properties": {
+        "benchscout.corePath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the benchscout executable. Empty: the one bundled with the extension, else `benchscout` on PATH."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "test": "npm run compile && node --test test/*.test.mjs",
+    "package": "npm run compile && vsce package --skip-license --allow-missing-repository -o benchscout.vsix"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "1.101.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "^5.4.0"
+  }
+}

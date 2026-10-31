@@ -14,7 +14,7 @@ source of truth; this README is a summary of it.
 | | Now | Target |
 |---|---|---|
 | Entry | the user's agent + MCP (done for Claude Code and Copilot via `benchscout setup`) | the user's own agent + MCP; no agent embedded, no LLM of our own |
-| UI | the terminal running `benchscout core` is the control channel | a VS Code extension panel (devices, first read, logs, approvals, timeline), shipped as .vsix |
+| UI | VS Code extension in `vscode/` (minimal: devices, approvals, next step; `npm run package` builds the .vsix). A terminal running `benchscout core` also works for debugging | a VS Code extension panel (devices, first read, logs, approvals, timeline), shipped as .vsix |
 | Core | `benchscout core` per folder; `benchscout mcp` relays to it (done) | Python core, frozen with PyInstaller inside the .vsix, started by the extension; `benchscout mcp` only relays to it |
 | Approval | in the core's memory, from the control channel only; calls wait for the decision (done) | a button in the panel, over the extension's private channel; the agent's channel cannot approve |
 | First read | the agent summarizes the scan | rules show the device list and first read at once; the LLM starts when you pick devices |

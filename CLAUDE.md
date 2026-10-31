@@ -58,7 +58,11 @@ uv run benchscout scan                                                  # recon 
 BENCHSCOUT_FIXTURE=fixtures/bench_example.json uv run benchscout core   # core without hardware; type commands to approve
 ```
 
-Until the VS Code extension exists, the terminal running `benchscout core` is the control channel:
+VS Code extension (`vscode/`): `npm test` (its control channel against a real core on the fixture
+bench), `npm run package` -> `vscode/benchscout.vsix`. Keep `src/core.ts` free of `vscode` imports
+so it stays testable with plain Node. Panel wording lives in `src/i18n.ts` (en/ja); clarity first.
+
+For debugging without VS Code, the terminal running `benchscout core` is the control channel:
 at a terminal it prints a readable view (devices numbered, approvals with the commands to answer
 them); `--json` or a pipe gives the JSON lines the extension will use.
 
