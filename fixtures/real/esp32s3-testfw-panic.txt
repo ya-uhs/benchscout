@@ -1,0 +1,28 @@
+ok
+
+abort() was called at PC 0x42001c85 on core 1
+
+
+Backtrace: 0x403777da:0x3fcebe30 0x4037ac41:0x3fcebe50 0x403804a9:0x3fcebe70 0x42001c85:0x3fcebef0 0x4200346d:0x3fcebf70
+
+
+
+
+ELF file SHA256: 483e8c55e1fec9c0
+
+Rebooting...
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0xc (RTC_SW_CPU_RST),boot:0x28 (SPI_FAST_FLASH_BOOT)
+Saved PC:0x42021b4a
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce3808,len:0x4bc
+load:0x403c9700,len:0xbd8
+load:0x403cc700,len:0x2a0c
+entry 0x403c98d0
+testfw=benchscout-esp32s3 version=1 boot=4 reset=PANIC
+hb n=1 uptime_ms=1306
+hb n=2 uptime_ms=2306
+hb n=3 uptime_ms=3306
+hb n=4 uptime_ms=4306

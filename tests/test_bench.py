@@ -293,3 +293,27 @@ def test_what_was_heard_survives_a_rescan(tmp_path):
     assert esp.confidence == Confidence.IDENTIFIED
     assert any(e.source == "boot-log" and "(seen " in e.detail for e in esp.evidence)
     assert not any(f.startswith("log:") for f in esp.facts)  # old lines are labelled as earlier
+
+
+REAL = Path(__file__).parent.parent / "fixtures" / "real"
+
+
+def test_crash_without_guru_meditation_is_an_alert_and_identity_survives_a_quiet_answer(tmp_path):
+    """Real bench 2026-10-31, ESP32-S3 test firmware: `panic` printed abort() + backtrace, then the
+    ROM banner with RTC_SW_CPU_RST. Then `hang 3` answered with nothing that names the chip."""
+    data = json.loads(FIXTURE.read_text())
+    data["replies"] = {"/dev/cu.usbmodem1101": {"panic\n": (REAL / "esp32s3-testfw-panic.txt").read_text(),
+                                                 "hang 3\n": (REAL / "esp32s3-testfw-hang.txt").read_text()}}
+    f = tmp_path / "bench.json"
+    f.write_text(json.dumps(data))
+    br = Broker(FixtureIo(f), tmp_path / "s")
+    br.scan()
+    br.select([br.bench.ports["serial:usbmodem1101"].device_id])
+    for cmd in ("panic", "hang 3"):
+        aid = br.request("serial.send", "serial:usbmodem1101", {"data": cmd})["approval_id"]
+        br.decide(aid, True)
+        br.request("serial.send", "serial:usbmodem1101", {"data": cmd}, approval_id=aid)
+    br.scan()
+    esp = target_named(br.bench, "ESP32-S3")
+    assert any(f.startswith("ALERT: crash: abort() at PC 0x42001c85") for f in esp.facts)
+    assert not any(p.action == "esptool.chip_id" for p in br.last.proposals)  # already identified

@@ -85,6 +85,10 @@ LOG_SIGNATURES: list[tuple[re.Pattern, callable]] = [
     (re.compile(r"\*\*\* Booting Zephyr OS build ([\w.\-+]+)"), lambda m: {"fact": f"Zephyr {m.group(1)}"}),
     (re.compile(r"U-Boot ([\d.]+)"), lambda m: {"fact": f"U-Boot {m.group(1)}"}),
     (re.compile(r"Guru Meditation Error: (.+)"), lambda m: {"fact": f"crash: {m.group(1).strip()}", "alert": True}),
+    # Real bench 2026-10-31 (ESP32-S3, `panic` in the test firmware): abort() prints no Guru
+    # Meditation line, and the ROM then reports RTC_SW_CPU_RST, so the ROM line alone hides the crash.
+    (re.compile(r"abort\(\) was called at PC (0x[0-9a-fA-F]+)"), lambda m: {"fact": f"crash: abort() at PC {m.group(1)}", "alert": True}),
+    (re.compile(r"^Backtrace: ", re.M), lambda m: {"fact": "crash backtrace printed", "alert": True}),
 ]
 
 INSTRUMENT_KINDS = [

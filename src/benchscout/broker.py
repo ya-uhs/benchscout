@@ -38,9 +38,11 @@ class Broker:
         self.approval_wait = approval_wait  # seconds a request waits for the human (S3)
         self.approvals = ApprovalBook(self.state / "audit.jsonl", on_event=self._emit)
         self.selected: set[str] = set()  # device ids in this session
-        # Last output heard from each target, kept across re-scans so what was learned (a boot
-        # banner naming the chip) is not lost when the graph is rebuilt (design.md section 10).
-        self.observed: dict[str, tuple[str, str]] = {}  # target id -> (time, text)
+        # Output heard from each target, kept across re-scans so what was learned is not lost
+        # when the graph is rebuilt (design.md section 10). Per target: the latest output, plus
+        # the latest one that named the part and the latest one that raised an alert, so a later
+        # quiet answer does not wipe them (real bench: `hang` after `panic` lost the ESP32-S3).
+        self.observed: dict[str, dict[str, tuple[str, str]]] = {}  # target id -> kind -> (time, text)
         self._lock = threading.RLock()
         self.last: R.Recon | None = None
 
@@ -53,9 +55,14 @@ class Broker:
         with self._lock:
             busy = self.locks.holder if self.locks else None
             self.last = R.run(self.io, busy=busy)
-            for tid, (when, text) in self.observed.items():
-                if tid in self.last.bench.targets:
-                    R.apply_log([self.last.bench.targets[tid]], text, seen=when)
+            for tid, kept in self.observed.items():
+                if tid not in self.last.bench.targets:
+                    continue
+                seen_texts = []
+                for kind in ("identity", "alert", "latest"):
+                    if kind in kept and kept[kind][1] not in seen_texts:
+                        seen_texts.append(kept[kind][1])
+                        R.apply_log([self.last.bench.targets[tid]], kept[kind][1], seen=kept[kind][0])
             if self.observed:
                 self.last.proposals = R.propose(self.last.bench)
             (self.state / "inventory.json").write_text(json.dumps(self.last.to_dict(), indent=2, default=str))
@@ -227,11 +234,21 @@ class Broker:
         return {"error": f"{action} is classified but not implemented in this prototype"}
 
     def _remember(self, port_id: str, text: str | None) -> None:
-        if text and text.strip():
-            import time
+        if not (text and text.strip()):
+            return
+        import time
 
-            for t in self.bench.targets_via(port_id):
-                self.observed[t.id] = (time.strftime("%H:%M:%S"), text)
+        from . import knowledge as K
+
+        stamp = (time.strftime("%H:%M:%S"), text)
+        c = K.classify_log(text)
+        for t in self.bench.targets_via(port_id):
+            kept = self.observed.setdefault(t.id, {})
+            kept["latest"] = stamp
+            if c["exact"]:
+                kept["identity"] = stamp
+            if c["alerts"]:
+                kept["alert"] = stamp
 
     def _save_artifact(self, name: str, content: str, preview: str) -> dict:
         p = self.artifacts / name.replace(":", "_")
