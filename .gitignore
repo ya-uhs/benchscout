@@ -4,3 +4,7 @@ __pycache__/
 *.pyc
 .benchscout/
 .claude/settings.local.json
+
+# locally installed agent skills (not part of the project)
+.agents/
+skills-lock.json
