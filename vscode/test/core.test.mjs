@@ -15,7 +15,7 @@ const py = join(repo, ".venv", win ? "Scripts" : "bin", win ? "python.exe" : "py
 
 function setup() {
   const root = mkdtempSync(join(win ? tmpdir() : "/tmp", "bsx"));  // short: AF_UNIX path limit
-  const env = { ...process.env, BENCHSCOUT_FIXTURE: join(repo, "fixtures", "bench_example.json"), BENCHSCOUT_RUNTIME: root };
+  const env = { ...process.env, BENCHSCOUT_FIXTURE: join(repo, "fixtures", "bench_example.json"), BENCHSCOUT_RUNTIME: root, BENCHSCOUT_MEMORY: join(root, "memory") };
   return { root, env, ws: root };
 }
 

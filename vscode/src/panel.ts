@@ -9,7 +9,8 @@ export interface PanelState {
   agent: string; // label of the agent benchscout wakes, or "" if none chosen yet
   cards: Card[];
   devices: string[]; // one line per device, for the small summary at the bottom
-  strings: Omit<Strings, "statusWaiting" | "lookAt" | "wakeFailed" | "budget" | "agentWantsDevices">;
+  strings: Omit<Strings, "statusWaiting" | "lookAt" | "wakeFailed" | "budget" | "agentWantsDevices" | "learned" | "learnedSafety"
+    | "deviceAlert" | "deviceVanished" | "deviceReset" | "deviceGone">;
 }
 
 export function html(nonce: string, cspSource: string): string {
@@ -31,6 +32,7 @@ export function html(nonce: string, cspSource: string): string {
   .card.confirm.dangerous { border-left-color: var(--vscode-editorError-foreground); background: var(--vscode-inputValidation-errorBackground); }
   .card.report { border-left-color: var(--vscode-testing-iconPassed); }
   .card.notify { border-left-color: var(--vscode-editorInfo-foreground); }
+  .card.memory { border-left-color: var(--vscode-charts-purple, #b180d7); }
   .card.closed { opacity: .6; }
   .head { display: flex; justify-content: space-between; gap: 6px; font-weight: 600; }
   .kind { font-weight: normal; font-size: .85em; }
@@ -50,10 +52,10 @@ let state = null;
 const drafts = {};  // what the person typed, kept across re-renders
 const esc = (x) => String(x ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const send = (m) => vscode.postMessage(m);
-const ICON = { question: "❓", confirm: "🔔", report: "📋", notify: "ℹ️" };
+const ICON = { question: "❓", confirm: "🔔", report: "📋", notify: "ℹ️", memory: "🧠" };
 
 function card(c, s) {
-  const kindLabel = { question: "", confirm: c.effect ? s.effect[c.effect] ?? "" : "", report: "", notify: "" }[c.kind];
+  const kindLabel = { question: "", confirm: c.effect ? s.effect[c.effect] ?? "" : "", report: "", notify: "", memory: "" }[c.kind];
   let h = '<div class="card ' + c.kind + " " + esc(c.effect ?? "") + (c.status === "closed" ? " closed" : "") + '">';
   h += '<div class="head"><span>' + ICON[c.kind] + " " + esc(c.title) + (c.status === "working" ? '<span class="spin"></span>' : "") +
        '</span><span class="kind muted">' + esc(kindLabel) + " " + new Date(c.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + "</span></div>";

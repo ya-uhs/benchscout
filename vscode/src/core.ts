@@ -38,6 +38,11 @@ export interface DeviceEvent {
   kind: "alert" | "vanished" | "returned" | "gone" | "unwatchable"; what: string; line?: string | null; log?: string; time?: number;
 }
 
+export interface MemoryEntry {
+  id: string; kind: string; text: string; source: string; evidence: string; target: string; time: string; status: string; data: Record<string, unknown>;
+}
+export interface MemoryEvent { key: string; device?: string; device_name?: string; entry: MemoryEntry }
+
 export interface CoreEvents {
   ready: [];
   scan: [Bench, Proposal[]];
@@ -46,6 +51,8 @@ export interface CoreEvents {
   approvalDecided: [Approval];
   questionAsked: [Question];
   deviceEvent: [DeviceEvent];
+  memoryAdded: [MemoryEvent];
+  memoryDecided: [MemoryEvent];
   questionAnswered: [Question];
   exit: [number | null, string];
 }
@@ -89,6 +96,12 @@ export class CoreClient extends EventEmitter {
   decide(approvalId: string, granted: boolean, scope: "once" | "session" | number = "once"): Promise<any> {
     return this.call("decide", { approval_id: approvalId, granted, scope });
   }
+  memoryDecide(key: string, id: string, accept: boolean): Promise<any> {
+    return this.call("memory_decide", { key, id, accept });
+  }
+  memoryDelete(key: string, id: string): Promise<any> {
+    return this.call("memory_delete", { key, id });
+  }
   answer(questionId: string, choice: string | null, reply?: string): Promise<any> {
     return this.call("answer", { question_id: questionId, choice, reply: reply ?? null });
   }
@@ -116,6 +129,12 @@ export class CoreClient extends EventEmitter {
       case "approval_decided":
         this.pending.delete(msg.approval.id);
         this.emit("approvalDecided", msg.approval);
+        return;
+      case "memory_added":
+        this.emit("memoryAdded", msg as MemoryEvent);
+        return;
+      case "memory_decided":
+        this.emit("memoryDecided", msg as MemoryEvent);
         return;
       case "device_event":
         this.emit("deviceEvent", msg as DeviceEvent);

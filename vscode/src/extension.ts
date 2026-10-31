@@ -96,7 +96,8 @@ function refresh(): void {
     }
   }
   if (!view) return;
-  const { statusWaiting, lookAt, wakeFailed, budget, agentWantsDevices, ...plain } = s;
+  const { statusWaiting, lookAt, wakeFailed, budget, agentWantsDevices, learned, learnedSafety,
+    deviceAlert, deviceVanished, deviceReset, deviceGone, ...plain } = s;
   const devices = (bench?.devices ?? []).map((d) => d.name + (core?.selected.includes(d.id) ? " ✓" : ""));
   const state: PanelState = { running: !!core?.running, agent: AGENTS[chosenAgent()]?.label ?? "", cards, devices, strings: plain };
   view.webview.postMessage({ type: "state", state });

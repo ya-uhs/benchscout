@@ -20,7 +20,7 @@ const s = strings("en");
 
 async function bench(makeDriver) {
   const root = mkdtempSync(join(win ? tmpdir() : "/tmp", "bsh"));
-  const env = { ...process.env, BENCHSCOUT_FIXTURE: join(repo, "fixtures", "bench_example.json"), BENCHSCOUT_RUNTIME: root };
+  const env = { ...process.env, BENCHSCOUT_FIXTURE: join(repo, "fixtures", "bench_example.json"), BENCHSCOUT_RUNTIME: root, BENCHSCOUT_MEMORY: join(root, "memory") };
   const core = new CoreClient(bin, root, env);
   const relay = { command: bin, args: ["mcp", "--workspace", root], env: { BENCHSCOUT_RUNTIME: root } };
   const h = new Harness(core, () => makeDriver(root, relay), s, { language: "English", maxTurnsPerHour: 5 });
@@ -119,7 +119,7 @@ async function streamingBench(autonomy) {
   data.streams = { "/dev/cu.usbmodem21403": [{ after: 0.5, text: "boot ok\n" }, { after: 1.0, text: "abort() was called at PC 0x42001c85 on core 1\n" }] };
   const fx = join(root, "bench.json");
   writeFileSync(fx, JSON.stringify(data));
-  const env = { ...process.env, BENCHSCOUT_FIXTURE: fx, BENCHSCOUT_RUNTIME: root };
+  const env = { ...process.env, BENCHSCOUT_FIXTURE: fx, BENCHSCOUT_RUNTIME: root, BENCHSCOUT_MEMORY: join(root, "memory") };
   const core = new CoreClient(bin, root, env);
   const relay = { command: bin, args: ["mcp", "--workspace", root], env: { BENCHSCOUT_RUNTIME: root } };
   process.env.FAKE_QUIET = "1";
@@ -153,5 +153,23 @@ test("suggest: a crash only offers to investigate", async () => {
     const offer = await until(h, (c) => c.kind === "question" && /something to look at/.test(c.title));
     assert.deepEqual(offer.options.map((o) => o.id), ["go", "ignore"]);
     assert.equal(h.cards.filter((c) => c.kind === "report" && /something to look at/.test(c.title)).length, 0);
+  } finally { done(); }
+});
+
+test("memory: plain entries are recorded, safety-loosening ones wait for the human", async () => {
+  const { h, root, env, done } = await bench((ws, relay) => new ClaudeDriver(ws, relay, join(import.meta.dirname, "fake-claude.mjs")));
+  try {
+    await until(h, (c) => c.kind === "question");
+    await agentCall(env, root, "remember", { ref: "usbserial-10", kind: "config", text: "CH1 is on the 3V3 rail" });
+    const rec = await until(h, (c) => c.kind === "memory" && /Remembered about WCH CH340/.test(c.title));
+    assert.match(rec.body, /CH1 is on the 3V3 rail/);
+    assert.deepEqual(rec.options.map((o) => o.id), ["forget"]);
+    const res = (await agentCall(env, root, "remember", { ref: "/dev/cu.usbserial-10", kind: "safety", text: "no auto-reset circuit", data: { listen_safe: true } })).result;
+    assert.equal(res.status, "pending_human");
+    const pend = await until(h, (c) => c.kind === "memory" && /loosens safety/.test(c.title));
+    void h.answer(pend.id, { option: "accept" });
+    await until(h, (c) => c.id === pend.id && c.status === "closed");
+    const recall = (await agentCall(env, root, "recall", { ref: "usbserial-10" })).result;
+    assert.equal(recall[0].entries.find((e) => e.kind === "safety").status, "active");
   } finally { done(); }
 });

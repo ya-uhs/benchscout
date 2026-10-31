@@ -10,10 +10,10 @@
 
 import { EventEmitter } from "events";
 import { AgentDriver, PermissionAsk, WakeError } from "./agents/types";
-import { Approval, Bench, CoreClient, DeviceEvent, Question, describeArgs, deviceViews } from "./core";
+import { Approval, Bench, CoreClient, DeviceEvent, MemoryEvent, Question, describeArgs, deviceViews } from "./core";
 import { Strings } from "./i18n";
 
-export type CardKind = "question" | "confirm" | "report" | "notify";
+export type CardKind = "question" | "confirm" | "report" | "notify" | "memory";
 
 export interface CardOption { id: string; label: string; primary?: boolean }
 
@@ -61,6 +61,8 @@ export class Harness extends EventEmitter {
     core.on("questionAsked", (q: Question) => this.questionCard(q));
     core.on("questionAnswered", (q: Question) => this.closeRef(`question:${q.id}`, q.choice ?? q.reply ?? ""));
     core.on("deviceEvent", (e: DeviceEvent) => this.deviceEvent(e));
+    core.on("memoryAdded", (m: MemoryEvent) => this.memoryCard(m));
+    core.on("memoryDecided", (m: MemoryEvent) => this.closeRef(`memory:${m.entry.id}`, m.entry.status));
   }
 
   /** The human answered a card in the panel. */
@@ -166,6 +168,25 @@ export class Harness extends EventEmitter {
       kind: "question", title: this.s.agentAsks, body: q.text,
       options: q.options.map((o, i) => ({ id: o, label: o, primary: i === 0 })), freeText: true,
     }, (a) => this.core.answer(q.id, a.text ? null : a.option!, a.text).catch(() => undefined), `question:${q.id}`);
+  }
+
+  // ---- memory: written without asking; only what loosens safety waits for the human ---------
+
+  private memoryCard(m: MemoryEvent): void {
+    const name = m.device_name ?? m.key;
+    const e = m.entry;
+    const body = e.text + (e.evidence ? `\n"${e.evidence}"` : "");
+    const detail = `${e.kind} · ${e.source} · ${e.time.slice(0, 16).replace("T", " ")}`;
+    if (e.status === "pending") {
+      this.add({ kind: "memory", title: this.s.learnedSafety(name), body, detail, freeText: false,
+        options: [{ id: "accept", label: this.s.accept, primary: true }, { id: "reject", label: this.s.reject }] },
+        (a) => this.core.memoryDecide(m.key, e.id, a.option === "accept").catch(() => undefined), `memory:${e.id}`);
+      return;
+    }
+    // remembered: shown as a record; "forget" removes it (the human can always edit the file too)
+    this.add({ kind: "memory", title: this.s.learned(name), body, detail, freeText: false,
+      options: [{ id: "forget", label: this.s.forget }] },
+      (a) => (a.option === "forget" ? this.core.memoryDelete(m.key, e.id).catch(() => undefined) : undefined), `memory:${e.id}`);
   }
 
   // ---- noticing: events from the watched devices -------------------------------------------
