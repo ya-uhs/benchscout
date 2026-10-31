@@ -367,10 +367,9 @@ VS Code の中にいるので、ビルドや書き込みは既存の拡張(ESP-I
 1. **`serial.listen` の `arg=9600` が 120 秒以上返らない。** `broker._execute` が `arg` を **秒数** として `float(arg)` している
    (9600 秒待っていた)。baud は `recon.listen_into` で 115200 に固定で、変える手段がない。
    → Action レジストリで引数に型を付け(秒と baud を分ける)、MCP の docstring にも書く
-2. **`port="/dev/cu.usbmodem1101"` だと黙って失敗する。** `classify` が口を id(`serial:…`)でしか引かず `KeyError` になる。
-   → パスからも引けるようにするか、期待する id を並べたエラーを返す
+2. ~~`port="/dev/cu.usbmodem1101"` だと黙って失敗する~~ → 直した(2026-10-31):id でもパスでも引け、分からなければ id とパスの一覧を返す
 3. **Tang Nano のファブリック UART が既定のレートで無音。** 上の 1 のせいで baud を変えて試せず、baud か bitstream かは未切り分け
-4. **承認をファイルの書き換えで偽造できる。** 承認の状態が作業フォルダの `.benchscout/approvals.json` にあり、エージェントが書ける(§15 R3)
+4. ~~承認をファイルの書き換えで偽造できる~~ → 直した(2026-10-31):承認はコアのメモリだけ。`audit.jsonl` は記録で、書き換えても何も許可されない(§15 R3)
 
 ## 11. 決定ログ
 
@@ -404,8 +403,9 @@ VS Code の中にいるので、ビルドや書き込みは既存の拡張(ESP-I
 実装の順番(案):
 
 0. (済)§15 S1〜S6 は決定。S5 は実装しながら実機で確かめる
-1. コアと制御の経路:拡張(またはテスト用のドライバ)がコアを子プロセスで起動し、stdin/stdout で制御する。承認をメモリへ、範囲付きの許可、
-   `benchscout mcp` を中継にする、機器のロックと OS の排他(§15 R2、R3、R8、S1)。拡張がなくてもテストできるように、制御の経路はプロトコルとして定義する
+1. (済 2026-10-31)コアと制御の経路:`benchscout core` が stdin/stdout を制御の経路にし、エージェントの経路は Unix ソケット。承認はメモリ、
+   待つ承認、範囲付きの許可、`benchscout mcp` は中継、機器のロック、OS の排他(§15 R2、R3、R8、S1、S3)。拡張ができるまでは、
+   `benchscout core` を起動した端末が操作盤(`select` / `approve` / `deny` を打つ)。Windows は未対応(ロックとソケット、R6)
 2. §10 の不具合2件を、Action レジストリ化(引数に型を付ける)を兼ねて直す
 3. 一覧と見立てをルール(データ)で出す(§15 R4)。MCP の instructions / prompts に振る舞いを移す(§15 S4)
 4. VS Code 拡張の最小版:コアの起動、機器の一覧、承認ボタン、MCP サーバーの登録、.vsix のビルド
@@ -452,8 +452,9 @@ VS Code の中にいるので、ビルドや書き込みは既存の拡張(ESP-I
 src/benchscout/
 ├── core/              ドメイン非依存:グラフ、ポリシー、ブローカー、承認、ロック、レジストリ
 │   └── protocol/      Transport と Codec(汎用の仕組み:serial / tcp / visa、line-shell / scpi / at / binary)
-├── control.py         制御の経路(stdin/stdout のプロトコル。拡張とテストが使う)
+├── core.py            制御の経路(stdin/stdout)とエージェントの経路(ソケット)
 ├── mcp_relay.py       `benchscout mcp`:エージェントの経路への中継
+├── approvals.py、locks.py、runtime.py   メモリ上の承認、機器のロック、ソケットとロックの置き場所
 ├── cli.py
 └── packs/
     └── bench/         ドメイン:probes、actions、見立てのルール、instructions / prompts / skill、data/(知識・プロトコル定義)

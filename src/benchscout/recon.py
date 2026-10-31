@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import asdict, dataclass, field
+from typing import Callable
 
 from . import knowledge as K
 from .io import Io
@@ -179,12 +180,22 @@ def _add_visa(b: Bench, res: str) -> None:
     b.link(p.id, t.id, "scpi")
 
 
-def run(io: Io, listen_seconds: float = 2.0) -> Recon:
+def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] | None = None) -> Recon:
+    """`busy(device_id)` names another benchscout window holding that device; its ports are
+    left alone (design.md section 15 S1/S2)."""
     b = build(io)
     r = Recon(b)
 
     for port in list(b.ports.values()):
         targets = b.targets_via(port.id)
+        holder = busy(port.device_id) if busy else None
+        if holder:
+            where = holder.get("workspace") or f"pid {holder.get('pid')}"
+            for t in targets:
+                fact = f"in use by another benchscout window ({where}); not probed"
+                if fact not in t.facts:
+                    t.facts.append(fact)
+            continue
 
         if port.kind in ("usbtmc", "lan-scpi"):
             if classify(b, "scpi.query", port.id, "*IDN?").effect == Effect.SAFE:
@@ -228,11 +239,11 @@ def run(io: Io, listen_seconds: float = 2.0) -> Recon:
     return r
 
 
-def listen_into(io: Io, path: str, targets: list[Target], seconds: float) -> str | None:
+def listen_into(io: Io, path: str, targets: list[Target], seconds: float, exclusive: bool = False) -> str | None:
     """Listen and fold what was heard into the targets. A port that vanishes mid-read
     (USB re-enumeration, usually a reset) is recorded as a fact, not a crash."""
     try:
-        text = io.serial_listen(path, seconds, 115200)
+        text = io.serial_listen(path, seconds, 115200, exclusive)
     except Exception as e:  # serial.SerialException / OSError: device went away
         for t in targets:
             t.facts.append(f"ALERT: port disappeared while listening ({e}); the device likely reset or re-enumerated")

@@ -20,9 +20,13 @@ summarize what is plugged in and propose what to look at, without waiting to be 
   for its classification. Quote it; do not guess a different one.
 - Before anything not SAFE, call `bench_impact` and tell the user what else it
   disturbs (e.g. reprogramming the FPGA kills the UART console on the other channel).
-- When `bench_do` returns approval_required, show the user the approve command and the
-  impact in one or two lines, then wait. Never run `benchscout approve` yourself, even
-  if you have a shell: approval is the human's act, not yours.
+- Approvals and device selection are the human's, made in the benchscout panel. A
+  `bench_do` that needs approval waits while the human decides there. If it returns
+  approval_required (the wait ran out), tell the user in one or two lines what is waiting
+  in the panel and its impact, then call again with the approval_id. Never try to approve
+  or select anything yourself, and never start or drive `benchscout` from a shell.
+- Only selected devices can be used. If `bench_do` returns not_selected, ask the user to
+  select that device in the panel.
 - You cannot see where scope probes or wires go. Ask: "Which net is CH1 on?"
 
 ## Opening move
@@ -35,7 +39,8 @@ summarize what is plugged in and propose what to look at, without waiting to be 
 4. Offer at most three next steps for that choice, most useful first, each marked
    safe / needs approval.
 5. If the user already said which device they care about, skip the question and the
-   others. Once a set is chosen, do not touch devices outside it.
+   others. The user selects devices in the benchscout panel; `bench_scan` shows which are
+   selected. Do not touch devices outside that set.
 
 ## Typical first steps
 - User says a board is plugged in but `bench_scan` does not list it: it did not

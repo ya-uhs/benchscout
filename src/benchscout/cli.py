@@ -1,11 +1,9 @@
-"""benchscout CLI.
+"""benchscout CLI (development and testing; the product UI is the VS Code extension).
 
-  benchscout scan [--json]            recon the bench (safe probes only)
-  benchscout approvals                list pending approvals
-  benchscout approve|deny <id>        decide on one
-  benchscout mcp                      run the MCP broker on stdio
-  benchscout setup                    make this folder a bench workspace for plain `claude`
-  benchscout start [--backend claude] [--lang ja]  scan, set up skills + MCP, launch the agent
+  benchscout scan [--json]                 recon the bench (safe probes only)
+  benchscout core [--workspace DIR]        run the core for a folder; this terminal is the control channel
+  benchscout mcp [--workspace DIR]         MCP server for agents; relays to that folder's core
+  benchscout setup [--agent claude|copilot]  put the skill and MCP config into this folder
 
 Set BENCHSCOUT_FIXTURE=fixtures/bench_example.json to run without hardware.
 """
@@ -15,7 +13,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shlex
 import shutil
 import subprocess
 import sys
@@ -26,21 +23,10 @@ from .broker import Broker
 from .io import FixtureIo, LiveIo
 from .report import render
 
-# How to start each backend with an opening prompt. {prompt} = opening prompt,
-# {mcp} = path to a standalone mcp.json. Override with BENCHSCOUT_BACKEND_CMD.
-# Claude Code needs no flags: setup_workspace() writes .mcp.json and enables it, so the
-# same wiring is there again on `claude --resume`.
-BACKENDS = {
-    "claude": "claude {prompt}",
-}
-
-OPENING_PROMPT = (
-    "Use the bench-expert skill. Scan the bench with bench_scan and give me your opening "
-    "read: what is connected, what is unknown, anything alarming, and up to three next steps. "
-    "Write your reply in {language}."
-)
-
 LANGUAGE_NAMES = {"ja": "Japanese", "en": "English", "zh": "Chinese", "ko": "Korean", "de": "German", "fr": "French"}
+
+# Where each agent reads project skills (design.md section 15 S4).
+SKILL_DIRS = {"claude": ".claude/skills", "copilot": ".agents/skills"}
 
 
 def user_language(explicit: str | None = None) -> str:
@@ -63,28 +49,66 @@ def _io():
     return FixtureIo(f) if f else LiveIo()
 
 
-def _state() -> str:
-    return os.environ.get("BENCHSCOUT_STATE", ".benchscout")
-
-
 def cmd_scan(a) -> None:
-    r = Broker(_io(), _state()).scan()
+    r = Broker(_io(), Path.cwd() / ".benchscout").scan()
     print(json.dumps(r.to_dict(), indent=2, default=str) if a.json else render(r))
 
 
-def cmd_approvals(a) -> None:
-    pending = {k: v for k, v in Broker(_io(), _state()).approvals().items() if v["status"] == "pending"}
-    if not pending:
-        print("No pending approvals.")
-    for k, v in pending.items():
-        imp = v["impact"]
-        also = f"; also disturbs {', '.join(imp['affected_ports'])}" if imp["affected_ports"] else ""
-        print(f"{k}  [{imp['effect'].upper()}] {v['action']} on {v['port']} {v.get('arg') or ''}\n        {imp['reason']}{also}")
+def cmd_core(a) -> None:
+    from .core import Core
+    from .locks import DeviceLocks, owner_info
+    from .runtime import socket_path
+
+    ws = Path(a.workspace).resolve()
+    broker = Broker(_io(), ws / ".benchscout", locks=DeviceLocks(owner_info(ws)), approval_wait=a.wait)
+    core = Core(broker, socket_path(ws))
+    broker.on_event = core.emit
+    if sys.stdin.isatty():
+        print("benchscout core: this terminal is the control channel. Commands: scan | select <device>... | "
+              "approve <id> [once|session|<N>m] | deny <id> | pending | quit", file=sys.stderr)
+    core.run()
 
 
-def cmd_decide(a, granted: bool) -> None:
-    rec = Broker(_io(), _state()).decide(a.id, granted)
-    print(f"{a.id}: {rec['status']} ({rec['action']} on {rec['port']})")
+def cmd_mcp(a) -> None:
+    from .mcp_relay import main
+
+    main(a.workspace)
+
+
+def setup_workspace(cwd: Path, agent: str = "claude") -> None:
+    """Put the expert skill and the MCP relay config where `agent` reads them."""
+    skill_src = resources.files("benchscout") / "skills" / "bench-expert" / "SKILL.md"
+    skill_dst = cwd / SKILL_DIRS[agent] / "bench-expert" / "SKILL.md"
+    skill_dst.parent.mkdir(parents=True, exist_ok=True)
+    skill_dst.write_text(skill_src.read_text())
+
+    command = shutil.which("benchscout") or sys.argv[0]
+    args = ["mcp", "--workspace", str(cwd.resolve())]
+
+    if agent == "claude":
+        def add_server(d):
+            d.setdefault("mcpServers", {})["benchscout"] = {"command": command, "args": args}
+
+        def settings(d):
+            servers = d.setdefault("enabledMcpjsonServers", [])
+            if "benchscout" not in servers:
+                servers.append("benchscout")
+            perms = d.setdefault("permissions", {})
+            allow = perms.setdefault("allow", [])
+            if "mcp__benchscout" not in allow:
+                allow.append("mcp__benchscout")
+            # The agent must not drive benchscout itself, e.g. start its own core (design.md 15 R3).
+            deny = perms.setdefault("deny", [])
+            if "Bash(benchscout:*)" not in deny:
+                deny.append("Bash(benchscout:*)")
+
+        _merge_json(cwd / ".mcp.json", add_server)
+        _merge_json(cwd / ".claude/settings.local.json", settings)
+    else:
+        def add_server(d):
+            d.setdefault("servers", {})["benchscout"] = {"type": "stdio", "command": command, "args": args}
+
+        _merge_json(cwd / ".vscode/mcp.json", add_server)
 
 
 def _merge_json(path: Path, update) -> None:
@@ -94,61 +118,10 @@ def _merge_json(path: Path, update) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
-def setup_workspace(cwd: Path, state: Path) -> Path:
-    """Make `cwd` a bench workspace that plain `claude` / `claude --resume` picks up:
-    project skill, project MCP server (.mcp.json), and that server pre-enabled."""
-    skill_src = resources.files("benchscout") / "skills" / "bench-expert" / "SKILL.md"
-    skill_dst = cwd / ".claude/skills/bench-expert/SKILL.md"
-    skill_dst.parent.mkdir(parents=True, exist_ok=True)
-    skill_dst.write_text(skill_src.read_text())
-
-    env = {"BENCHSCOUT_STATE": str(state)}
-    if os.environ.get("BENCHSCOUT_FIXTURE"):
-        env["BENCHSCOUT_FIXTURE"] = str(Path(os.environ["BENCHSCOUT_FIXTURE"]).resolve())
-    server = {"command": shutil.which("benchscout") or sys.argv[0], "args": ["mcp"], "env": env}
-
-    def add_server(d):
-        d.setdefault("mcpServers", {})["benchscout"] = server
-
-    def enable(d):
-        servers = d.setdefault("enabledMcpjsonServers", [])
-        if "benchscout" not in servers:
-            servers.append("benchscout")
-        allow = d.setdefault("permissions", {}).setdefault("allow", [])
-        if "mcp__benchscout" not in allow:
-            allow.append("mcp__benchscout")
-
-    _merge_json(cwd / ".mcp.json", add_server)
-    _merge_json(cwd / ".claude/settings.local.json", enable)
-    mcp_cfg = state / "mcp.json"  # standalone copy for backends that take a config path
-    mcp_cfg.parent.mkdir(parents=True, exist_ok=True)
-    mcp_cfg.write_text(json.dumps({"mcpServers": {"benchscout": server}}, indent=2))
-    return mcp_cfg
-
-
 def cmd_setup(a) -> None:
-    mcp_cfg = setup_workspace(Path.cwd(), Path(_state()).resolve())
-    print(f"Bench workspace ready in {Path.cwd()} (MCP config also at {mcp_cfg}).")
-    print("Open it with `claude`, or continue a session with `claude --resume`.")
-
-
-def cmd_start(a) -> None:
-    state = Path(_state()).resolve()
-    broker = Broker(_io(), state)
-    r = broker.scan()
-    print(render(r))
-    print()
-    mcp_cfg = setup_workspace(Path.cwd(), state)
-
-    template = os.environ.get("BENCHSCOUT_BACKEND_CMD") or BACKENDS.get(a.backend)
-    if not template:
-        sys.exit(f"Unknown backend {a.backend}; set BENCHSCOUT_BACKEND_CMD")
-    prompt = OPENING_PROMPT.format(language=user_language(a.lang))
-    cmd = template.format(mcp=shlex.quote(str(mcp_cfg)), prompt=shlex.quote(prompt))
-    if a.dry_run:
-        print("Would run:", cmd)
-        return
-    os.execvp("sh", ["sh", "-c", cmd])
+    setup_workspace(Path.cwd(), a.agent)
+    print(f"Bench workspace ready in {Path.cwd()} for {a.agent}.")
+    print("Start the core here with `benchscout core` (this terminal approves), then open your agent.")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -157,18 +130,16 @@ def main(argv: list[str] | None = None) -> None:
     s = sub.add_parser("scan")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_scan)
-    sub.add_parser("approvals").set_defaults(fn=cmd_approvals)
-    sub.add_parser("setup", help="write skill + MCP config here so plain `claude` works").set_defaults(fn=cmd_setup)
-    for name, granted in (("approve", True), ("deny", False)):
-        p = sub.add_parser(name)
-        p.add_argument("id")
-        p.set_defaults(fn=lambda a, g=granted: cmd_decide(a, g))
-    sub.add_parser("mcp").set_defaults(fn=lambda a: __import__("benchscout.mcp_server").mcp_server.main())
-    st = sub.add_parser("start")
-    st.add_argument("--backend", default="claude")
-    st.add_argument("--dry-run", action="store_true")
-    st.add_argument("--lang", help="reply language code, e.g. ja or en (default: from the OS)")
-    st.set_defaults(fn=cmd_start)
+    c = sub.add_parser("core", help="run the core for a folder; stdin/stdout is the control channel")
+    c.add_argument("--workspace", default=".")
+    c.add_argument("--wait", type=float, default=100.0, help="seconds a call waits for a decision")
+    c.set_defaults(fn=cmd_core)
+    m = sub.add_parser("mcp", help="MCP server for agents; relays to the folder's core")
+    m.add_argument("--workspace", default=None)
+    m.set_defaults(fn=cmd_mcp)
+    st = sub.add_parser("setup", help="write the skill and MCP config for an agent into this folder")
+    st.add_argument("--agent", choices=sorted(SKILL_DIRS), default="claude")
+    st.set_defaults(fn=cmd_setup)
     a = ap.parse_args(argv)
     a.fn(a)
 

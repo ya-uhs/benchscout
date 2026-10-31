@@ -27,7 +27,7 @@ class Io(Protocol):
 
     # access: opens things; callers go through policy first
     def visa_query(self, resource: str, command: str) -> str | None: ...
-    def serial_listen(self, path: str, seconds: float, baud: int) -> str: ...
+    def serial_listen(self, path: str, seconds: float, baud: int, exclusive: bool = False) -> str: ...
     def jtag_scan(self, usb_serial: str | None) -> list[dict]: ...  # [{idcode, manufacturer, model}]
 
 
@@ -107,11 +107,15 @@ class LiveIo:
         except Exception:
             return None
 
-    def serial_listen(self, path: str, seconds: float, baud: int = 115200) -> str:
+    def serial_listen(self, path: str, seconds: float, baud: int = 115200, exclusive: bool = False) -> str:
         import serial
 
         s = serial.Serial()
         s.port, s.baudrate, s.timeout = path, baud, 0.1
+        if exclusive and platform.system() != "Windows":
+            # TIOCEXCL: while we hold a selected device's port, nothing else (an agent's
+            # shell, another tool) can open it. Windows COM ports are exclusive anyway.
+            s.exclusive = True
         # Preset both lines low so opening does not request a reset/bootloader.
         # Some OS drivers still pulse DTR on open; policy marks those ports.
         s.dtr = False
@@ -162,6 +166,7 @@ class FixtureIo:
     def __init__(self, path: str | Path):
         self.data = json.loads(Path(path).read_text())
         self.calls: list[tuple] = []  # what access was attempted, for tests/audit
+        self.exclusive_opens: list[str] = []
 
     def usb_devices(self) -> list[dict]:
         return [dict(d, vid=int(d["vid"], 16), pid=int(d["pid"], 16)) for d in self.data.get("usb", [])]
@@ -180,8 +185,10 @@ class FixtureIo:
         self.calls.append(("visa_query", resource, command))
         return self.data.get("visa", {}).get(resource, {}).get(command)
 
-    def serial_listen(self, path: str, seconds: float, baud: int = 115200) -> str:
+    def serial_listen(self, path: str, seconds: float, baud: int = 115200, exclusive: bool = False) -> str:
         self.calls.append(("serial_listen", path))
+        if exclusive:
+            self.exclusive_opens.append(path)
         v = self.data.get("listen", {}).get(path, "")
         if isinstance(v, dict) and "error" in v:  # simulate a port that vanishes mid-read
             raise OSError(6, v["error"])

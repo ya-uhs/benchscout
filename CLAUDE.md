@@ -55,7 +55,10 @@ uv sync --extra mcp --extra visa                                        # dev en
 uv run pytest -q                                                        # all tests, fixture-only, no hardware
 BENCHSCOUT_FIXTURE=fixtures/bench_example.json uv run benchscout scan   # recon without hardware
 uv run benchscout scan                                                  # recon on the real bench (safe probes only)
+BENCHSCOUT_FIXTURE=fixtures/bench_example.json uv run benchscout core   # core without hardware; type commands to approve
 ```
+
+Until the VS Code extension exists, the terminal running `benchscout core` is the control channel.
 
 `~/.local/bin/benchscout` is a `uv tool` editable install of this directory, so code
 changes reach the CLI and the MCP server without reinstalling (reconnect with `/mcp`).
@@ -74,8 +77,7 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
 - Approvals come only from the human control channel, never from the agent's channel, and live
   in the core's memory (design.md section 15 R3). DANGEROUS grants are bound to
   (action, port, arg) and single use; DISRUPTIVE grants may cover (action, port) for the session
-  or a time limit (R8). Until the control channel lands, the code still uses single-use
-  file-backed approvals, which an agent with file access can forge.
+  or a time limit (R8). `test_core.py` covers this.
 - Recon (`bench_scan`) runs SAFE probes only.
 
 ## Working in this repo
@@ -90,7 +92,7 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
 - `src/benchscout/skills/bench-expert/SKILL.md` is the source of the agent's bench
   behaviour. `setup` copies it into the workspace, so after editing it re-run
   `benchscout setup` in `../bench-session`.
-- MCP tool docstrings in `mcp_server.py` are what the agent sees; keep them accurate,
+- MCP tool docstrings and INSTRUCTIONS in `mcp_relay.py` are what the agent sees; keep them accurate,
   including what `arg` means for each action.
 - What the real bench showed beats fixtures. Record each real-hardware behaviour in
   `fixtures/` or a test (e.g. ESP32 native USB resets on open; Tang Nano serials are shared).
@@ -102,11 +104,9 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
 ## Open findings from the first real-hardware run (2026-10-31)
 
 Bench: Espressif USB-Serial/JTAG (ESP32 native USB) + Sipeed Tang Nano (GW1N(R)-9C, IDCODE `0x0100481B`).
-Causes are known, fixes are not in yet (design.md section 10).
+Causes are known (design.md section 10).
 
-- `bench_impact` / `bench_do` with `port="/dev/cu.usbmodem1101"` fail with no message;
-  `port="serial:usbmodem1101"` works. Cause: `classify` looks ports up by id only and
-  raises `KeyError`. Accept either form, or fail with a message naming the expected ids.
+- Fixed: ports can be given as id or path; an unknown one lists the known ids and paths.
 - `bench_do serial.listen serial:usbserial-101 arg=9600` did not return within 120 s.
   Cause: `Broker._execute` treats `arg` as seconds (`float(arg)`), so it listened for
   9600 s; baud is fixed at 115200 in `recon.listen_into`. Give actions typed arguments.

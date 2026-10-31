@@ -114,9 +114,16 @@ def test_proposals(r):
     assert "browning out" not in texts  # nothing heard yet, so nothing claimed
 
 
-def test_approved_listen_identifies_and_reproposes(io, tmp_path):
+def session(io, tmp_path, *ports):
+    """A broker whose session holds the devices behind these ports (the human selected them)."""
     br = Broker(io, tmp_path)
     br.scan()
+    br.select([br.bench.ports[p].device_id for p in ports])
+    return br
+
+
+def test_approved_listen_identifies_and_reproposes(io, tmp_path):
+    br = session(io, tmp_path, "serial:usbmodem1101")
     aid = br.request("serial.listen", "serial:usbmodem1101")["approval_id"]
     br.decide(aid, True)
     assert br.request("serial.listen", "serial:usbmodem1101", approval_id=aid)["status"] == "done"
@@ -161,14 +168,13 @@ def test_user_language(monkeypatch, explicit, env, expected):
 
 
 def test_approval_gate(io, tmp_path):
-    br = Broker(io, tmp_path)
-    br.scan()
+    br = session(io, tmp_path, "serial:usbserial-10")
     res = br.request("serial.listen", "serial:usbserial-10")
     assert res["status"] == "approval_required"
     aid = res["approval_id"]
     assert ("serial_listen", "/dev/cu.usbserial-10") not in io.calls
 
-    assert br.request("serial.listen", "serial:usbserial-10", approval_id=aid)["status"] == "pending"
+    assert br.request("serial.listen", "serial:usbserial-10", approval_id=aid)["status"] == "approval_required"
     br.decide(aid, True)
     # an approval cannot be reused for a different action
     assert br.request("serial.send", "serial:usbserial-10", "help", approval_id=aid)["status"] == "approval_mismatch"
