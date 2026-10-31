@@ -109,5 +109,8 @@ Causes are known (design.md section 10).
 - Fixed: ports can be given as id or path; an unknown one lists the known ids and paths.
 - Fixed: `serial.listen arg=9600` listened for 9600 s. Actions now take typed `args`
   (`actions.py`), e.g. {"seconds": 3, "baud": 9600}, with ranges; bad args are rejected.
-- The fabric UART on the Tang Nano was silent at the default rate; now that the baud can be
-  changed, check baud vs bitstream on the next real-hardware run.
+- The fabric UART on the Tang Nano is silent at 9600-230400 baud (checked 2026-10-31), so it is
+  not a common-baud problem; whether the bitstream drives the UART is still unknown.
+- Fixed: MCP clients start the relay with a trimmed environment (no TMPDIR), so the runtime
+  dir now depends only on the home directory. Keep anything the core and relay must agree on
+  independent of environment variables.

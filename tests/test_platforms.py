@@ -95,3 +95,16 @@ def test_serial_ending_in_a_letter_is_not_cut_without_reason(tmp_path):
 @pytest.mark.parametrize("name,code", [("Japanese_Japan", "ja"), ("ja_JP", "ja"), ("English_United States", "en"), (None, None)])
 def test_windows_locale(name, code):
     assert windows_locale_code(name) == code
+
+
+def test_runtime_dir_ignores_temp_dir_variables(monkeypatch):
+    """MCP clients start the relay with a trimmed environment; it must find the same socket."""
+    from benchscout.runtime import agent_address
+
+    monkeypatch.delenv("BENCHSCOUT_RUNTIME", raising=False)
+    monkeypatch.setenv("TMPDIR", "/var/folders/xx/T/")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/501")
+    with_env = agent_address(Path("/work/bench"))
+    for k in ("TMPDIR", "XDG_RUNTIME_DIR", "TEMP", "TMP"):
+        monkeypatch.delenv(k, raising=False)
+    assert agent_address(Path("/work/bench")) == with_env

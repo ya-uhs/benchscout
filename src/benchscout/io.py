@@ -105,8 +105,12 @@ class LiveIo:
         return self._rm
 
     def visa_resources(self) -> list[str]:
+        import warnings
+
         try:
-            return list(self._visa().list_resources())
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")  # pyvisa-py: optional psutil/zeroconf notices
+                return list(self._visa().list_resources())
         except Exception:
             return []
 

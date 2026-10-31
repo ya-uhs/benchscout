@@ -11,7 +11,6 @@ import getpass
 import hashlib
 import os
 import sys
-import tempfile
 from pathlib import Path
 
 WINDOWS = sys.platform == "win32"
@@ -25,9 +24,21 @@ def _user() -> str:
 
 
 def runtime_dir() -> Path:
-    base = os.environ.get("BENCHSCOUT_RUNTIME") or os.environ.get("XDG_RUNTIME_DIR") \
-        or (os.environ.get("LOCALAPPDATA") if WINDOWS else None) or tempfile.gettempdir()
-    d = Path(base) / f"benchscout-{_user()}"
+    """Must come out the same in the core and in every relay. MCP clients start servers with a
+    trimmed environment (no TMPDIR, often no XDG_RUNTIME_DIR), so this depends only on the
+    user's home, never on temp-dir variables. Real bench, 2026-10-31: the core put its socket
+    under $TMPDIR and the relay, lacking TMPDIR, looked in /tmp."""
+    if os.environ.get("BENCHSCOUT_RUNTIME"):  # tests; set it for both sides or neither
+        base = Path(os.environ["BENCHSCOUT_RUNTIME"])
+    elif WINDOWS:
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Caches"
+    else:
+        base = Path.home() / ".cache"
+    d = base / f"benchscout-{_user()}"
+    if not WINDOWS and len(str(d)) > 80:  # keep socket paths under the ~104-byte AF_UNIX limit
+        d = Path("/tmp") / f"benchscout-{_user()}"
     d.mkdir(mode=0o700, parents=True, exist_ok=True)
     if not WINDOWS:
         os.chmod(d, 0o700)
