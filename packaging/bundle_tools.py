@@ -99,17 +99,27 @@ def licenses(exe: Path) -> None:
             (out / "openFPGALoader-LICENSE.txt").write_bytes(r.read())
     except OSError as e:
         sys.exit(f"could not get openFPGALoader's license from {LICENSE_URL}: {e}")
+    # every shipped library's license: Homebrew keeps them per formula, Debian under /usr/share/doc, MSYS2 under
+    # share/licenses (on Windows the C++ runtime, winpthreads and zlib DLLs travel too)
+    wanted = ("ftdi", "libusb", "hidapi", "gcc-libs", "gcc", "winpthread", "zlib")
     roots = [Path("/opt/homebrew/opt"), Path("/usr/local/opt"), Path("/usr/share/doc"), exe.parent.parent / "share" / "licenses"]
-    for pkg, names in {"libftdi": ("libftdi", "libftdi1-2", "mingw-w64-ucrt-x86_64-libftdi"),
-                       "libusb": ("libusb", "libusb-1.0-0", "mingw-w64-ucrt-x86_64-libusb")}.items():
-        for root in roots:
-            for n in names:
-                for f in [*(root / n).glob("COPYING*"), *(root / n).glob("LICENSE*"), *(root / n).glob("copyright")]:
-                    shutil.copy2(f, out / f"{pkg}-{f.name}.txt")
+    exact = {"libftdi", "libusb", "hidapi", "libftdi1-2", "libusb-1.0-0", "libhidapi-libusb0", "libhidapi-hidraw0"}
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for d in root.iterdir():
+            msys2 = root.name == "licenses"
+            if not d.is_dir() or not (d.name in exact or msys2 and any(w in d.name for w in wanted)):
+                continue
+            for f in [*d.glob("COPYING*"), *d.glob("LICENSE*"), *d.glob("copyright")]:
+                if f.is_file():
+                    shutil.copy2(f, out / f"{d.name}-{f.name}.txt")
+    print("licenses:", sorted(f.name for f in out.iterdir()))
     (OUT / "NOTICE.txt").write_text(
         f"openFPGALoader {VERSION} (Apache-2.0) https://github.com/trabucayre/openFPGALoader\n"
-        "with libftdi1 and libusb-1.0 (LGPL-2.1, shipped as separate shared libraries you may replace)\n"
-        "and, where present, hidapi. Their license texts are in licenses/.\n", encoding="utf-8")
+        "with libftdi1 and libusb-1.0 (LGPL-2.1, shipped as separate shared libraries you may replace),\n"
+        "and where present hidapi, and on Windows the GCC runtime (GPL-3.0 with the GCC Runtime Library\n"
+        "Exception), winpthreads and zlib. Their license texts are in licenses/.\n", encoding="utf-8")
 
 
 def main() -> None:
