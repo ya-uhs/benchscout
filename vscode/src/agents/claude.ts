@@ -3,7 +3,12 @@
 // The binary is the user's own, unmodified, signed in by the user through Anthropic's flow.
 // benchscout never touches credentials. Permission prompts arrive as control_request / can_use_tool.
 
-import { ChildProcessWithoutNullStreams, spawn } from "child_process";
+import { ChildProcessWithoutNullStreams } from "child_process";
+// cross-spawn: on Windows, npm-installed CLIs are .cmd shims and scripts start with #!; it resolves both
+// and quotes arguments for cmd.exe (the MCP config is JSON). Elsewhere it is plain child_process.spawn.
+import crossSpawn = require("cross-spawn");
+const spawn = (command: string, args: string[], opts: { cwd: string }) =>
+  crossSpawn(command, args, { ...opts, stdio: "pipe" }) as ChildProcessWithoutNullStreams;
 import * as readline from "readline";
 import { AgentDriver, AgentEvent, McpRelay, PermissionAsk, TurnResult, WakeError, isBenchscoutTool } from "./types";
 

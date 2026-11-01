@@ -1,7 +1,12 @@
 // Any ACP agent (Copilot CLI, Codex via its ACP adapter, Gemini CLI, ...), driven with the
 // official SDK `@agentclientprotocol/sdk` as an ACP client (design.md section 17).
 
-import { ChildProcessWithoutNullStreams, spawn } from "child_process";
+import { ChildProcessWithoutNullStreams } from "child_process";
+// cross-spawn: on Windows, npm-installed CLIs are .cmd shims and scripts start with #!; it resolves both
+// and quotes arguments for cmd.exe (the MCP config is JSON). Elsewhere it is plain child_process.spawn.
+import crossSpawn = require("cross-spawn");
+const spawn = (command: string, args: string[], opts: { cwd: string }) =>
+  crossSpawn(command, args, { ...opts, stdio: "pipe" }) as ChildProcessWithoutNullStreams;
 import { Readable, Writable } from "stream";
 import type * as Acp from "@agentclientprotocol/sdk" with { "resolution-mode": "import" };
 import { AgentDriver, AgentEvent, McpRelay, PermissionAsk, TurnResult, WakeError, isBenchscoutTool } from "./types";

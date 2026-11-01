@@ -40,12 +40,17 @@ function folder(): string | undefined {
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
 
-/** An executable by name: PATH, then the usual per-user places (a Dock-launched VS Code on macOS lacks them on PATH). */
+/** An executable by name: PATH, then the usual per-user places (a Dock-launched VS Code on macOS lacks them on PATH).
+ *  On Windows, npm installs CLIs as .cmd shims (copilot.cmd); the drivers start those through cross-spawn. */
 function which(exe: string): string | undefined {
-  const name = process.platform === "win32" ? `${exe}.exe` : exe;
-  const dirs = [...(process.env.PATH ?? "").split(path.delimiter), path.join(os.homedir(), ".local", "bin"), "/opt/homebrew/bin", "/usr/local/bin"];
+  const win = process.platform === "win32";
+  const names = win ? [".exe", ".cmd", ".bat"].map((x) => exe + x) : [exe];
+  const extra = win ? [path.join(process.env.APPDATA ?? "", "npm")] : ["/opt/homebrew/bin", "/usr/local/bin"];
+  const dirs = [...(process.env.PATH ?? "").split(path.delimiter), path.join(os.homedir(), ".local", "bin"), ...extra];
   for (const d of dirs) {
-    if (d && fs.existsSync(path.join(d, name))) return path.join(d, name);
+    for (const n of names) {
+      if (d && fs.existsSync(path.join(d, n))) return path.join(d, n);
+    }
   }
   return undefined;
 }
