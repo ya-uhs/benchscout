@@ -28,6 +28,7 @@ def test_windows_pnp_parsing():
     assert len(parse_windows_pnp(json.dumps(json.loads(PNP)[0]))) == 1  # a single object, not a list
 
 
+@pytest.mark.skipif(__import__("sys").platform == "win32", reason="sysfs names like 1-1:1.0 cannot be made on Windows")
 def test_linux_sysfs(tmp_path):
     def dev(name, **attrs):
         d = tmp_path / name

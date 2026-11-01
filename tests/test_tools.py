@@ -15,6 +15,7 @@ from benchscout.policy import Effect, classify
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "bench_example.json"
 VCP = "/dev/cu.usbmodem21403"  # SAFE to open: watched as soon as it is selected
 
+# paths go in TOML literal strings ('...'): a Windows path's backslashes are not escapes there
 TOOL = '''
 [[tool]]
 name = "lab.flash"
@@ -22,15 +23,15 @@ doc = "our lab's flasher"
 effect = "disruptive"
 reason = "writes our test image"
 port_kinds = ["serial"]
-argv = ["{python}", "{script}", "{{port.path}}", "{{image}}", "{{images*}}"]
+argv = ['{python}', '{script}', "{{port.path}}", "{{image}}", "{{images*}}"]
 releases_device = true
 args.image = {{ type = "file", required = true, ext = [".bin"] }}
 args.images = {{ type = "flash_map", default = "0x0:boot.bin" }}
 
 [[tool]]
 name = "lab.old"
-argv = ["{python}", "-c", "print('x')"]
-version = {{ argv = ["{python}", "-c", "print('flasher v4.5.1')"], min = "5.0", why = "4.x hangs on our board" }}
+argv = ['{python}', "-c", "print('x')"]
+version = {{ argv = ['{python}', "-c", "print('flasher v4.5.1')"], min = "5.0", why = "4.x hangs on our board" }}
 '''
 
 

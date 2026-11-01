@@ -335,7 +335,7 @@ def test_setup_skill_only_writes_just_the_skill(tmp_path):
         ws = tmp_path / agent
         ws.mkdir()
         setup_workspace(ws, agent, skill_only=True)
-        assert sorted(str(f.relative_to(ws)) for f in ws.rglob("*") if f.is_file()) == [f"{where}/bench-expert/SKILL.md"]
+        assert sorted(f.relative_to(ws).as_posix() for f in ws.rglob("*") if f.is_file()) == [f"{where}/bench-expert/SKILL.md"]
 
 
 def test_setup_re_enables_a_server_disabled_earlier(tmp_path):
