@@ -9,7 +9,7 @@
 // and its scanner failed on that bundle in CI. Our own files are scanned by `npm run package` (no core),
 // which CI runs on every OS.
 
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 
@@ -22,6 +22,11 @@ if (!target) {
 const exe = target.startsWith("win32") ? "benchscout.exe" : "benchscout";
 if (!existsSync(join(here, "bin", "benchscout", exe))) {
   console.error(`no frozen core at bin/benchscout/${exe}: run \`uv run python packaging/build_core.py\` first`);
+  process.exit(2);
+}
+const notices = join(here, "THIRD_PARTY_NOTICES.txt");
+if (!existsSync(notices) || statSync(notices).mtimeMs < statSync(join(here, "bin", "benchscout", exe)).mtimeMs) {
+  console.error("THIRD_PARTY_NOTICES.txt is missing or older than the core: run `uv run --with zstandard python packaging/notices.py`");
   process.exit(2);
 }
 process.chdir(here);

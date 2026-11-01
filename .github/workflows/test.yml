@@ -80,6 +80,8 @@ jobs:
           PATH="$UCRT:$PATH" uv run python packaging/bundle_tools.py --exe "$(cygpath -w "$UCRT/openFPGALoader.exe")"
       - run: npm ci
         working-directory: vscode
+      # every shipped component with its license text; fails if one has none (packaging/notices.py)
+      - run: uv run --with zstandard==0.23.0 python packaging/notices.py
       - run: npm run package:platform
         working-directory: vscode
         env:

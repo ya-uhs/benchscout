@@ -82,7 +82,9 @@ BENCHSCOUT_FIXTURE=fixtures/bench_example.json uv run benchscout core   # core w
 VS Code extension (`vscode/`): `npm test` (its control channel against a real core on the fixture
 bench), `npm run package` -> `vscode/benchscout.vsix` (no core inside). Platform build with the frozen
 core: `uv run python packaging/build_core.py`, `uv run python packaging/bundle_tools.py` (ships
-openFPGALoader next to it; on macOS from `brew install openfpgaloader`), then `VSCE_TARGET=darwin-arm64 npm run package:platform`
+openFPGALoader next to it; on macOS from `brew install openfpgaloader`), `uv run --with zstandard python
+packaging/notices.py` (THIRD_PARTY_NOTICES.txt: every shipped component's license text; fails if one is missing), then
+`VSCE_TARGET=darwin-arm64 npm run package:platform`
 (same tests against the frozen core: `BENCHSCOUT_TEST_BIN=$PWD/bin/benchscout/benchscout npm test`). Keep `src/core.ts` free of `vscode` imports
 so it stays testable with plain Node. Panel wording lives in `src/i18n.ts` (en/ja); clarity first.
 

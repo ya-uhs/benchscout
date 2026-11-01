@@ -21,6 +21,9 @@ def main() -> None:
                     "--collect-data", "benchscout",          # packs/bench/data/*.toml, skills/
                     "--collect-submodules", "pyvisa_py",      # VISA backends load by name
                     "--collect-submodules", "serial.tools",
+                    # test tooling some dependency imports only when present: not part of the product
+                    "--exclude-module", "pytest", "--exclude-module", "_pytest", "--exclude-module", "pluggy",
+                    "--exclude-module", "iniconfig", "--exclude-module", "pygments",
                     "--distpath", str(build / "dist"), "--workpath", str(build / "work"), "--specpath", str(build),
                     str(ROOT / "packaging" / "entry.py")], check=True, cwd=ROOT)
     if OUT.exists():
