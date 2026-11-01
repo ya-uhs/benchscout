@@ -63,7 +63,7 @@ def load(workspace: Path | None = None) -> None:
         if not d.is_dir():
             continue
         for f in sorted(d.glob("*.toml")):
-            data = tomllib.loads(f.read_text())
+            data = tomllib.loads(f.read_text(encoding="utf-8"))
             sources.append(f)
             shared |= set(data.get("shared_serials", []))
             for e in data.get("usb", []):

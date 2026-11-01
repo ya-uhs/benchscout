@@ -213,3 +213,14 @@ def test_what_waits_for_the_human_is_shown_again_after_a_restart_but_only_once(t
     later.scan()
     shown = [e["entry"]["text"] for e in events if e["event"] == "memory_added"]
     assert shown == ["treat listening as SAFE?"], "once, and nothing about devices that are not connected"
+
+
+
+def test_memory_in_japanese_round_trips(tmp_path):
+    """Files are UTF-8 on every OS (Windows' default code page cannot hold what the agent writes in Japanese)."""
+    from benchscout.memory import Entry, Memory
+
+    m = Memory(tmp_path / "ws", root=tmp_path / "mem")
+    m.add("k", Entry(kind="observation", source="agent", text="UART のカウンタは続いている(リセットなし)", evidence="hb 0000002a"))
+    again = Memory(tmp_path / "ws", root=tmp_path / "mem")
+    assert again.entries("k")[0].text == "UART のカウンタは続いている(リセットなし)"

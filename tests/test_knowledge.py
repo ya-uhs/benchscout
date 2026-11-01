@@ -35,7 +35,7 @@ def _python_code(path: Path) -> str:
     import tokenize
 
     out, prev = [], tokenize.NEWLINE
-    for tok in tokenize.generate_tokens(io.StringIO(path.read_text()).readline):
+    for tok in tokenize.generate_tokens(io.StringIO(path.read_text(encoding="utf-8")).readline):
         if tok.type == tokenize.COMMENT:
             continue
         if tok.type == tokenize.STRING and prev in (tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT, tokenize.NL):
@@ -50,7 +50,7 @@ def _python_code(path: Path) -> str:
 def _ts_code(path: Path) -> str:
     import re
 
-    text = re.sub(r"/\*.*?\*/", " ", path.read_text(), flags=re.S)
+    text = re.sub(r"/\*.*?\*/", " ", path.read_text(encoding="utf-8"), flags=re.S)
     return "\n".join(re.sub(r"(^|\s)//.*$", " ", line) for line in text.splitlines())
 
 

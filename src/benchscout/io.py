@@ -295,7 +295,7 @@ def linux_usb_devices(root: Path) -> list[dict]:
     """USB devices from sysfs (/sys/bus/usb/devices). Interface entries (1-1:1.0) are skipped."""
     def read(d: Path, name: str) -> str | None:
         try:
-            return (d / name).read_text().strip() or None
+            return (d / name).read_text(encoding="utf-8", errors="replace").strip() or None
         except OSError:
             return None
 
@@ -371,7 +371,7 @@ class FixtureIo:
     """Replays a bench described in JSON (see fixtures/)."""
 
     def __init__(self, path: str | Path):
-        self.data = json.loads(Path(path).read_text())
+        self.data = json.loads(Path(path).read_text(encoding="utf-8"))
         self.calls: list[tuple] = []  # what access was attempted, for tests/audit
         self.exclusive_opens: list[str] = []
         self.bauds: list[int] = []

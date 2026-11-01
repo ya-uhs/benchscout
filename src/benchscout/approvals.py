@@ -152,5 +152,5 @@ class ApprovalBook:
         if self._audit:
             rec = {"t": time.time(), "what": what, "id": a.id, "action": a.action, "port": a.port,
                    "args": a.args, "effect": a.effect, "scope": a.scope}
-            with open(self._audit, "a") as f:
+            with open(self._audit, "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec) + "\n")

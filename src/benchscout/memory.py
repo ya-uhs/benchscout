@@ -93,14 +93,14 @@ class MemoryFile:
         self.header = header or {}
         self.entries: list[Entry] = []
         if self.path.exists():
-            data = tomllib.loads(self.path.read_text())
+            data = tomllib.loads(self.path.read_text(encoding="utf-8"))
             self.header = {k: v for k, v in data.items() if k != "entry"} or self.header
             for e in data.get("entry", []):
                 self.entries.append(Entry(**{k: v for k, v in e.items() if k in Entry.__dataclass_fields__}))
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(dump(self.entries, self.header))
+        self.path.write_text(dump(self.entries, self.header), encoding="utf-8")
 
 
 class Memory:

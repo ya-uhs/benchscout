@@ -97,7 +97,7 @@ def setup_workspace(cwd: Path, agent: str = "claude", skill_only: bool = False) 
     skill_src = resources.files("benchscout") / "skills" / "bench-expert" / "SKILL.md"
     skill_dst = cwd / SKILL_DIRS[agent] / "bench-expert" / "SKILL.md"
     skill_dst.parent.mkdir(parents=True, exist_ok=True)
-    skill_dst.write_text(skill_src.read_text())
+    skill_dst.write_text(skill_src.read_text(encoding="utf-8"), encoding="utf-8")
     if skill_only:
         return
 
@@ -134,10 +134,10 @@ def setup_workspace(cwd: Path, agent: str = "claude", skill_only: bool = False) 
 
 
 def _merge_json(path: Path, update) -> None:
-    data = json.loads(path.read_text()) if path.exists() else {}
+    data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     update(data)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2) + "\n")
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
 def cmd_setup(a) -> None:

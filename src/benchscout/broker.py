@@ -82,7 +82,7 @@ class Broker:
                         R.apply_log([self.last.bench.targets[tid]], kept[kind][1], seen=kept[kind][0])
             self._apply_memory(self.last.bench)
             self.last.proposals = R.propose(self.last.bench)
-            (self.state / "inventory.json").write_text(json.dumps(self.last.to_dict(), indent=2, default=str))
+            (self.state / "inventory.json").write_text(json.dumps(self.last.to_dict(), indent=2, default=str), encoding="utf-8")
             # what still waits for the human (from an earlier session) is shown again, for connected devices only
             waiting = [(dev, e) for dev in self.last.bench.devices.values() for e in self.memory.entries(self._key(dev))
                        if e.status == "pending" and e.id not in self._pending_shown]
@@ -438,7 +438,7 @@ class Broker:
             if log.exists():
                 texts.append((log.name, log.read_bytes()[-RECENT_FOR_QUOTES:].decode("utf-8", errors="replace")))
             for f in sorted(self.artifacts.glob(f"*{p.id.replace(':', '_')}*"))[-20:]:
-                texts.append((f.name, f.read_text(errors="replace")))
+                texts.append((f.name, f.read_text(encoding="utf-8", errors="replace")))
         for kind, (when, text) in self.observed.get(target_id, {}).items():
             texts.append((f"output seen {when}", text))
         for ev in self.bench.targets[target_id].evidence:
@@ -796,5 +796,5 @@ class Broker:
         while p.exists():
             n += 1
             p = self.artifacts / f"{time.strftime('%Y%m%d-%H%M%S')}-{stem}-{n}.{ext}"
-        p.write_text(content)
+        p.write_text(content, encoding="utf-8")
         return {"saved_to": str(p.resolve()), "preview": preview}

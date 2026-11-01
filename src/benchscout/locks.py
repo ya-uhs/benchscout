@@ -72,7 +72,7 @@ class DeviceLocks:
         if not _try_lock(f):
             f.close()
             return self._read_owner(device_id)
-        self._owner_file(device_id).write_text(json.dumps(self.owner))
+        self._owner_file(device_id).write_text(json.dumps(self.owner), encoding="utf-8")
         self._held[device_id] = f
         return None
 
@@ -102,7 +102,7 @@ class DeviceLocks:
 
     def _read_owner(self, device_id: str) -> dict:
         try:
-            return json.loads(self._owner_file(device_id).read_text())
+            return json.loads(self._owner_file(device_id).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return {"pid": None}
 
