@@ -47,13 +47,21 @@ test("start, see devices, select, approve what the agent asks, stop", async () =
     assert.ok(fpga, "the fabric UART is shown as living inside the FPGA");
     assert.ok(proposals.length > 0 && proposals.every((p) => p.reason));
 
+    // selecting a device whose port may reset on open: benchscout itself offers to watch it
     const sel = once(core, "selection");
+    const offered = once(core, "approvalRequested");
     await core.select([ch340.id]);
     assert.deepEqual((await sel)[0], [ch340.id]);
+    const [offer] = await offered;
+    assert.equal(offer.by, "benchscout");
+    assert.equal(offer.action, "serial.watch");
+    assert.equal(offer.subject, "QinHeng USB Serial");
+    await core.decide(offer.id, false, "once");  // "not now": the agent's listen below still asks on its own
 
     const asked = once(core, "approvalRequested");
     const agent = agentDo(env, ws, "serial.listen", "/dev/cu.usbserial-10");
     const [approval] = await asked;
+    assert.equal(approval.by, "agent");
     assert.equal(approval.effect, "disruptive");
     assert.match(approval.impact.reason, /reset/);
     assert.equal(core.pending.size, 1);

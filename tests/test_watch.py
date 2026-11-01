@@ -45,6 +45,7 @@ def test_safe_port_is_watched_on_selection_and_a_crash_is_noticed_once(tmp_path)
                                             {"after": 0.2, "text": CRASH}]})
     out = select(br, VCP)
     assert out["watching"] == ["serial:usbmodem21403"]
+    assert events[0]["kind"] == "watching", "the human is told the port is watched"
     hit = wait_for(events, lambda e: e["kind"] == "alert")
     time.sleep(0.3)
     alerts = [e for e in events if e["kind"] == "alert"]
@@ -91,3 +92,81 @@ def test_deselecting_stops_the_watch(tmp_path):
     w = br.watches["serial:usbmodem21403"]
     br.select([])
     assert br.watches == {} and not w.alive
+
+
+def _all_events(br):
+    seen = []
+    br.on_event = seen.append
+    return seen
+
+
+def test_benchscout_offers_to_watch_a_port_it_cannot_open_safely(tmp_path):
+    """Selecting a device whose port may reset on open: benchscout asks the human itself (an
+    approval card) instead of leaving watching to the agent; nothing is opened until then."""
+    io, br, _ = bench(tmp_path, {CH340: [{"after": 0.3, "text": "[I] sensor ok\n"}]})
+    seen = _all_events(br)
+    select(br, CH340)
+    asked = [e["approval"] for e in seen if e["event"] == "approval_requested"]
+    assert len(asked) == 1
+    a = asked[0]
+    assert (a["by"], a["action"], a["port"], a["effect"]) == ("benchscout", "serial.watch", "serial:usbserial-10", "disruptive")
+    assert a["subject"] == "QinHeng USB Serial" and a["purpose"]
+    assert br.watches == {} and ("serial_open", CH340) not in [c[:2] for c in io.calls]
+    assert "Do not ask again" in br.watch_state()["serial:usbserial-10"]
+
+    select(br, CH340)  # selecting again does not ask twice
+    assert len([e for e in seen if e["event"] == "approval_requested"]) == 1
+
+    br.decide(a["id"], True)
+    hit = wait_for(seen, lambda e: e.get("event") == "device_event" and e["kind"] == "watching")
+    assert hit[0]["device_name"] == "QinHeng USB Serial" and hit[0]["log"].endswith("serial_usbserial-10.log")
+    assert br.watches["serial:usbserial-10"].alive
+    assert br.watch_state()["serial:usbserial-10"].startswith("watched")
+    end = time.monotonic() + 3
+    while "sensor ok" not in br.watches["serial:usbserial-10"].recent() and time.monotonic() < end:
+        time.sleep(0.05)
+    assert "sensor ok" in br.watches["serial:usbserial-10"].recent()
+    br.end_session()
+
+
+def test_declined_watch_is_not_offered_again_this_session(tmp_path):
+    io, br, _ = bench(tmp_path, {})
+    seen = _all_events(br)
+    select(br, CH340)
+    a = next(e["approval"] for e in seen if e["event"] == "approval_requested")
+    br.decide(a["id"], False)
+    select(br, CH340)
+    br.select([])
+    select(br, CH340)
+    assert len([e for e in seen if e["event"] == "approval_requested"]) == 1
+    assert br.watches == {}
+    assert "declined" in br.watch_state()["serial:usbserial-10"]
+
+
+def test_dropping_a_device_closes_its_waiting_offer(tmp_path):
+    io, br, _ = bench(tmp_path, {})
+    seen = _all_events(br)
+    select(br, CH340)
+    a = next(e["approval"] for e in seen if e["event"] == "approval_requested")
+    br.select([])
+    decided = [e["approval"] for e in seen if e["event"] == "approval_decided"]
+    assert [(d["id"], d["status"]) for d in decided] == [(a["id"], "withdrawn")]
+
+
+def test_an_offered_watch_that_did_not_reset_the_device_is_remembered_as_an_observation(tmp_path, monkeypatch):
+    import threading
+
+    io, br, _ = bench(tmp_path, {})
+    seen = _all_events(br)
+    timers = []
+    monkeypatch.setattr(threading, "Timer", lambda t, f: timers.append(f) or type("T", (), {"start": lambda s: None})())
+    select(br, CH340)
+    a = next(e["approval"] for e in seen if e["event"] == "approval_requested")
+    br.decide(a["id"], True)
+    wait_for(seen, lambda e: e.get("event") == "device_event" and e["kind"] == "watching")
+    assert timers, "benchscout checks after a moment whether opening reset the device"
+    timers[0]()
+    dev = br.bench.devices[br.bench.ports["serial:usbserial-10"].device_id]
+    obs = [e for e in br.memory.entries(br._key(dev)) if e.kind == "observation"]
+    assert obs and "did not vanish" in obs[0].text
+    br.end_session()

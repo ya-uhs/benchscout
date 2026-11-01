@@ -15,8 +15,11 @@ readline.createInterface({ input: process.stdin }).on("line", async (line) => {
   const m = JSON.parse(line);
   if (m.type === "control_response") return waiting.get(m.response.request_id)?.(m.response.response.behavior);
   if (m.type !== "user") return;
-  if (process.env.FAKE_QUIET) {  // no permission asks: just say what it was asked
+  if (process.env.FAKE_QUIET) {  // no permission asks: one benchscout tool call, then say what it was asked
     const first = String(m.message.content).split("\n")[0];
+    const id = `q${++n}`;
+    out({ type: "assistant", message: { content: [{ type: "tool_use", id, name: "mcp__benchscout__bench_scan" }] } });
+    out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] } });
     out({ type: "assistant", message: { content: [{ type: "text", text: `got: ${first}` }] } });
     out({ type: "result", subtype: "success", is_error: false, result: `got: ${first}` });
     return;

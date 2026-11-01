@@ -26,6 +26,9 @@ export interface Proposal { text: string; action?: string; port?: string; effect
 export interface Approval {
   id: string; action: string; port: string; args: string; effect: Effect; status: string;
   impact: { reason: string; affected_ports: string[]; disturbs: string[] };
+  by?: "agent" | "benchscout"; // benchscout asks itself, e.g. to watch a selected device
+  subject?: string; // the device's name
+  purpose?: string;
 }
 
 export interface Question {
@@ -35,7 +38,7 @@ export interface Question {
 
 export interface DeviceEvent {
   port: string; device?: string; device_name?: string;
-  kind: "alert" | "vanished" | "returned" | "gone" | "unwatchable"; what: string; line?: string | null; log?: string; time?: number;
+  kind: "alert" | "vanished" | "returned" | "gone" | "unwatchable" | "watching"; what: string; line?: string | null; log?: string; time?: number;
 }
 
 export interface MemoryEntry {

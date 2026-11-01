@@ -14,6 +14,7 @@ export class ClaudeDriver implements AgentDriver {
   private proc?: ChildProcessWithoutNullStreams;
   private turn?: { resolve: (r: TurnResult) => void; reject: (e: Error) => void; text: string };
   private stderr = "";
+  private titles = new Map<string, string>(); // tool_use id -> tool name
 
   constructor(private cwd: string, private relay: McpRelay, private command = "claude", private extraArgs: string[] = []) {}
 
@@ -66,7 +67,15 @@ export class ClaudeDriver implements AgentDriver {
         } else if (b.type === "thinking" && b.thinking) {
           this.onEvent({ kind: "thought", text: b.thinking });
         } else if (b.type === "tool_use") {
-          this.onEvent({ kind: "tool", id: b.id, title: b.name });
+          this.titles.set(b.id, b.name);
+          this.onEvent({ kind: "tool", id: b.id, title: b.name, status: "pending" });
+        }
+      }
+    } else if (m.type === "user") {
+      // results of the tools it used come back as a user message
+      for (const b of Array.isArray(m.message?.content) ? m.message.content : []) {
+        if (b.type === "tool_result" && this.titles.has(b.tool_use_id)) {
+          this.onEvent({ kind: "tool", id: b.tool_use_id, title: this.titles.get(b.tool_use_id)!, status: b.is_error ? "failed" : "completed" });
         }
       }
     } else if (m.type === "control_request" && m.request?.subtype === "can_use_tool") {

@@ -49,6 +49,8 @@ class Broker:
         self.questions.on_answer = self._on_answer
         self.selected: set[str] = set()  # device ids in this session
         self.watches: dict = {}  # port id -> PortWatch (selected devices' ports held open)
+        self.watch_offers: dict[str, str] = {}  # port id -> approval id: benchscout asked the human to watch it
+        self.watch_declined: set[str] = set()  # ports the human said not to watch, this session
         from .memory import Memory
 
         self.memory = Memory(self.state.parent)  # design.md section 6
@@ -196,7 +198,13 @@ class Broker:
     def decide(self, approval_id: str, granted: bool, scope: Scope = "once") -> dict:
         from dataclasses import asdict
 
-        return asdict(self.approvals.decide(approval_id, granted, scope))
+        a = self.approvals.decide(approval_id, granted, scope)
+        if a.by == "benchscout" and a.action == "serial.watch" and self.watch_offers.get(a.port) == a.id:
+            if granted:  # benchscout asked for itself: nobody is waiting on the call, so run it here
+                threading.Thread(target=self._start_offered_watch, args=(a.id, a.port), daemon=True).start()
+            else:
+                self.watch_declined.add(a.port)
+        return asdict(a)
 
     # ---- memory (design.md section 6) ---------------------------------------------------------
     def _key(self, dev) -> str:
@@ -376,16 +384,72 @@ class Broker:
 
     # ---- watching (design.md section 17) -------------------------------------------------
     def _autowatch(self) -> list[str]:
-        """Selected devices' serial ports that are SAFE to open are watched right away; the others
-        need `serial.watch`, which asks the human like a listen would."""
+        """Selected devices' serial ports that are SAFE to open are watched right away. For the
+        others benchscout asks the human itself (an approval card), since watching is what lets
+        it notice crashes and resets; the agent does not have to think of it."""
         started = []
         for d in self.selected:
             for p in self.bench.ports_of(d):
-                if p.kind == "serial" and p.path and p.id not in self.watches \
-                        and classify(self.bench, "serial.watch", p.id).effect == Effect.SAFE:
+                if not (p.kind == "serial" and p.path and p.id not in self.watches):
+                    continue
+                if classify(self.bench, "serial.watch", p.id).effect == Effect.SAFE:
                     if self._watch(p.id, 115200):
                         started.append(p.id)
+                        self._watching_event(p.id)  # the human sees which ports are watched
+                else:
+                    self._offer_watch(p.id)
         return started
+
+    def _watching_event(self, port_id: str) -> None:
+        w = self.watches[port_id]
+        self._device_event({"event": "device_event", "port": port_id, "kind": "watching",
+                            "what": "watching: everything it prints goes to the log", "line": None,
+                            "log": str(w.log.resolve()), "time": time.time()})
+
+    def _offer_watch(self, port_id: str) -> None:
+        if port_id in self.watch_declined:
+            return
+        offered = self.watch_offers.get(port_id)
+        if offered and any(a.id == offered for a in self.approvals.pending()):
+            return
+        args = A.get("serial.watch").normalize({"baud": 115200})
+        impact = classify(self.bench, "serial.watch", port_id, args)
+        dev = self.bench.devices[self.bench.ports[port_id].device_id]
+        a = self.approvals.open(impact, A.canonical(args), by="benchscout", subject=dev.name,
+                                purpose="Hold the port open so benchscout sees everything it prints and notices crashes and resets.")
+        self.watch_offers[port_id] = a.id
+
+    def _start_offered_watch(self, approval_id: str, port_id: str) -> None:
+        r = self.request("serial.watch", port_id, {"baud": 115200}, approval_id=approval_id, wait=0)
+        w = self.watches.get(port_id)
+        if r.get("status") != "done" or not w:
+            return  # _watch already said why (unwatchable), or the device left the session
+        self._watching_event(port_id)
+
+        def settled() -> None:  # it did not vanish when opened: benchscout's own observation (design.md 6)
+            if self.watches.get(port_id) is w and w.alive and w.vanishes == 0:
+                self._observe_open(port_id, "")
+
+        threading.Timer(3.0, settled).start()
+
+    def watch_state(self) -> dict[str, str]:
+        """For the agent: how each selected device's serial port is watched, in words."""
+        out = {}
+        for d in sorted(self.selected):
+            for p in self.bench.ports_of(d):
+                if p.kind != "serial" or not p.path:
+                    continue
+                w = self.watches.get(p.id)
+                if w and w.alive:
+                    out[p.id] = f"watched; everything it prints is in {w.log.resolve()} (read it with bench_log)"
+                elif p.id in self.watch_declined:
+                    out[p.id] = "not watched: the human declined watching it in this session"
+                elif any(a.id == self.watch_offers.get(p.id) for a in self.approvals.pending()):
+                    out[p.id] = ("not watched yet: benchscout asked the human in the panel whether to watch it "
+                                 "(opening it may disturb the device). Do not ask again; work with what you have meanwhile")
+                else:
+                    out[p.id] = "not watched"
+        return out
 
     def _watch(self, port_id: str, baud: int) -> bool:
         from .watch import PortWatch

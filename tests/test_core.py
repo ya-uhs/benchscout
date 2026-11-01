@@ -234,8 +234,8 @@ def test_end_to_end_agent_waits_while_human_approves_on_control(io, tmp_path, ad
         aid = None
         for _ in range(200):
             events = [json.loads(l) for l in out.getvalue().splitlines()]
-            req = [e for e in events if e.get("event") == "approval_requested"]
-            if req:
+            req = [e for e in events if e.get("event") == "approval_requested" and e["approval"]["by"] == "agent"]
+            if req:  # (benchscout's own offer to watch the port comes first)
                 aid = req[0]["approval"]["id"]
                 break
             time.sleep(0.01)
@@ -325,6 +325,17 @@ def test_setup_puts_the_skill_where_each_agent_reads_it(tmp_path):
     assert (copilot / ".agents/skills/bench-expert/SKILL.md").exists()
     assert not (copilot / ".claude").exists()
     assert json.loads((copilot / ".vscode/mcp.json").read_text())["servers"]["benchscout"]["type"] == "stdio"
+
+
+def test_setup_skill_only_writes_just_the_skill(tmp_path):
+    """What the VS Code extension asks for: it hands the MCP config to the agent it wakes."""
+    from benchscout.cli import setup_workspace
+
+    for agent, where in (("claude", ".claude/skills"), ("copilot", ".agents/skills")):
+        ws = tmp_path / agent
+        ws.mkdir()
+        setup_workspace(ws, agent, skill_only=True)
+        assert sorted(str(f.relative_to(ws)) for f in ws.rglob("*") if f.is_file()) == [f"{where}/bench-expert/SKILL.md"]
 
 
 def test_setup_re_enables_a_server_disabled_earlier(tmp_path):

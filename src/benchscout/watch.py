@@ -41,6 +41,7 @@ class PortWatch:
         self._last_alert: dict[str, float] = {}
         self._thread: threading.Thread | None = None
         self.alive = False
+        self.vanishes = 0  # how often the port vanished while watched (a reset, an unplug)
         # lines this device is known to print when something is wrong, learned into memory (design.md 6)
         import re as _re
 
@@ -97,6 +98,7 @@ class PortWatch:
                 chunk = self._stream.read(0.2)
             except PortGone as e:
                 self._stream.close()
+                self.vanishes += 1
                 self._event("vanished", str(e))
                 if not self._reopen():
                     self._event("gone", f"did not come back within {REAPPEAR_S:.0f} s")

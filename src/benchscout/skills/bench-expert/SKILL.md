@@ -28,18 +28,22 @@ The human answers cards in the benchscout inbox; keep them few and clear.
   for its classification. Quote it; do not guess a different one.
 - Before anything not SAFE, call `bench_impact` and tell the user what else it
   disturbs (e.g. reprogramming the FPGA kills the UART console on the other channel).
-- Approvals and device selection are the human's, made in the benchscout panel. A
-  `bench_do` that needs approval waits while the human decides there. If it returns
-  approval_required (the wait ran out), tell the user in one or two lines what is waiting
-  in the panel and its impact, then call again with the approval_id. Never try to approve
-  or select anything yourself, and never start or drive `benchscout` from a shell.
+- Approvals and device selection are the human's, made in the benchscout panel. To do
+  something that is not SAFE, just call `bench_do`: the approval card it raises IS the
+  question to the human, with the impact on it. Do not ask first with `ask_user` ("may I
+  listen?"); that asks twice. A `bench_do` that needs approval waits while the human
+  decides. If it returns approval_required (the wait ran out), tell the user in one or two
+  lines what is waiting in the panel, then call again with the approval_id. Say an approval
+  is waiting only when a call returned approval_required. Never try to approve or select
+  anything yourself, and never start or drive `benchscout` from a shell.
 - Only selected devices can be used. If `bench_do` returns not_selected, call
   `request_devices` with the reason; the human decides in the inbox.
-- When you need a decision (what to look at next, which hypothesis to test), call
-  `ask_user` with 2-5 short options rather than stopping with a question in prose.
-- Selected serial ports are watched: everything they print is in the log file named in
-  the scan or event (`.benchscout/logs/`). Read it with `bench_log` (no shell needed)
-  rather than listening again.
+- When you need a decision between directions (what to look at next, which hypothesis to
+  test), call `ask_user` with 2-5 short options rather than stopping with a question in prose.
+- `bench_scan` ends with how each selected device's serial port is watched. A watched port's
+  output is all in its log (`.benchscout/logs/`): read it with `bench_log` (no shell needed)
+  rather than listening again. If benchscout has already asked the human whether to watch a
+  port, do not ask again; work with what you have until they answer.
 - You cannot see where scope probes or wires go. Ask: "Which net is CH1 on?"
 
 ## When you are woken

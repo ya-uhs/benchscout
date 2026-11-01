@@ -3,6 +3,8 @@ terminal. The VS Code extension gets the same messages as JSON lines instead."""
 
 from __future__ import annotations
 
+import json
+
 HELP = ("1) Type the number of each device to work on (e.g. 1, or 1 2).\n"
         "2) Ask your agent (claude, Copilot) about them in this folder.\n"
         "3) When the agent needs something that is not SAFE, it shows up here with the exact\n"
@@ -22,6 +24,14 @@ def _names(broker, device_ids) -> str:
     return ", ".join(devs[d].name if d in devs else d for d in device_ids) or "nothing"
 
 
+def _args(canonical: str) -> str:
+    """{"baud": 115200, "seconds": 3} -> baud=115200 seconds=3"""
+    try:
+        return " ".join(f"{k}={v}" for k, v in json.loads(canonical).items())
+    except (ValueError, AttributeError):
+        return canonical
+
+
 def format_human(msg: dict, broker) -> str | None:
     ev = msg.get("event")
     if ev == "ready":
@@ -33,8 +43,9 @@ def format_human(msg: dict, broker) -> str | None:
         imp = a["impact"]
         also = f"\n   also disturbs: {', '.join(imp['affected_ports'])}" if imp.get("affected_ports") else ""
         scope = f"   approve {a['id']} session | approve {a['id']} 10m | " if a["effect"] == "disruptive" else "   "
-        return (f"\n>>> APPROVAL NEEDED  [{a['effect'].upper()}]  {a['action']} on {a['port']}  {a['args']}\n"
-                f"   why: {imp['reason']}{also}\n"
+        asker = f"   benchscout asks: {a['purpose']}\n" if a.get("by") == "benchscout" else ""
+        return (f"\n>>> APPROVAL NEEDED  [{a['effect'].upper()}]  {a['action']} on {a['port']}  {_args(a['args'])}\n"
+                f"{asker}   why: {imp['reason']}{also}\n"
                 f"   approve {a['id']}  (once) |{scope.removeprefix('  ')}deny {a['id']}")
     if ev == "question_asked":
         q = msg["question"]
@@ -62,5 +73,5 @@ def format_human(msg: dict, broker) -> str | None:
     if isinstance(result, list):  # pending approvals
         if not result:
             return "No approvals pending."
-        return "\n".join(f"  {a['id']}  [{a['effect'].upper()}] {a['action']} on {a['port']} {a['args']}" for a in result)
+        return "\n".join(f"  {a['id']}  [{a['effect'].upper()}] {a['action']} on {a['port']} {_args(a['args'])}" for a in result)
     return None  # select/decide/bye: the event lines above already said it

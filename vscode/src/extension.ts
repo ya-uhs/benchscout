@@ -6,6 +6,7 @@
 // - registers the MCP server so the person's own agent can also use the bench from its chat
 // No LLM here: the agent is whatever the person already uses, signed in by them.
 
+import { execFile } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -31,6 +32,7 @@ let harness: Harness | undefined;
 let bench: Bench | undefined;
 let view: vscode.WebviewView | undefined;
 let status: vscode.StatusBarItem;
+let log: vscode.OutputChannel;
 const notified = new Set<string>();
 const mcpChanged = new vscode.EventEmitter<void>();
 
@@ -68,6 +70,15 @@ function chosenAgent(): string {
   return vscode.workspace.getConfiguration("benchscout").get<string>("agent") ?? "";
 }
 
+/** The expert skill, where the chosen agent reads it (design.md S4); the core carries the one source. */
+function installSkill(ctx: vscode.ExtensionContext, ws: string): void {
+  const id = chosenAgent();
+  if (!AGENTS[id]) return;
+  execFile(coreCommand(ctx), ["setup", "--agent", id, "--skill-only"], { cwd: ws }, (err, _out, stderr) => {
+    if (err) log.appendLine(`could not write the skill for ${id}: ${stderr || err.message}`);
+  });
+}
+
 function makeDriver(ctx: vscode.ExtensionContext, ws: string): AgentDriver {
   const relay: McpRelay = { command: coreCommand(ctx), args: ["mcp", "--workspace", ws], env: {} };
   const id = chosenAgent();
@@ -76,21 +87,28 @@ function makeDriver(ctx: vscode.ExtensionContext, ws: string): AgentDriver {
   // Nothing chosen: say so instead of picking one (design.md section 17: never switch on our own).
   return {
     label: "benchscout", onEvent: () => {}, onPermission: async () => "reject",
-    start: async () => { throw new WakeError("No agent is chosen", s.chooseAgent); },
+    start: async () => { throw new WakeError("No agent is chosen", s.chooseAgent, "no_agent"); },
     prompt: async () => ({ stopReason: "error", text: "" }), stop: () => {},
   };
 }
 
+let agentCard: Card | undefined;
+
+/** benchscout asks which agent to wake (never picks one itself); pinned on top, since waking waits for it. */
 function askForAgent(): void {
+  if (!harness || chosenAgent() || agentCard?.status === "open") return;
   const found = Object.entries(AGENTS).filter(([, a]) => which(a.exe));
-  if (!harness || chosenAgent() || !found.length) return;
-  harness.ask(s.chooseAgent, found.map(([, a]) => a.label).join(" / "),
+  if (!found.length) {
+    agentCard = harness.notify(s.noAgentFound, "", s.noAgentFix);
+    return;
+  }
+  agentCard = harness.ask(s.chooseAgent, found.map(([, a]) => a.label).join(" / "),
     found.map(([id, a], i) => ({ id, label: a.label, primary: i === 0 })),
     async (a) => {
+      // the configuration listener below then writes the skill and wakes whatever waited for the choice
       await vscode.workspace.getConfiguration("benchscout").update("agent", a.option, vscode.ConfigurationTarget.Global);
-      harness?.resetAgent();
       refresh();
-    });
+    }, false, true);
 }
 
 function refresh(): void {
@@ -106,7 +124,7 @@ function refresh(): void {
   }
   if (!view) return;
   const { statusWaiting, lookAt, wakeFailed, budget, agentWantsDevices, learned, learnedSafety,
-    deviceAlert, deviceVanished, deviceReset, deviceGone, ...plain } = s;
+    deviceAlert, deviceVanished, deviceReset, deviceGone, offerWatch, watching, ...plain } = s;
   const devices = (bench?.devices ?? []).map((d) => d.name + (core?.selected.includes(d.id) ? " ✓" : ""));
   const state: PanelState = { running: !!core?.running, agent: AGENTS[chosenAgent()]?.label ?? "", cards, devices, strings: plain };
   view.webview.postMessage({ type: "state", state });
@@ -134,6 +152,8 @@ async function start(ctx: vscode.ExtensionContext): Promise<void> {
     if (code !== 0) vscode.window.showErrorMessage(`${s.coreMissing}${err ? "\n" + err.split("\n").pop() : ""}`);
     refresh();
   });
+  agentCard = undefined; // a new harness: ask again if still nothing is chosen
+  installSkill(ctx, ws);
   c.start();
   askForAgent();
   mcpChanged.fire();
@@ -141,6 +161,8 @@ async function start(ctx: vscode.ExtensionContext): Promise<void> {
 }
 
 export function activate(ctx: vscode.ExtensionContext): void {
+  log = vscode.window.createOutputChannel("benchscout");
+  ctx.subscriptions.push(log);
   status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   status.command = "benchscout.panel.focus";
   status.show();
@@ -158,7 +180,7 @@ export function activate(ctx: vscode.ExtensionContext): void {
           case "ready": refresh(); break;
           case "start": await start(ctx); break;
           case "stop": harness?.stop(); core?.stop(); break;
-          case "rescan": await core?.scan().catch(() => undefined); break;
+          case "rescan": askForAgent(); await core?.scan().catch(() => undefined); break;
           case "answer": await harness?.answer(m.id, { option: m.option, text: m.text }); break;
           case "tell": await harness?.tell(m.text); break;
         }
@@ -180,9 +202,15 @@ export function activate(ctx: vscode.ExtensionContext): void {
       await start(ctx);
       vscode.commands.executeCommand("benchscout.panel.focus");
     }),
-    vscode.commands.registerCommand("benchscout.rescan", () => core?.scan()),
+    vscode.commands.registerCommand("benchscout.rescan", () => { askForAgent(); return core?.scan(); }),
     vscode.commands.registerCommand("benchscout.stop", () => { harness?.stop(); core?.stop(); }),
-    vscode.workspace.onDidChangeConfiguration((e) => { if (e.affectsConfiguration("benchscout.agent")) { harness?.resetAgent(); refresh(); } }),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration("benchscout.agent")) return;
+      const ws = folder();
+      if (ws && core?.running) installSkill(ctx, ws);
+      harness?.resetAgent();
+      refresh();
+    }),
     { dispose: () => { harness?.stop(); core?.stop(); } },
   );
 

@@ -9,7 +9,7 @@
 // No `vscode` import: tested with Node against a real core and fake agents.
 
 import { EventEmitter } from "events";
-import { AgentDriver, PermissionAsk, WakeError } from "./agents/types";
+import { AgentDriver, AgentEvent, PermissionAsk, WakeError } from "./agents/types";
 import { Approval, Bench, CoreClient, DeviceEvent, MemoryEvent, Question, describeArgs, deviceViews } from "./core";
 import { Strings } from "./i18n";
 
@@ -30,6 +30,7 @@ export interface Card {
   status: "open" | "working" | "closed";
   answer?: string;
   progress: string[]; // for report cards: what the agent did, in order
+  pin?: boolean; // shown above the others while open (e.g. choosing the agent, which everything else waits for)
 }
 
 type Answer = { option?: string; text?: string };
@@ -51,6 +52,8 @@ export class Harness extends EventEmitter {
   private lastWake = new Map<string, number>(); // device -> when the agent was last woken for it
   private busy = false;
   private stopping = false;
+  private current?: { card: Card; tools: Map<string, number> }; // the report card of the turn in progress
+  private deferred?: () => Promise<void>; // a wake waiting for the human to choose an agent
 
   constructor(private core: CoreClient, private makeDriver: () => AgentDriver, private s: Strings,
               private opts: HarnessOptions = { language: "English", maxTurnsPerHour: 20 }) {
@@ -88,14 +91,25 @@ export class Harness extends EventEmitter {
   }
 
   /** A question from the host (e.g. which agent to use), shown like any other card. */
-  ask(title: string, body: string, options: CardOption[], handler: (a: Answer) => unknown, freeText = false): Card {
-    return this.add({ kind: "question", title, body, options, freeText }, handler);
+  ask(title: string, body: string, options: CardOption[], handler: (a: Answer) => unknown, freeText = false, pin = false): Card {
+    return this.add({ kind: "question", title, body, options, freeText, pin }, handler);
   }
 
-  /** Forget the running agent (e.g. the human picked another one in settings). */
+  /** A note from the host (e.g. no agent installed). */
+  notify(title: string, body: string, detail?: string): Card {
+    return this.add({ kind: "notify", title, body, detail, options: [], freeText: false, pin: true });
+  }
+
+  /** Forget the running agent (e.g. the human picked another one); a wake that waited for the choice goes now. */
   resetAgent(): void {
     this.driver?.stop();
     this.driver = undefined;
+    const d = this.deferred;
+    this.deferred = undefined;
+    if (d) {
+      this.closeRef("wait-agent", "");
+      void d();
+    }
   }
 
   // ---- cards -------------------------------------------------------------------------
@@ -144,6 +158,15 @@ export class Harness extends EventEmitter {
   }
 
   private approvalCard(a: Approval): void {
+    if (a.by === "benchscout" && a.action === "serial.watch") {
+      // benchscout's own offer: watching is what lets it notice crashes; the human says yes or not now
+      this.add({
+        kind: "confirm", title: this.s.offerWatch(a.subject || a.port), body: `${this.s.offerWatchWhy}\n${a.impact.reason}`,
+        detail: a.port, effect: a.effect, freeText: false,
+        options: [{ id: "once", label: this.s.watchIt, primary: true }, { id: "deny", label: this.s.notNow }],
+      }, (ans) => this.core.decide(a.id, ans.option === "once", "once").catch(() => undefined), `approval:${a.id}`);
+      return;
+    }
     const options: CardOption[] = [{ id: "once", label: this.s.allowOnce, primary: true }];
     if (a.effect === "disruptive") options.push({ id: "session", label: this.s.allowSession });
     options.push({ id: "deny", label: this.s.deny });
@@ -194,12 +217,17 @@ export class Harness extends EventEmitter {
   private deviceEvent(e: DeviceEvent): void {
     const name = e.device_name ?? e.port;
     const dev = e.device ?? e.port;
-    const log = e.log ? `${this.s.logAt}: ${e.log}` : undefined;
+    // shown from the folder's .benchscout/ on: the full path is long and the folder is known
+    const log = e.log ? `${this.s.logAt}: ${e.log.replace(/^.*?(\.benchscout[\\/])/, "$1")}` : undefined;
     if (e.kind === "vanished") {
       this.add({ kind: "notify", title: this.s.deviceVanished(name), body: e.what, options: [], freeText: false, status: "closed" });
       return;
     }
-    if (e.kind === "gone" || e.kind === "unwatchable") {
+    if (e.kind === "watching") {
+      this.add({ kind: "notify", title: this.s.watching(name), body: "", detail: log, options: [], freeText: false, status: "closed" });
+      return;
+    }
+    if (e.kind !== "alert" && e.kind !== "returned") {  // gone, unwatchable, or anything new: say it, do not wake
       this.add({ kind: "notify", title: this.s.deviceGone(name), body: e.what, detail: log, options: [], freeText: false });
       return;
     }
@@ -252,21 +280,25 @@ export class Harness extends EventEmitter {
     }
     this.busy = true;
     const report = this.add({ kind: "report", title: `${this.s.investigating}: ${title}`, body: this.s.working, options: [], freeText: false, status: "working" });
+    this.current = { card: report, tools: new Map() };
     try {
       if (!this.driver) {
         const d = this.makeDriver();
-        d.onEvent = (e) => {
-          if (e.kind === "tool") report.progress.push(`🔧 ${e.title}${e.status ? ` (${e.status})` : ""}`);
-          else if (e.kind === "text") report.body = (report.body === this.s.working ? "" : report.body) + e.text;
-          this.changed();
-        };
+        d.onEvent = (e) => this.agentEvent(e);
         d.onPermission = (p) => this.permission(p);
         try {
           await d.start();
         } catch (e) {
           const w = e instanceof WakeError ? e : new WakeError(String(e), "");
-          report.status = "closed";
-          report.body = "";
+          this.cards = this.cards.filter((c) => c !== report);
+          if (w.code === "no_agent") {
+            // not a failure: nothing is chosen yet. Wait for the human's choice, then go on with this request.
+            this.deferred = () => this.wake(request, title);
+            if (!this.cards.some((c) => c.id === "wait-agent" && c.status === "open")) {
+              this.add({ kind: "notify", title: this.s.chooseAgentFirst, body: "", options: [], freeText: false, pin: true }, undefined, "wait-agent");
+            }
+            return;
+          }
           this.add({ kind: "notify", title: this.s.wakeFailed(d.label), body: w.message, detail: w.fix ? `${this.s.wakeFix}: ${w.fix}` : undefined, options: [], freeText: false });
           return; // never fall back to another agent or LLM
         }
@@ -289,9 +321,32 @@ export class Harness extends EventEmitter {
       this.driver = undefined;
     } finally {
       this.busy = false;
+      this.current = undefined;
       this.changed();
       this.emit("idle");
     }
+  }
+
+  /** What the agent is doing, shown on the report card of the turn in progress. */
+  private agentEvent(e: AgentEvent): void {
+    const cur = this.current;
+    if (!cur) return;
+    const report = cur.card;
+    if (e.kind === "tool") {
+      // one line per call, updated in place: "… bench_scan" then "✓ bench_scan"
+      const name = e.title.replace(/^mcp__benchscout__/, "").replace(/^benchscout[-_]/, "");
+      const mark = e.status === "completed" ? "✓" : e.status === "failed" ? "✗" : "…";
+      const i = cur.tools.get(e.id);
+      if (i === undefined) {
+        cur.tools.set(e.id, report.progress.length);
+        report.progress.push(`${mark} ${name}`);
+      } else {
+        report.progress[i] = `${mark} ${name}`;
+      }
+    } else if (e.kind === "text") {
+      report.body = (report.body === this.s.working ? "" : report.body) + e.text;
+    }
+    this.changed();
   }
 
   /** benchscout's own tools are gated by the broker, so the agent's ask about them is answered here. */

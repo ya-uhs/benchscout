@@ -10,7 +10,7 @@ export interface PanelState {
   cards: Card[];
   devices: string[]; // one line per device, for the small summary at the bottom
   strings: Omit<Strings, "statusWaiting" | "lookAt" | "wakeFailed" | "budget" | "agentWantsDevices" | "learned" | "learnedSafety"
-    | "deviceAlert" | "deviceVanished" | "deviceReset" | "deviceGone">;
+    | "deviceAlert" | "deviceVanished" | "deviceReset" | "deviceGone" | "offerWatch" | "watching">;
 }
 
 export function html(nonce: string, cspSource: string): string {
@@ -34,12 +34,21 @@ export function html(nonce: string, cspSource: string): string {
   .card.notify { border-left-color: var(--vscode-editorInfo-foreground); }
   .card.memory { border-left-color: var(--vscode-charts-purple, #b180d7); }
   .card.closed { opacity: .6; }
+  .card.pin { box-shadow: 0 0 0 1px var(--vscode-focusBorder); }
   .head { display: flex; justify-content: space-between; gap: 6px; font-weight: 600; }
-  .kind { font-weight: normal; font-size: .85em; }
-  .body { white-space: pre-wrap; margin: 6px 0 0; }
+  .kind { font-weight: normal; font-size: .85em; flex: none; white-space: nowrap; }
+  .badge { display: inline-block; font-size: .85em; margin-top: 3px; padding: 0 6px; border-radius: 8px; border: 1px solid currentColor; opacity: .85; }
+  .card.record .body { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .body { margin: 6px 0 0; }
+  .body p { margin: 0 0 4px; } .body ul { margin: 2px 0 4px; padding-left: 18px; } .body li { margin: 1px 0; }
+  .body h4 { margin: 6px 0 2px; font-size: 1em; }
+  .body code { font-family: var(--vscode-editor-font-family); font-size: .92em; background: var(--vscode-textCodeBlock-background); padding: 0 3px; border-radius: 3px; }
+  .card.closed .body { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
   .detail { font-family: var(--vscode-editor-font-family); font-size: .9em; margin-top: 4px; }
   .row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
-  button { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; padding: 4px 10px; border-radius: 3px; cursor: pointer; }
+  button { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; padding: 4px 10px; border-radius: 3px; cursor: pointer;
+           flex: none; white-space: nowrap; font: inherit; }
+  button.opt { flex: 0 1 auto; white-space: normal; text-align: left; max-width: 100%; }
   button.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
   details { margin-top: 6px; } summary { cursor: pointer; }
   .answer { margin-top: 6px; font-size: .9em; }
@@ -54,16 +63,35 @@ const esc = (x) => String(x ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<
 const send = (m) => vscode.postMessage(m);
 const ICON = { question: "❓", confirm: "🔔", report: "📋", notify: "ℹ️", memory: "🧠" };
 
+// The agent writes Markdown. A small subset, applied after escaping, so nothing it says becomes HTML.
+function md(text) {
+  const inline = (t) => esc(t).replace(/\\x60([^\\x60]+)\\x60/g, "<code>$1</code>").replace(/\\*\\*([^*]+)\\*\\*/g, "<b>$1</b>");
+  let out = "", list = false;
+  for (const raw of String(text ?? "").split("\\n")) {
+    const line = raw.trimEnd();
+    const item = line.match(/^\\s*[-*•]\\s+(.*)$/) || line.match(/^\\s*\\d+[.)]\\s+(.*)$/);
+    if (item) { if (!list) { out += "<ul>"; list = true; } out += "<li>" + inline(item[1]) + "</li>"; continue; }
+    if (list) { out += "</ul>"; list = false; }
+    const h = line.match(/^#{1,6}\\s+(.*)$/);
+    if (h) out += "<h4>" + inline(h[1]) + "</h4>";
+    else if (line.trim()) out += "<p>" + inline(line) + "</p>";
+  }
+  return out + (list ? "</ul>" : "");
+}
+
 function card(c, s) {
-  const kindLabel = { question: "", confirm: c.effect ? s.effect[c.effect] ?? "" : "", report: "", notify: "", memory: "" }[c.kind];
-  let h = '<div class="card ' + c.kind + " " + esc(c.effect ?? "") + (c.status === "closed" ? " closed" : "") + '">';
+  const badge = c.kind === "confirm" && c.effect ? s.effect[c.effect] ?? "" : "";
+  const record = c.kind === "memory" && !c.options.some((o) => o.primary);  // remembered, nothing to decide
+  let h = '<div class="card ' + c.kind + " " + esc(c.effect ?? "") + (c.status === "closed" ? " closed" : "") + (record ? " record" : "") +
+          (c.pin && c.status !== "closed" ? " pin" : "") + '">';
   h += '<div class="head"><span>' + ICON[c.kind] + " " + esc(c.title) + (c.status === "working" ? '<span class="spin"></span>' : "") +
-       '</span><span class="kind muted">' + esc(kindLabel) + " " + new Date(c.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + "</span></div>";
-  if (c.body) h += '<div class="body">' + esc(c.body) + "</div>";
+       '</span><span class="kind muted">' + new Date(c.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + "</span></div>";
+  if (badge) h += '<span class="badge">' + esc(badge) + "</span>";
+  if (c.body) h += '<div class="body">' + md(c.body) + "</div>";
   if (c.detail) h += '<div class="detail muted">' + esc(c.detail) + "</div>";
   if (c.progress.length) h += "<details><summary class=\\"muted\\">" + esc(s.showProgress) + " (" + c.progress.length + ")</summary><div class=\\"detail muted\\">" + c.progress.map(esc).join("<br>") + "</div></details>";
   if (c.status === "open" && c.options.length) {
-    h += '<div class="row">' + c.options.map((o) => '<button class="' + (o.primary ? "primary" : "") + '" data-card="' + esc(c.id) + '" data-opt="' + esc(o.id) + '">' + esc(o.label) + "</button>").join("") + "</div>";
+    h += '<div class="row">' + c.options.map((o) => '<button class="opt' + (o.primary ? " primary" : "") + '" data-card="' + esc(c.id) + '" data-opt="' + esc(o.id) + '">' + esc(o.label) + "</button>").join("") + "</div>";
   }
   if (c.status === "open" && c.freeText) {
     h += '<div class="row" style="flex-wrap:nowrap"><textarea data-draft="' + esc(c.id) + '" placeholder="' + esc(s.typeHere) + '">' + esc(drafts[c.id] ?? "") + '</textarea><button data-card="' + esc(c.id) + '" data-text="1">' + esc(s.send) + "</button></div>";
@@ -75,12 +103,14 @@ function card(c, s) {
 function render() {
   const s = state.strings;
   let h = '<div class="top"><div class="status"><span class="dot ' + (state.running ? "" : "off") + '"></span><span title="' + esc(s.running) + '">' +
-          esc(state.running ? (state.agent ? s.runningWith + " · " + state.agent : s.running) : s.stopped) + "</span></div>";
+          esc(state.running ? s.runningWith + " · " + (state.agent || s.noAgentYet) : s.stopped) + "</span></div>";
   h += '<div class="row" style="flex-wrap:nowrap;margin-top:0"><textarea data-draft="_top" placeholder="' + esc(s.newInput) + '">' + esc(drafts._top ?? "") +
        '</textarea><button class="primary" data-tell="1">' + esc(s.send) + "</button></div>";
   h += '<div class="row">' + (state.running ? '<button data-cmd="rescan">' + esc(s.rescan) + '</button><button data-cmd="stop">' + esc(s.stop) + "</button>"
                                             : '<button class="primary" data-cmd="start">' + esc(s.start) + "</button>") + "</div></div>";
-  const open = state.cards.filter((c) => c.status !== "closed").reverse();
+  // what needs the person first: pinned, then decisions, then reports, then records (newest first within each)
+  const rank = (c) => (c.pin ? 0 : c.kind === "confirm" || c.kind === "question" || (c.kind === "memory" && c.options.some((o) => o.primary)) ? 1 : c.kind === "report" ? 2 : 3);
+  const open = state.cards.filter((c) => c.status !== "closed").reverse().sort((a, b) => rank(a) - rank(b));
   const closed = state.cards.filter((c) => c.status === "closed").reverse().slice(0, 15);
   h += open.map((c) => card(c, s)).join("") + closed.map((c) => card(c, s)).join("");
   if (state.devices.length) h += "<details><summary class=\\"muted\\">" + esc(s.devicesTitle) + " (" + state.devices.length + ")</summary><div class=\\"detail muted\\">" + state.devices.map(esc).join("<br>") + "</div></details>";

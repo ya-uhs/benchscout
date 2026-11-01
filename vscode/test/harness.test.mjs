@@ -63,7 +63,9 @@ for (const [name, make] of [
       assert.ok(ch340, "the first question offers each device");
       assert.ok(first.freeText, "and a way to say something else");
       void h.answer(first.id, { option: ch340.id });
-      const confirm = await until(h, (c) => c.kind === "confirm" && c.status === "open");
+      const watch = await until(h, (c) => c.kind === "confirm" && /^Watch QinHeng USB Serial\?/.test(c.title));
+      assert.deepEqual(watch.options.map((o) => o.id), ["once", "deny"], "benchscout offers to watch the device it cannot open safely");
+      const confirm = await until(h, (c) => c.kind === "confirm" && c.status === "open" && c !== watch);
       assert.match(confirm.detail, /rm -rf build/);   // the shell command reached the human
       assert.ok(!h.cards.some((c) => c.kind === "confirm" && /bench_scan/.test(c.title)), "benchscout's own tool was not put to the human");
       assert.deepEqual(core.selected.length, 1);
@@ -80,7 +82,7 @@ test("an agent that cannot be woken is reported and nothing else is tried", asyn
   try {
     const first = await until(h, (c) => c.kind === "question");
     void h.answer(first.id, { option: first.options[0].id });
-    const n = await until(h, (c) => c.kind === "notify");
+    const n = await until(h, (c) => c.kind === "notify" && /Could not start/.test(c.title));
     assert.match(n.title, /Could not start Claude Code/);
     assert.match(n.detail, /Install Claude Code/);
     assert.equal(h.cards.filter((c) => c.kind === "report" && c.status !== "closed").length, 0);
@@ -98,7 +100,7 @@ test("broker approvals and agent questions become cards; answers go back through
     assert.equal((await req).result.status, "selected");
     // the agent wants a DISRUPTIVE action -> approval card -> allow once
     const listen = agentCall(env, root, "do", { action: "serial.listen", port: "/dev/cu.usbserial-10", args: { seconds: 0.1 } });
-    const ap = await until(h, (c) => c.kind === "confirm" && c.effect === "disruptive");
+    const ap = await until(h, (c) => c.kind === "confirm" && c.effect === "disruptive" && c.title === s.actions["serial.listen"]);
     assert.ok(ap.options.some((o) => o.id === "session"), "DISRUPTIVE can be allowed for the session");
     void h.answer(ap.id, { option: "once" });
     assert.equal((await listen).result.status, "done");
@@ -173,4 +175,57 @@ test("memory: plain entries are recorded, safety-loosening ones wait for the hum
     const recall = (await agentCall(env, root, "recall", { ref: "usbserial-10" })).result;
     assert.equal(recall[0].entries.find((e) => e.kind === "safety").status, "active");
   } finally { done(); }
+});
+
+test("an offered watch, once allowed, starts watching and says so", async () => {
+  const { core, h, done } = await bench((ws, relay) => new ClaudeDriver(ws, relay, join(import.meta.dirname, "fake-claude.mjs")));
+  try {
+    const first = await until(h, (c) => c.kind === "question");
+    await core.select([first.options.find((o) => o.label.includes("USB Serial")).id]);  // as the panel does, without waking anyone
+    const watch = await until(h, (c) => c.kind === "confirm" && /^Watch /.test(c.title));
+    assert.match(watch.body, /notice crashes and resets/);
+    void h.answer(watch.id, { option: "once" });
+    const on = await until(h, (c) => c.kind === "notify" && /^Watching /.test(c.title));
+    assert.match(on.detail, /\.benchscout\/logs\/serial_usbserial-10\.log/);
+    assert.ok(!h.cards.some((c) => c.kind === "report"), "watching wakes nobody");
+  } finally { done(); }
+});
+
+test("with no agent chosen, a pick waits for the choice and then wakes the chosen one", async () => {
+  process.env.FAKE_QUIET = "1";
+  let chosen = false;
+  const { WakeError } = await import("../out/agents/types.js");
+  const { h, done } = await bench((ws, relay) => chosen ? new ClaudeDriver(ws, relay, join(import.meta.dirname, "fake-claude.mjs")) : ({
+    label: "benchscout", onEvent: () => {}, onPermission: async () => "reject", prompt: async () => ({ stopReason: "error", text: "" }), stop: () => {},
+    start: async () => { throw new WakeError("No agent is chosen", "choose", "no_agent"); },
+  }));
+  try {
+    await until(h, (c) => c.kind === "question" && c.title === s.firstAsk);
+    void h.tell("what is on the bench?");
+    const wait = await until(h, (c) => c.kind === "notify" && c.title === s.chooseAgentFirst);
+    assert.ok(wait.pin);
+    assert.ok(!h.cards.some((c) => /Could not start/.test(c.title)), "not choosing yet is not a failure");
+    assert.ok(!h.cards.some((c) => c.kind === "report"));
+    chosen = true;
+    h.resetAgent();  // what choosing an agent in the card does
+    const report = await until(h, (c) => c.kind === "report" && c.status === "open");
+    assert.match(report.body, /got: what is on the bench\?/);
+    assert.equal(h.cards.find((c) => c.id === wait.id).status, "closed");
+  } finally { delete process.env.FAKE_QUIET; done(); }
+});
+
+test("each turn's progress goes to its own card, one line per tool call, updated in place", async () => {
+  process.env.FAKE_QUIET = "1";
+  const { h, done } = await bench((ws, relay) => new ClaudeDriver(ws, relay, join(import.meta.dirname, "fake-claude.mjs")));
+  try {
+    await until(h, (c) => c.kind === "question");
+    await h.tell("first");
+    const one = h.cards.find((c) => c.kind === "report");
+    assert.deepEqual(one.progress, ["✓ bench_scan"]);
+    await h.tell("second");
+    const two = h.cards.filter((c) => c.kind === "report")[1];
+    assert.deepEqual(one.progress, ["✓ bench_scan"], "the second turn wrote nothing into the first card");
+    assert.deepEqual(two.progress, ["✓ bench_scan"]);
+    assert.match(two.body, /got: second/);
+  } finally { delete process.env.FAKE_QUIET; done(); }
 });

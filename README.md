@@ -29,7 +29,7 @@ without asking and can be edited or deleted in the panel.
 |---|---|
 | Entry | the user's own agent + MCP; benchscout wakes it: Claude Code via `claude -p`, others (Copilot CLI) via ACP |
 | UI | VS Code extension in `vscode/`: an inbox of questions, approvals, reports, notices and memory |
-| Loop | benchscout asks what to look at, wakes the agent, watches the chosen devices, notices crashes and resets, wakes the agent again (autonomy: auto / suggest; hourly budget) |
+| Loop | benchscout asks which agent and what to look at, wakes the agent, watches the chosen devices (asking first when opening a port may disturb it), notices crashes and resets, wakes the agent again (autonomy: auto / suggest; hourly budget) |
 | Safety | approvals only from the panel (the agent's channel cannot approve); cautious defaults; selected ports held exclusively |
 | Identification | the agent, with a quote of the device's output that benchscout checks (`bench_identify`) |
 | Memory | automatic, per device and per folder, plain TOML; only safety-loosening entries wait for the human |
@@ -40,11 +40,12 @@ without asking and can be edited or deleted in the panel.
 Checked on a real bench (ESP32-S3 + Tang Nano 9K with the firmware/bitstream in `testbench/`): after the
 human picked the ESP32, an injected crash was noticed, the agent was woken, it read the log, named the chip
 from a quoted ROM banner, remembered it, asked what next, and reported; the next session's first read
-already said ESP32-S3.
+already said ESP32-S3. The same loop was checked inside VS Code from the installed .vsix (fixture bench and the
+Tang Nano), driven through the Chrome DevTools Protocol in an isolated VS Code profile (`npm run ui-check`).
 
 ```
 benchscout scan                           # recon, safe probes only
-benchscout setup [--agent claude|copilot]  # skill + MCP config for that agent in this folder
+benchscout setup [--agent claude|copilot] [--skill-only]  # skill (+ MCP config) for that agent in this folder
 benchscout core                           # run the core here; this terminal approves and selects:
                                           #   select <device> | approve <id> [once|session|<N>m] | deny <id> | pending | quit
 benchscout mcp                            # what the agent starts: relays to this folder's core
@@ -91,7 +92,6 @@ ESP32-S3 USB ─┬─ /dev/cu.usbmodem ─uart─┐
 
 ## Not done yet
 
-See [docs/design.md](docs/design.md) sections 11 and 13. In order: move identification to the
-agent and make safety defaults cautious; automatic memory; `bench_identify` with quote checking;
-the memory view in the panel; external-tool actions defined as data (FPGA SRAM, flash); device
-commands from memory; long-lived port ownership; bundling the core into the .vsix.
+See [docs/design.md](docs/design.md) section 13: Copilot Chat inside VS Code using the tools (needs a
+signed-in VS Code), device commands from memory, Japanese wording from the core (approval reasons),
+Windows/Linux in CI and on hardware, writing flash with esptool 5 on the real bench.

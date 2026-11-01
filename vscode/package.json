@@ -107,7 +107,8 @@
     "compile": "tsc -p .",
     "test": "npm run compile && node --test --test-concurrency=1 test/*.test.mjs",
     "package": "npm run compile && vsce package --skip-license --allow-missing-repository -o benchscout.vsix",
-    "package:platform": "npm run compile && vsce package --skip-license --allow-missing-repository --target $VSCE_TARGET -o benchscout-$VSCE_TARGET.vsix"
+    "package:platform": "npm run compile && vsce package --skip-license --allow-missing-repository --target $VSCE_TARGET -o benchscout-$VSCE_TARGET.vsix",
+    "ui-check": "node scripts/ui-check.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

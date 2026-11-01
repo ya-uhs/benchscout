@@ -40,7 +40,7 @@ AGENT_METHODS = ("scan", "inventory", "impact", "do", "actions", "ask", "request
 def agent_dispatch(broker: Broker, method: str, params: dict) -> Any:
     if method == "scan":
         r = broker.scan()
-        return {"text": render(r), "selected": sorted(broker.selected)}
+        return {"text": render(r), "selected": sorted(broker.selected), "watch": broker.watch_state()}
     if method == "inventory":
         return (broker.last or broker.scan()).to_dict()
     if method == "impact":

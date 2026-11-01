@@ -29,7 +29,8 @@ export interface TurnResult {
 
 /** Waking failed. Shown to the human as is; benchscout never switches to another agent on its own. */
 export class WakeError extends Error {
-  constructor(message: string, readonly fix: string) {
+  // code "no_agent": none is chosen yet; the harness waits for the human to choose instead of failing
+  constructor(message: string, readonly fix: string, readonly code?: "no_agent") {
     super(message);
   }
 }

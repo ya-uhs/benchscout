@@ -34,6 +34,9 @@ class Approval:
     status: str = "pending"  # pending | granted | denied | used | withdrawn
     scope: Scope = "once"
     created: float = field(default_factory=time.time)
+    by: str = "agent"  # who asked: the agent, or benchscout itself (e.g. offering to watch a selected device)
+    subject: str = ""  # the device's name, for the card
+    purpose: str = ""  # what it is for, when benchscout asks itself
 
 
 @dataclass
@@ -54,8 +57,9 @@ class ApprovalBook:
         self._grants: list[Grant] = []
 
     # ---- agent side (via the broker) ------------------------------------------
-    def open(self, impact: Impact, args: str) -> Approval:
-        a = Approval(uuid.uuid4().hex[:6], impact.action, impact.port_id, args, impact.effect.name.lower(), impact.to_dict())
+    def open(self, impact: Impact, args: str, by: str = "agent", subject: str = "", purpose: str = "") -> Approval:
+        a = Approval(uuid.uuid4().hex[:6], impact.action, impact.port_id, args, impact.effect.name.lower(), impact.to_dict(),
+                     by=by, subject=subject, purpose=purpose)
         with self._cond:
             self._items[a.id] = a
         self._log("requested", a)
@@ -128,12 +132,17 @@ class ApprovalBook:
 
     def withdraw_ports(self, ports: set[str]) -> None:
         """Devices left the session: drop their standing grants and pending requests."""
+        withdrawn = []
         with self._cond:
             self._grants = [g for g in self._grants if g.port not in ports]
             for a in self._items.values():
                 if a.port in ports and a.status in ("pending", "granted"):
                     a.status = "withdrawn"
+                    withdrawn.append(a)
             self._cond.notify_all()
+        for a in withdrawn:  # so the panel closes their cards
+            self._log("withdrawn", a)
+            self._emit({"event": "approval_decided", "approval": asdict(a)})
 
     def end_session(self) -> None:
         with self._cond:

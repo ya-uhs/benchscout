@@ -85,6 +85,9 @@ def build_server(client: CoreClient, language: str = "English") -> MCPServer:
         sel = reply["result"]["selected"]
         session = ("Selected for this session: " + ", ".join(sel)) if sel else \
             "No device is selected yet. Suggest which ones to select; the human selects them in the benchscout panel."
+        watch = reply["result"].get("watch") or {}
+        if watch:
+            session += "\nSerial ports of the selected devices:\n" + "\n".join(f"- {p}: {w}" for p, w in watch.items())
         return reply["result"]["text"] + "\n\n" + session
 
     @mcp.tool()

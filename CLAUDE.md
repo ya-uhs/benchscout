@@ -83,6 +83,12 @@ core: `uv run python packaging/build_core.py` then `VSCE_TARGET=darwin-arm64 npm
 (same tests against the frozen core: `BENCHSCOUT_TEST_BIN=$PWD/bin/benchscout/benchscout npm test`). Keep `src/core.ts` free of `vscode` imports
 so it stays testable with plain Node. Panel wording lives in `src/i18n.ts` (en/ja); clarity first.
 
+To look at the extension in a real VS Code (no computer use needed, the user's own VS Code untouched):
+`cd vscode && npm run ui-check -- start` installs the newest .vsix into an isolated profile, opens the
+fixture bench and the inbox; then `shot <file.png>`, `cards`, `click "<button text>"`, `stop`. After
+Python changes, rebuild the frozen core before packaging, or the .vsix carries the old one. `--real`
+opens the real bench through the product path: do not press approval buttons there without the user's OK.
+
 For debugging without VS Code, the terminal running `benchscout core` is the control channel:
 at a terminal it prints a readable view (devices numbered, approvals with the commands to answer
 them); `--json` or a pipe gives the JSON lines the extension will use.

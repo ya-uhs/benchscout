@@ -3,7 +3,7 @@
   benchscout scan [--json]                 recon the bench (safe probes only)
   benchscout core [--workspace DIR]        run the core for a folder; this terminal is the control channel
   benchscout mcp [--workspace DIR]         MCP server for agents; relays to that folder's core
-  benchscout setup [--agent claude|copilot]  put the skill and MCP config into this folder
+  benchscout setup [--agent claude|copilot] [--skill-only]  put the skill (and MCP config) into this folder
 
 Set BENCHSCOUT_FIXTURE=fixtures/bench_example.json to run without hardware.
 """
@@ -91,12 +91,15 @@ def cmd_mcp(a) -> None:
     main(a.workspace)
 
 
-def setup_workspace(cwd: Path, agent: str = "claude") -> None:
-    """Put the expert skill and the MCP relay config where `agent` reads them."""
+def setup_workspace(cwd: Path, agent: str = "claude", skill_only: bool = False) -> None:
+    """Put the expert skill and the MCP relay config where `agent` reads them. The VS Code
+    extension asks for the skill only: it hands the MCP config to the agent it wakes itself."""
     skill_src = resources.files("benchscout") / "skills" / "bench-expert" / "SKILL.md"
     skill_dst = cwd / SKILL_DIRS[agent] / "bench-expert" / "SKILL.md"
     skill_dst.parent.mkdir(parents=True, exist_ok=True)
     skill_dst.write_text(skill_src.read_text())
+    if skill_only:
+        return
 
     command = shutil.which("benchscout") or sys.argv[0]
     args = ["mcp", "--workspace", str(cwd.resolve())]
@@ -138,7 +141,10 @@ def _merge_json(path: Path, update) -> None:
 
 
 def cmd_setup(a) -> None:
-    setup_workspace(Path.cwd(), a.agent)
+    setup_workspace(Path.cwd(), a.agent, a.skill_only)
+    if a.skill_only:
+        print(f"Skill for {a.agent} written in {Path.cwd() / SKILL_DIRS[a.agent]}.")
+        return
     print(f"Bench workspace ready in {Path.cwd()} for {a.agent}.")
     print("Start the core here with `benchscout core` (this terminal approves), then open your agent.")
 
@@ -159,6 +165,7 @@ def main(argv: list[str] | None = None) -> None:
     m.set_defaults(fn=cmd_mcp)
     st = sub.add_parser("setup", help="write the skill and MCP config for an agent into this folder")
     st.add_argument("--agent", choices=sorted(SKILL_DIRS), default="claude")
+    st.add_argument("--skill-only", action="store_true", help="only the skill (the VS Code extension passes the MCP config itself)")
     st.set_defaults(fn=cmd_setup)
     a = ap.parse_args(argv)
     a.fn(a)
