@@ -1,6 +1,5 @@
 """External tools defined as data (design.md section 4): written by users, run without a shell."""
 
-import json
 import sys
 from pathlib import Path
 

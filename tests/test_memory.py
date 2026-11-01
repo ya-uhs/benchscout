@@ -5,7 +5,6 @@ import time
 import tomllib
 from pathlib import Path
 
-from benchscout import knowledge as K
 from benchscout.broker import Broker
 from benchscout.io import FixtureIo
 from benchscout.model import Confidence
@@ -194,7 +193,6 @@ def test_unknown_or_disruptive_commands_are_not_loosened(tmp_path):
 
 def test_what_waits_for_the_human_is_shown_again_after_a_restart_but_only_once(tmp_path):
     """Real bench 2026-11-01: a "treat listening as safe?" card was lost when the window reloaded."""
-    import json as _json
     from benchscout.memory import Entry
 
     fx = Path(__file__).parent.parent / "fixtures" / "bench_example.json"

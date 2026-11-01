@@ -14,7 +14,6 @@ from pathlib import Path
 
 import pytest
 
-from benchscout import recon
 from benchscout.approvals import ApprovalBook
 from benchscout.broker import Broker
 from benchscout.core import Core, agent_dispatch, parse_shorthand

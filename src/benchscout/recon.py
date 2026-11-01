@@ -133,8 +133,8 @@ def _with_channel(s: dict, usb_serials: set) -> dict:
 
 def _serial_port(b: Bench, dev: Device, s: dict, kind: str = "serial", may_reset: bool = False) -> Port:
     pid = "serial:" + os.path.basename(s["device"]).removeprefix("cu.").removeprefix("tty.")
-    return b.add_port(Port(pid, dev.id, kind, s["device"], s.get("channel"), may_reset,
-                           [Evidence("serial-port", s["device"])]))
+    return b.add_port(Port(pid, dev.id, kind, s["device"], interface=s.get("channel"), may_reset_on_open=may_reset,
+                           evidence=[Evidence("serial-port", s["device"])]))
 
 
 def _tool_args(info: dict, dev: Device, port: Port) -> dict[str, list[str]]:

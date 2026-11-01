@@ -19,7 +19,6 @@ import re
 import sys
 import tomllib
 from pathlib import Path
-from typing import Callable
 
 SHIPPED = Path(__file__).parent / "packs" / "bench" / "data"
 

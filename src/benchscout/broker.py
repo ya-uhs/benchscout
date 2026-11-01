@@ -157,7 +157,6 @@ class Broker:
     # ---- questions from the agent (answered by the human, control channel only) ---------
     def ask(self, text: str, options: list[str], question_id: str | None = None, wait: float | None = None) -> dict:
         """The agent asks the human. Waits like an approval; on time-out, call again with the id."""
-        from dataclasses import asdict
 
         wait = self.approval_wait if wait is None else wait
         q = self.questions.wait(question_id, 0) if question_id else self.questions.ask(text, options)

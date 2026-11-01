@@ -46,7 +46,7 @@ def test_safe_port_is_watched_on_selection_and_a_crash_is_noticed_once(tmp_path)
     out = select(br, VCP)
     assert out["watching"] == ["serial:usbmodem21403"]
     assert events[0]["kind"] == "watching", "the human is told the port is watched"
-    hit = wait_for(events, lambda e: e["kind"] == "alert")
+    wait_for(events, lambda e: e["kind"] == "alert")
     time.sleep(0.3)
     alerts = [e for e in events if e["kind"] == "alert"]
     assert len(alerts) == 1, "the same alert is reported once per cooldown"

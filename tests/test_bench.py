@@ -344,3 +344,14 @@ def test_energizing_scpi_is_dangerous_whatever_the_vendor_syntax():
         assert cls(b, "scpi.write", psu, {"command": cmd}).effect == Effect.DANGEROUS, cmd
     for cmd in ("SYST:BEEP", "DISP:BRIG 5", "MEAS:VOLT?"):
         assert cls(b, "scpi.write", psu, {"command": cmd}).effect != Effect.DANGEROUS, cmd
+
+
+
+def test_every_serial_port_keeps_its_evidence_and_a_valid_open_mode():
+    """Review 2026-11-02 (mypy): a positional argument had slid into open_lines, so bridge ports lost
+    their evidence and carried a list where "low"/"asserted" belongs."""
+    b = recon.run(FixtureIo(FIXTURE)).bench
+    for p in b.ports.values():
+        if p.kind == "serial":
+            assert p.open_lines in ("low", "asserted"), p.id
+            assert any(e.source == "serial-port" for e in p.evidence), p.id

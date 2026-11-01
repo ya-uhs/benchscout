@@ -1,6 +1,5 @@
 """Knowledge comes from data files in layers, never from code (design.md section 5)."""
 
-import json
 import re
 from pathlib import Path
 
@@ -48,7 +47,6 @@ def _python_code(path: Path) -> str:
 
 
 def _ts_code(path: Path) -> str:
-    import re
 
     text = re.sub(r"/\*.*?\*/", " ", path.read_text(encoding="utf-8"), flags=re.S)
     return "\n".join(re.sub(r"(^|\s)//.*$", " ", line) for line in text.splitlines())
