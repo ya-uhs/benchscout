@@ -40,7 +40,7 @@ def ws(tmp_path):
     w = tmp_path / "ws"
     (w / ".benchscout" / "knowledge").mkdir(parents=True)
     script = tmp_path / "echo_args.py"
-    script.write_text("import sys; print('ARGS', sys.argv[1:])\n")
+    script.write_text("import sys; print('ARGS', *sys.argv[1:], sep='\\n')\n")  # plain lines: a repr doubles Windows backslashes
     (w / ".benchscout" / "knowledge" / "lab.toml").write_text(TOOL.format(python=sys.executable, script=script))
     (w / "app.bin").write_bytes(b"\0")
     (w / "boot.bin").write_bytes(b"\0")
