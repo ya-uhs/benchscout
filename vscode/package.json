@@ -99,6 +99,21 @@
             "Only offer to investigate; the human decides"
           ],
           "description": "What benchscout does when it notices something on a watched device."
+        },
+        "benchscout.language": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "ja",
+            "en"
+          ],
+          "default": "auto",
+          "enumDescriptions": [
+            "VS Code's display language, or the OS language when VS Code is in English",
+            "日本語",
+            "English"
+          ],
+          "description": "The language of the benchscout inbox and of what it asks the agent to reply in."
         }
       }
     }

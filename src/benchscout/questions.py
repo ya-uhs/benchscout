@@ -34,6 +34,7 @@ class QuestionBook:
         self._cond = threading.Condition()
         self._items: dict[str, Question] = {}
         self.on_answer: Callable[[Question], None] | None = None  # e.g. the broker acting on a devices request
+        self._answering: set[str] = set()  # answered, being acted on: the asker is woken only after that
 
     def ask(self, text: str, options: list[str], kind: str = "question", data: dict | None = None) -> Question:
         q = Question(uuid.uuid4().hex[:6], text, [str(o) for o in options], kind=kind, data=data or {})
@@ -60,19 +61,25 @@ class QuestionBook:
             q = self._items.get(question_id)
             if q is None:
                 raise KeyError(f"no question {question_id!r}")
-            if q.status != "pending":
-                raise ValueError(f"{question_id} is already {q.status}")
+            if q.status != "pending" or question_id in self._answering:
+                raise ValueError(f"{question_id} is already {'being answered' if q.status == 'pending' else q.status}")
             if choice is None and reply is not None and reply.strip() in q.options:
                 choice, reply = reply.strip(), None  # a typed option counts as picking it
             if choice is not None and choice not in q.options:
                 raise ValueError(f"{choice!r} is not one of the options: {', '.join(q.options)}")
             if choice is None and not (reply or "").strip():
                 raise ValueError("pick an option or write a reply")
-            q.status, q.choice, q.reply = "answered", choice, (reply or None)
-            self._cond.notify_all()
+            q.choice, q.reply = choice, (reply or None)
+            self._answering.add(question_id)
+        try:
+            if self.on_answer:  # e.g. select the devices first, so the agent's call returns the new selection
+                self.on_answer(q)
+        finally:
+            with self._cond:
+                self._answering.discard(question_id)
+                q.status = "answered"
+                self._cond.notify_all()
         self._emit({"event": "question_answered", "question": asdict(q)})
-        if self.on_answer:
-            self.on_answer(q)
         return q
 
     def pending(self) -> list[Question]:

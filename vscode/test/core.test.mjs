@@ -99,3 +99,7 @@ test("args read like words", () => {
 test("control characters in args stay visible", () => {
   assert.equal(describeArgs('{"data": "panic", "eol": "\\n"}'), 'data panic, eol "\\n"');
 });
+
+test("flash maps read as offset:file in hex", () => {
+  assert.equal(describeArgs('{"images": [[0, "boot.bin"], [65536, "/fw/firmware.bin"]]}'), "images 0x0:boot.bin 0x10000:/fw/firmware.bin");
+});

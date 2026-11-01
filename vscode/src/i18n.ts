@@ -107,6 +107,7 @@ const en = {
     "jtag.scan": "read the JTAG chain",
     "jtag.halt": "halt the CPU",
     "fpga.program": "load a bitstream into the FPGA",
+    "fpga.write_flash": "write a bitstream to the FPGA's flash",
     "scpi.query": "ask the instrument",
     "scpi.write": "change instrument settings",
   } as Record<string, string>,
@@ -222,6 +223,7 @@ const ja: typeof en = {
     "action:scpi.query": "問い合わせだけです(? で終わる)",
     "action:scpi.write": "見ているかもしれない測定器の設定を変えます",
     "action:fpga.program": "FPGA を書き換えます。ファブリックの中のものはすべて再起動します",
+    "action:fpga.write_flash": "FPGA の設定用フラッシュを上書きします。今入っている設計は、そのファイルが無ければ戻せません",
     "action:esptool.chip_id": "チップ ID を読みますが、DTR/RTS でチップを ROM ブートローダーにリセットします",
     "action:esptool.write_flash": "フラッシュを上書きします。戻せるようにバックアップを取ってください",
   },
@@ -234,6 +236,7 @@ const ja: typeof en = {
     "jtag.scan": "JTAG チェーンを読む",
     "jtag.halt": "CPU を止める",
     "fpga.program": "FPGA にビットストリームを書き込む",
+    "fpga.write_flash": "FPGA のフラッシュ(ROM)にビットストリームを書き込む",
     "scpi.query": "測定器に問い合わせる",
     "scpi.write": "測定器の設定を変える",
   },
@@ -243,4 +246,20 @@ export type Strings = typeof en;
 
 export function strings(language: string): Strings {
   return language.startsWith("ja") ? ja : en;
+}
+
+/** The language name the agent is told to reply in. */
+export function languageName(language: string): string {
+  return language.startsWith("ja") ? "Japanese" : "English";
+}
+
+/**
+ * Which language benchscout speaks: the setting if set; else VS Code's display language when it is not
+ * English (someone installed a language pack for it); else the operating system's UI language, since many
+ * people keep VS Code in English (no language pack) but read their own language more easily.
+ */
+export function pickLanguage(setting: string | undefined, vscodeLanguage: string, osLanguage: string): string {
+  if (setting && setting !== "auto") return setting;
+  if (!vscodeLanguage.startsWith("en")) return vscodeLanguage;
+  return osLanguage || "en";
 }

@@ -6,7 +6,7 @@
 // - registers the MCP server so the person's own agent can also use the bench from its chat
 // No LLM here: the agent is whatever the person already uses, signed in by them.
 
-import { execFile } from "child_process";
+import { execFile, execFileSync } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -16,11 +16,26 @@ import { ClaudeDriver } from "./agents/claude";
 import { AgentDriver, McpRelay, WakeError } from "./agents/types";
 import { Bench, CoreClient } from "./core";
 import { Card, Harness } from "./harness";
-import { strings } from "./i18n";
+import { languageName, pickLanguage, strings } from "./i18n";
 import { PanelState, html } from "./panel";
 
-const s = strings(vscode.env.language);
-const LANGUAGE = vscode.env.language.startsWith("ja") ? "Japanese" : "English";
+/** The OS UI language: macOS's first preferred language, else the locale (Windows reports its own here). */
+function osLanguage(): string {
+  if (process.platform === "darwin") {
+    try {
+      const out = execFileSync("defaults", ["read", "-g", "AppleLanguages"], { encoding: "utf8", timeout: 2000 });
+      const first = out.replace(/[()",]/g, " ").trim().split(/\s+/)[0];
+      if (first) return first;
+    } catch { /* fall through */ }
+  }
+  return process.env.LC_ALL || process.env.LANG?.split(".")[0] || Intl.DateTimeFormat().resolvedOptions().locale || "en";
+}
+
+function currentLanguage(): string {
+  return pickLanguage(vscode.workspace.getConfiguration("benchscout").get<string>("language"), vscode.env.language, osLanguage());
+}
+
+let s = strings(currentLanguage());
 
 const AGENTS: Record<string, { label: string; exe: string }> = {
   copilot: { label: "GitHub Copilot CLI", exe: "copilot" },
@@ -148,7 +163,7 @@ async function start(ctx: vscode.ExtensionContext): Promise<void> {
   const max = vscode.workspace.getConfiguration("benchscout").get<number>("maxTurnsPerHour") ?? 20;
   harness?.stop();
   const autonomy = vscode.workspace.getConfiguration("benchscout").get<"auto" | "suggest">("autonomy") ?? "auto";
-  harness = new Harness(c, () => makeDriver(ctx, ws), s, { language: LANGUAGE, maxTurnsPerHour: max, autonomy });
+  harness = new Harness(c, () => makeDriver(ctx, ws), s, { language: languageName(currentLanguage()), maxTurnsPerHour: max, autonomy });
   harness.on("changed", refresh);
   c.on("scan", (b: Bench) => { bench = b; refresh(); });
   c.on("selection", refresh);
@@ -210,6 +225,11 @@ export function activate(ctx: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("benchscout.rescan", () => { askForAgent(); return core?.scan(); }),
     vscode.commands.registerCommand("benchscout.stop", () => { harness?.stop(); core?.stop(); }),
     vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("benchscout.language")) {  // new cards and the panel speak it from now on
+        s = strings(currentLanguage());
+        harness?.setLanguage(s, languageName(currentLanguage()));
+        refresh();
+      }
       if (!e.affectsConfiguration("benchscout.agent")) return;
       const ws = folder();
       if (ws && core?.running) installSkill(ctx, ws);

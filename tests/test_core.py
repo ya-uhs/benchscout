@@ -440,3 +440,22 @@ def test_agent_can_only_ask_for_devices_the_human_selects_them(io, tmp_path):
     br.answer(res2["question_id"], reply="no, leave the ST-Link alone")
     assert agent_dispatch(br, "request_devices", {"question_id": res2["question_id"]})["status"] == "denied"
     assert len(br.selected) == 1
+
+
+def test_an_allowed_devices_request_returns_the_new_selection(io, tmp_path):
+    """Real bench 2026-11-01: the agent's call woke before the selection happened and said "selected": []."""
+    br = Broker(io, tmp_path, approval_wait=5)
+    br.scan()
+    got = {}
+    t = threading.Thread(target=lambda: got.update(br.request_devices(["usbserial-10"], "listen to it")))
+    t.start()
+    for _ in range(200):
+        if br.questions.pending():
+            break
+        time.sleep(0.01)
+    q = br.questions.pending()[0]
+    br.answer(q.id, "allow")
+    t.join(5)
+    dev = br.bench.ports[CH340].device_id
+    assert got["status"] == "selected" and got["selected"] == [dev]
+    br.end_session()

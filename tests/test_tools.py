@@ -101,4 +101,7 @@ def test_shipped_writes_are_dangerous_and_fpga_program_disturbs_the_fabric():
     K.load()
     assert A.get("esptool.write_flash").effect == Effect.DANGEROUS
     assert A.get("fpga.program").port_kinds == ("jtag",)
+    flash = A.get("fpga.write_flash")
+    assert flash.effect == Effect.DANGEROUS and flash.port_kinds == ("jtag",) and flash.releases_device
+    assert "--write-flash" in flash.argv
     assert A.get("esptool.write_flash").params[0].coerce("0x0:a.bin,0x10000:b.bin") == [[0, "a.bin"], [0x10000, "b.bin"]]

@@ -215,8 +215,15 @@ export function shortPort(p: Port): string {
 export function describeArgs(args: string): string {
   try {
     const a = JSON.parse(args);
-    // control characters (a "\n" line ending) are shown escaped, not as a real line break
-    return Object.entries(a).map(([k, v]) => `${k} ${typeof v === "string" && /[\x00-\x1f]/.test(v) ? JSON.stringify(v) : v}`).join(", ");
+    const show = (v: unknown): string => {
+      // a flash map [[offset, file], ...] reads as people write it: 0x10000:firmware.bin
+      if (Array.isArray(v) && v.length && v.every((p) => Array.isArray(p) && p.length === 2 && typeof p[0] === "number")) {
+        return v.map(([o, f]) => `0x${(o as number).toString(16)}:${f}`).join(" ");
+      }
+      // control characters (a "\n" line ending) are shown escaped, not as a real line break
+      return typeof v === "string" && /[\x00-\x1f]/.test(v) ? JSON.stringify(v) : String(v);
+    };
+    return Object.entries(a).map(([k, v]) => `${k} ${show(v)}`).join(", ");
   } catch {
     return args;
   }

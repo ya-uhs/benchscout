@@ -16,6 +16,17 @@ timeout = 120
 args.bitstream = { type = "file", required = true, ext = [".fs", ".bit", ".bin"], doc = "bitstream file, relative to the workspace" }
 
 [[tool]]
+name = "fpga.write_flash"
+doc = "write a bitstream to the FPGA's configuration flash (it stays after power-off and loads at every start)"
+effect = "dangerous"
+reason = "overwrites the FPGA's configuration flash; the design there now is gone unless you have its file"
+port_kinds = ["jtag"]
+argv = ["openFPGALoader", "--ftdi-serial", "{device.serial}", "--write-flash", "{bitstream}"]
+releases_device = true
+timeout = 300
+args.bitstream = { type = "file", required = true, ext = [".fs", ".bit", ".bin"], doc = "bitstream file, relative to the workspace" }
+
+[[tool]]
 name = "esptool.chip_id"
 doc = "read the exact ESP chip with esptool"
 effect = "disruptive"

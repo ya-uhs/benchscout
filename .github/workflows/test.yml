@@ -33,6 +33,7 @@ jobs:
       matrix:
         include:
           - { os: windows-latest, target: win32-x64 }
+          - { os: windows-11-arm, target: win32-arm64 }   # Windows on Arm, e.g. a VM on an Apple Silicon Mac
           - { os: macos-latest, target: darwin-arm64 }
           - { os: ubuntu-latest, target: linux-x64 }
     runs-on: ${{ matrix.os }}

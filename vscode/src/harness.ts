@@ -100,6 +100,12 @@ export class Harness extends EventEmitter {
     return this.add({ kind: "notify", title, body, detail, options: [], freeText: false, pin: true });
   }
 
+  /** The person changed benchscout's language: new cards and the agent's next turn use it. */
+  setLanguage(s: Strings, language: string): void {
+    this.s = s;
+    this.opts.language = language;
+  }
+
   /** Forget the running agent (e.g. the human picked another one); a wake that waited for the choice goes now. */
   resetAgent(): void {
     this.driver?.stop();

@@ -81,3 +81,12 @@ test("the Japanese inbox renders with its own words", () => {
   assert.match(out, /エージェント未選択/);
   assert.match(out, /つながっている機器/);
 });
+
+test("language: the setting, else VS Code's language when it has one, else the OS language", async () => {
+  const { pickLanguage, languageName } = require("../out/i18n.js");
+  assert.equal(pickLanguage("en", "ja", "ja-JP"), "en", "the setting wins");
+  assert.equal(pickLanguage("auto", "ja", "en-US"), "ja", "a Japanese VS Code");
+  assert.equal(pickLanguage("auto", "en", "ja-JP"), "ja-JP", "an English VS Code (no language pack) on a Japanese OS");
+  assert.equal(pickLanguage(undefined, "en-us", ""), "en");
+  assert.equal(languageName("ja-JP"), "Japanese");
+});
