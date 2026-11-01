@@ -145,7 +145,7 @@ test("auto: a crash on a watched device wakes the agent with the line, without t
     await h.answer(first.id, { option: st.id });               // the only human action: pick the device
     const alert = await until(h, (c) => c.kind === "notify" && /something to look at/.test(c.title));
     assert.match(alert.body, /abort\(\) was called at PC 0x42001c85/);
-    assert.match(alert.detail, /\.benchscout\/logs\/serial_usbmodem21403\.log/);
+    assert.match(alert.detail, /\.benchscout[\\/]logs[\\/]serial_usbmodem21403\.log/);
     const report = await until(h, (c) => c.kind === "report" && c.status === "open" && /something to look at/.test(c.title));
     assert.match(report.body, /got: benchscout noticed this on STMicroelectronics STLINK-V3/);
   } finally { done(); }
@@ -192,7 +192,7 @@ test("an offered watch, once allowed, starts watching and says so", async () => 
     assert.match(watch.body, /\nOpening this port can reset the device/, "English: the core's own words, capitalised");
     void h.answer(watch.id, { option: "once" });
     const on = await until(h, (c) => c.kind === "notify" && /^Watching /.test(c.title));
-    assert.match(on.detail, /\.benchscout\/logs\/serial_usbserial-10\.log/);
+    assert.match(on.detail, /\.benchscout[\\/]logs[\\/]serial_usbserial-10\.log/);
     assert.ok(!h.cards.some((c) => c.kind === "report"), "watching wakes nobody");
   } finally { done(); }
 });
