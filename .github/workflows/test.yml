@@ -33,7 +33,9 @@ jobs:
       matrix:
         include:
           - { os: windows-latest, target: win32-x64 }
-          - { os: windows-11-arm, target: win32-arm64 }   # Windows on Arm, e.g. a VM on an Apple Silicon Mac
+          # Windows on Arm (e.g. a VM on an Apple Silicon Mac). The core is x64 and runs under Windows' x64
+          # emulation: cryptography (mcp needs it through pyjwt) has no win_arm64 wheel and needs OpenSSL to build
+          - { os: windows-11-arm, target: win32-arm64, python: cpython-3.12-windows-x86_64-none }
           - { os: macos-latest, target: darwin-arm64 }
           - { os: ubuntu-latest, target: linux-x64 }
     runs-on: ${{ matrix.os }}
@@ -47,6 +49,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - if: matrix.python
+        run: echo "UV_PYTHON=${{ matrix.python }}" >> "$GITHUB_ENV"
+        shell: bash
       - run: uv sync --extra mcp --extra visa
       - run: uv run python packaging/build_core.py
       - run: npm ci
