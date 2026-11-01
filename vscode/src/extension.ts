@@ -14,10 +14,10 @@ import * as vscode from "vscode";
 import { AcpDriver, COPILOT } from "./agents/acp";
 import { ClaudeDriver } from "./agents/claude";
 import { AgentDriver, McpRelay, WakeError } from "./agents/types";
-import { Bench, CoreClient } from "./core";
+import { Bench, CoreClient, DeviceEvent, deviceViews } from "./core";
 import { Card, Harness } from "./harness";
 import { languageName, pickLanguage, strings } from "./i18n";
-import { PanelState, html } from "./panel";
+import { DeviceRow, PanelState, html } from "./panel";
 
 /** The OS UI language: macOS's first preferred language, else the locale (Windows reports its own here). */
 function osLanguage(): string {
@@ -45,6 +45,8 @@ const AGENTS: Record<string, { label: string; exe: string }> = {
 let core: CoreClient | undefined;
 let harness: Harness | undefined;
 let bench: Bench | undefined;
+const watched = new Set<string>(); // serial ports the core holds open and logs
+let busyElsewhere: Record<string, unknown> = {}; // devices another benchscout window holds
 let view: vscode.WebviewView | undefined;
 let status: vscode.StatusBarItem;
 let log: vscode.OutputChannel;
@@ -146,8 +148,13 @@ function refresh(): void {
   }
   if (!view) return;
   const { statusWaiting, lookAt, wakeFailed, budget, agentWantsDevices, learned, learnedSafety,
-    deviceAlert, deviceVanished, deviceReset, deviceGone, offerWatch, watching, listenSafeAsk, ...plain } = s;
-  const devices = (bench?.devices ?? []).map((d) => d.name + (core?.selected.includes(d.id) ? " ✓" : ""));
+    deviceAlert, deviceVanished, deviceReset, deviceGone, offerWatch, watching, listenSafeAsk, hostSlept, ...plain } = s;
+  const devices: DeviceRow[] = (bench ? deviceViews(bench) : []).map((d) => {
+    const known = d.things.map((t) => t.name).filter(Boolean).join(", ");
+    const ports = bench!.ports.filter((p) => p.device_id === d.id).map((p) => p.id);
+    return { id: d.id, label: d.name + (known ? ` — ${known}` : ""), selected: !!core?.selected.includes(d.id),
+             watched: ports.some((p) => watched.has(p)), busy: !!busyElsewhere[d.id] || !!d.busyBy };
+  });
   const state: PanelState = { running: !!core?.running, agent: AGENTS[chosenAgent()]?.label ?? "", cards, devices, strings: plain };
   view.webview.postMessage({ type: "state", state });
 }
@@ -167,8 +174,18 @@ async function start(ctx: vscode.ExtensionContext): Promise<void> {
   const autonomy = vscode.workspace.getConfiguration("benchscout").get<"auto" | "suggest">("autonomy") ?? "auto";
   harness = new Harness(c, () => makeDriver(ctx, ws), s, { language: languageName(currentLanguage()), maxTurnsPerHour: max, autonomy });
   harness.on("changed", refresh);
+  watched.clear();
   c.on("scan", (b: Bench) => { bench = b; refresh(); });
-  c.on("selection", refresh);
+  c.on("selection", (selected: string[], busy: Record<string, unknown>) => {
+    busyElsewhere = busy;
+    for (const p of bench?.ports ?? []) if (!selected.includes(p.device_id)) watched.delete(p.id);  // released: not held any more
+    refresh();
+  });
+  c.on("deviceEvent", (e: DeviceEvent) => {
+    if (e.kind === "watching" || e.kind === "returned") watched.add(e.port);
+    if (e.kind === "gone" || e.kind === "unwatchable") watched.delete(e.port);
+    refresh();
+  });
   c.on("exit", (code: number | null, err: string) => {
     if (core === c) core = undefined;
     if (code !== 0) vscode.window.showErrorMessage(`${s.coreMissing}${err ? "\n" + err.split("\n").pop() : ""}`);
@@ -205,6 +222,12 @@ export function activate(ctx: vscode.ExtensionContext): void {
           case "rescan": askForAgent(); await core?.scan().catch(() => undefined); break;
           case "answer": await harness?.answer(m.id, { option: m.option, text: m.text }); break;
           case "tell": await harness?.tell(m.text); break;
+          case "device": {  // the person releases a device for their own tools, or takes it back
+            const sel = new Set(core?.selected ?? []);
+            if (m.use) sel.add(m.id); else sel.delete(m.id);
+            await core?.select([...sel]).catch((e) => vscode.window.showWarningMessage(`benchscout: ${e.message ?? e}`));
+            break;
+          }
         }
       });
     },

@@ -4,13 +4,22 @@
 import { Card } from "./harness";
 import { Strings } from "./i18n";
 
+/** One device in the list at the top: the person can release it (for their own tools) or use it again. */
+export interface DeviceRow {
+  id: string;
+  label: string; // its name, and what it was identified as
+  selected: boolean; // in this session: benchscout holds it and the agent may use it
+  watched: boolean; // its serial port is held open and logged
+  busy: boolean; // held by another benchscout window
+}
+
 export interface PanelState {
   running: boolean;
   agent: string; // label of the agent benchscout wakes, or "" if none chosen yet
   cards: Card[];
-  devices: string[]; // one line per device, for the small summary at the bottom
+  devices: DeviceRow[];
   strings: Omit<Strings, "statusWaiting" | "lookAt" | "wakeFailed" | "budget" | "agentWantsDevices" | "learned" | "learnedSafety"
-    | "deviceAlert" | "deviceVanished" | "deviceReset" | "deviceGone" | "offerWatch" | "watching" | "listenSafeAsk">;
+    | "deviceAlert" | "deviceVanished" | "deviceReset" | "deviceGone" | "offerWatch" | "watching" | "listenSafeAsk" | "hostSlept">;
 }
 
 export function html(nonce: string, cspSource: string): string {
@@ -53,11 +62,19 @@ export function html(nonce: string, cspSource: string): string {
   details { margin-top: 6px; } summary { cursor: pointer; }
   .answer { margin-top: 6px; font-size: .9em; }
   .spin::after { content: " …"; }
+  .devs { margin: 8px 0 4px; }
+  .devhead { cursor: pointer; font-weight: 600; user-select: none; }
+  .dev { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1px solid var(--vscode-panel-border); }
+  .dev .dname { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .dev .state { flex: none; font-size: .85em; }
+  .dot.sel { background: var(--vscode-editorInfo-foreground); }
+  .hint { font-size: .85em; margin-top: 4px; }
 </style></head>
 <body><div id="app"></div>
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
 let state = null;
+let devsOpen = true;  // the device list, open until the person folds it
 const drafts = {};  // what the person typed, kept across re-renders
 const esc = (x) => String(x ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const send = (m) => vscode.postMessage(m);
@@ -110,10 +127,22 @@ function render() {
                                             : '<button class="primary" data-cmd="start">' + esc(s.start) + "</button>") + "</div></div>";
   // what needs the person first: pinned, then decisions, then reports, then records (newest first within each)
   const rank = (c) => (c.pin ? 0 : c.kind === "confirm" || c.kind === "question" || (c.kind === "memory" && c.options.some((o) => o.primary)) ? 1 : c.kind === "report" ? 2 : 3);
+  if (state.devices.length) {
+    h += '<div class="devs"><div class="devhead" data-toggle="devs">' + (devsOpen ? "▾ " : "▸ ") + esc(s.devicesTitle) + " (" + state.devices.length + ")</div>";
+    if (devsOpen) {
+      for (const d of state.devices) {
+        const st = d.busy ? s.inUse : d.watched ? s.stateWatched : d.selected ? s.stateSelected : s.stateFree;
+        const btn = d.busy ? "" : '<button data-dev="' + esc(d.id) + '" data-use="' + (d.selected ? "0" : "1") + '">' + esc(d.selected ? s.releaseDevice : s.useDevice) + "</button>";
+        h += '<div class="dev"><span class="dot ' + (d.watched ? "" : d.selected ? "sel" : "off") + '"></span><span class="dname">' + esc(d.label) +
+             '</span><span class="state muted">' + esc(st) + "</span>" + btn + "</div>";
+      }
+      h += '<div class="hint muted">' + esc(s.releaseHint) + "</div>";
+    }
+    h += "</div>";
+  }
   const open = state.cards.filter((c) => c.status !== "closed").reverse().sort((a, b) => rank(a) - rank(b));
   const closed = state.cards.filter((c) => c.status === "closed").reverse().slice(0, 15);
   h += open.map((c) => card(c, s)).join("") + closed.map((c) => card(c, s)).join("");
-  if (state.devices.length) h += "<details><summary class=\\"muted\\">" + esc(s.devicesTitle) + " (" + state.devices.length + ")</summary><div class=\\"detail muted\\">" + state.devices.map(esc).join("<br>") + "</div></details>";
   document.getElementById("app").innerHTML = h;
 }
 
@@ -122,8 +151,10 @@ send({ type: "ready" });
 
 document.addEventListener("input", (e) => { const id = e.target.dataset?.draft; if (id) drafts[id] = e.target.value; });
 document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-toggle]")) { devsOpen = !devsOpen; render(); return; }
   const b = e.target.closest("button");
   if (!b) return;
+  if (b.dataset.dev) { send({ type: "device", id: b.dataset.dev, use: b.dataset.use === "1" }); return; }
   if (b.dataset.opt) send({ type: "answer", id: b.dataset.card, option: b.dataset.opt });
   else if (b.dataset.text) { const t = (drafts[b.dataset.card] ?? "").trim(); if (t) { send({ type: "answer", id: b.dataset.card, text: t }); delete drafts[b.dataset.card]; } }
   else if (b.dataset.tell) { const t = (drafts._top ?? "").trim(); if (t) { send({ type: "tell", text: t }); drafts._top = ""; } }

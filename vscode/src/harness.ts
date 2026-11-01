@@ -52,6 +52,7 @@ export class Harness extends EventEmitter {
   private lastWake = new Map<string, number>(); // device -> when the agent was last woken for it
   private busy = false;
   private stopping = false;
+  private sleeps = new Map<string, number>(); // device -> times its port was reopened after the computer slept
   private current?: { card: Card; tools: Map<string, number> }; // the report card of the turn in progress
   private deferred?: () => Promise<void>; // a wake waiting for the human to choose an agent
 
@@ -234,6 +235,22 @@ export class Harness extends EventEmitter {
     const dev = e.device ?? e.port;
     // shown from the folder's .benchscout/ on: the full path is long and the folder is known
     const log = e.log ? `${this.s.logAt}: ${e.log.replace(/^.*?(\.benchscout[\\/])/, "$1")}` : undefined;
+    if (e.cause === "host_sleep" && e.kind !== "gone") {
+      // the computer slept, not the device: one quiet record per device, counted; nobody is woken
+      if (e.kind !== "returned") return;
+      const n = (this.sleeps.get(dev) ?? 0) + 1;
+      this.sleeps.set(dev, n);
+      const old = this.cards.find((c) => c.id === `sleep:${dev}`);
+      if (old) {
+        this.cards = this.cards.filter((c) => c !== old);
+        this.cards.push({ ...old, title: this.s.hostSlept(name, n), time: Date.now() });
+        this.changed();
+      } else {
+        this.add({ kind: "notify", title: this.s.hostSlept(name, n), body: "", detail: log, options: [], freeText: false, status: "closed" },
+          undefined, `sleep:${dev}`);
+      }
+      return;
+    }
     if (e.kind === "vanished") {
       this.add({ kind: "notify", title: this.s.deviceVanished(name), body: e.what, options: [], freeText: false, status: "closed" });
       return;
@@ -249,7 +266,8 @@ export class Harness extends EventEmitter {
     const title = e.kind === "alert" ? this.s.deviceAlert(name) : this.s.deviceReset(name);
     const body = e.kind === "alert" ? `${e.what}${e.line ? `\n> ${e.line}` : ""}` : e.what;
     const request = [
-      `benchscout noticed this on ${name} (${e.port}): ${e.kind === "alert" ? e.what : "the device reset (its port vanished and came back)"}.`,
+      `benchscout noticed this on ${name} (${e.port}): ${e.kind === "alert" ? e.what
+        : "its port vanished and came back (a reset, a USB re-enumeration or a loose cable; check the device's own output to tell)"}.`,
       e.line ? `The line: ${e.line}` : "",
       e.log ? `Everything the port printed is in ${e.log} (read the end of it).` : "",
       "Find out what happened and why, with evidence from the device's output.",

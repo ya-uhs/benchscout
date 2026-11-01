@@ -170,3 +170,29 @@ def test_an_offered_watch_that_did_not_reset_the_device_is_remembered_as_an_obse
     obs = [e for e in br.memory.entries(br._key(dev)) if e.kind == "observation"]
     assert obs and "did not vanish" in obs[0].text
     br.end_session()
+
+
+
+def test_a_port_lost_while_the_computer_slept_is_put_down_to_the_sleep(tmp_path):
+    """Real bench 2026-11-01: the lid closed overnight; ports vanished and returned at each dark wake and
+    were reported as resets (the boards' counters never reset)."""
+    io, br, events = bench(tmp_path, {VCP: [{"after": 0.05, "text": "hb 1\n"}, {"after": 0.6, "vanish": 0.3},
+                                            {"after": 1.2, "text": "hb 4000\n"}]})
+    select(br, VCP)
+    w = br.watches["serial:usbmodem21403"]
+    time.sleep(0.2)
+    real = time.time
+    w._wall = lambda: real() + 3600  # an hour passed on the wall clock while the process stood still
+    gone = wait_for(events, lambda e: e["kind"] == "vanished")[0]
+    back = wait_for(events, lambda e: e["kind"] == "returned", timeout=4)[0]
+    assert gone["cause"] == back["cause"] == "host_sleep"
+    assert "asleep" in back["what"]
+    br.end_session()
+
+
+def test_a_port_lost_while_awake_has_no_cause(tmp_path):
+    io, br, events = bench(tmp_path, {VCP: [{"after": 0.1, "vanish": 0.3}, {"after": 0.6, "text": "boot\n"}]})
+    select(br, VCP)
+    back = wait_for(events, lambda e: e["kind"] == "returned", timeout=4)[0]
+    assert "cause" not in back
+    br.end_session()

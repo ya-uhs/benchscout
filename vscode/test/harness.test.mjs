@@ -263,3 +263,15 @@ test("benchscout's own safety proposal is said in the person's language; the age
   assert.match(own.body, /serial:usbmodem1101 を開いても機器はリセットされませんでした\(2 回\)/);
   assert.equal(agent.body, "no auto-reset circuit");
 });
+
+test("a port lost while the computer slept is one quiet, counted record; nobody is woken", () => {
+  const core = new CoreClient("/nonexistent", tmpdir());
+  let woken = 0;
+  const h = new Harness(core, () => { woken++; throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 5 });
+  const ev = (kind) => ({ port: "serial:usbserial-101", device: "d1", device_name: "SIPEED JTAG Debugger", kind, what: "x", cause: "host_sleep" });
+  for (let i = 0; i < 2; i++) { core.emit("deviceEvent", ev("vanished")); core.emit("deviceEvent", ev("returned")); }
+  assert.equal(h.cards.length, 1);
+  assert.equal(h.cards[0].status, "closed");
+  assert.match(h.cards[0].title, /Mac のスリープで SIPEED JTAG Debugger のポートが切れ、開き直しました\(2 回\)/);
+  assert.equal(woken, 0);
+});

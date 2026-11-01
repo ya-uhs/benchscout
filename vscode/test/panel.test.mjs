@@ -77,7 +77,8 @@ test("decisions come before reports, and remembered things come last", () => {
 
 test("the Japanese inbox renders with its own words", () => {
   const w = webview();
-  const out = w.render({ running: true, agent: "", devices: ["x"], strings: plainStrings("ja"), cards: [] });
+  const out = w.render({ running: true, agent: "", strings: plainStrings("ja"), cards: [],
+    devices: [{ id: "d1", label: "x", selected: false, watched: false, busy: false }] });
   assert.match(out, /エージェント未選択/);
   assert.match(out, /つながっている機器/);
 });
@@ -89,4 +90,17 @@ test("language: the setting, else VS Code's language when it has one, else the O
   assert.equal(pickLanguage("auto", "en", "ja-JP"), "ja-JP", "an English VS Code (no language pack) on a Japanese OS");
   assert.equal(pickLanguage(undefined, "en-us", ""), "en");
   assert.equal(languageName("ja-JP"), "Japanese");
+});
+
+test("each device can be released for the person's own tools, or used again", () => {
+  const w = webview();
+  const out = w.render({ running: true, agent: "x", cards: [], strings: plainStrings("ja"), devices: [
+    { id: "esp", label: "Espressif USB JTAG/serial debug unit — ESP32-S3", selected: true, watched: true, busy: false },
+    { id: "fpga", label: "SIPEED JTAG Debugger", selected: false, watched: false, busy: false },
+    { id: "other", label: "held elsewhere", selected: false, watched: false, busy: true },
+  ] });
+  assert.match(out, /ESP32-S3<\/span><span class="state muted">見張り中<\/span><button data-dev="esp" data-use="0">手放す<\/button>/);
+  assert.match(out, /SIPEED JTAG Debugger<\/span><span class="state muted">使っていない<\/span><button data-dev="fpga" data-use="1">使う<\/button>/);
+  assert.match(out, /held elsewhere<\/span><span class="state muted">別のウィンドウで使用中<\/span><\/div>/, "no button for a device another window holds");
+  assert.ok(out.indexOf("つながっている機器") < out.indexOf("自分のツール"));
 });

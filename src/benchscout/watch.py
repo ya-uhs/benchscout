@@ -22,6 +22,11 @@ from .io import PortGone
 RECENT_BYTES = 256 * 1024
 REAPPEAR_S = 10.0  # how long to wait for a vanished port before giving up
 COOLDOWN_S = 30.0  # the same alert on the same port is reported at most this often
+# The computer slept: the wall clock ran on while this process's monotonic clock stood still (macOS and
+# Linux; real bench 2026-11-01: a lid closed overnight made both boards' ports vanish and return at every
+# dark wake while their counters never reset). A port that vanishes around then is put down to that.
+SLEEP_GAP_S = 20.0
+SLEEP_WINDOW_S = 120.0
 
 
 class PortWatch:
@@ -42,6 +47,9 @@ class PortWatch:
         self._thread: threading.Thread | None = None
         self.alive = False
         self.vanishes = 0  # how often the port vanished while watched (a reset, an unplug)
+        self._wall, self._mono = time.time, time.monotonic  # replaceable in tests
+        self._drift = self._wall() - self._mono()
+        self._slept_until = 0.0  # monotonic time until which vanishing is put down to the host sleeping
         # lines this device is known to print when something is wrong, learned into memory (design.md 6)
         import re as _re
 
@@ -92,11 +100,19 @@ class PortWatch:
             return bytes(self._recent[-nbytes:]).decode("utf-8", errors="replace")
 
     # ---- background ------------------------------------------------------------------
+    def _check_sleep(self) -> None:
+        drift = self._wall() - self._mono()
+        if drift - self._drift > SLEEP_GAP_S:
+            self._slept_until = self._mono() + SLEEP_WINDOW_S
+        self._drift = drift
+
     def _run(self) -> None:
         while not self._stop.is_set():
+            self._check_sleep()
             try:
                 chunk = self._stream.read(0.2)
             except PortGone as e:
+                self._check_sleep()
                 self._stream.close()
                 self.vanishes += 1
                 self._event("vanished", str(e))
@@ -141,5 +157,9 @@ class PortWatch:
                     self._event("alert", a, line=line.strip())
 
     def _event(self, kind: str, what: str, line: str | None = None) -> None:
-        self._emit({"event": "device_event", "port": self.port_id, "kind": kind, "what": what,
-                    "line": line, "log": str(self.log.resolve()), "time": time.time()})
+        ev = {"event": "device_event", "port": self.port_id, "kind": kind, "what": what,
+              "line": line, "log": str(self.log.resolve()), "time": time.time()}
+        if kind in ("vanished", "returned", "gone") and self._mono() < self._slept_until:
+            ev["cause"] = "host_sleep"
+            ev["what"] = f"{what} (the computer had been asleep)"
+        self._emit(ev)
