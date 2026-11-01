@@ -210,7 +210,10 @@ export class Harness extends EventEmitter {
   private memoryCard(m: MemoryEvent): void {
     const name = m.device_name ?? m.key;
     const e = m.entry;
-    const body = e.text + (e.evidence ? `\n"${e.evidence}"` : "");
+    // benchscout's own proposal is said in the person's language; what the agent wrote stays as written
+    const own = e.source === "benchscout" && e.kind === "safety" && e.data.listen_safe;
+    const seen = Number(e.data.seen ?? e.text.match(/\((\d+) times\)/)?.[1] ?? 2);
+    const body = (own ? this.s.listenSafeAsk(e.target, seen) : e.text) + (e.evidence ? `\n"${e.evidence}"` : "");
     const detail = `${e.kind} · ${e.source} · ${e.time.slice(0, 16).replace("T", " ")}`;
     if (e.status === "pending") {
       this.add({ kind: "memory", title: this.s.learnedSafety(name), body, detail, freeText: false,

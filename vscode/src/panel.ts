@@ -10,7 +10,7 @@ export interface PanelState {
   cards: Card[];
   devices: string[]; // one line per device, for the small summary at the bottom
   strings: Omit<Strings, "statusWaiting" | "lookAt" | "wakeFailed" | "budget" | "agentWantsDevices" | "learned" | "learnedSafety"
-    | "deviceAlert" | "deviceVanished" | "deviceReset" | "deviceGone" | "offerWatch" | "watching">;
+    | "deviceAlert" | "deviceVanished" | "deviceReset" | "deviceGone" | "offerWatch" | "watching" | "listenSafeAsk">;
 }
 
 export function html(nonce: string, cspSource: string): string {

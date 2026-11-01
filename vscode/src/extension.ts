@@ -133,7 +133,9 @@ function askForAgent(): void {
 
 function refresh(): void {
   const cards: Card[] = harness?.cards ?? [];
-  const waiting = cards.filter((c) => c.status === "open" && (c.kind === "confirm" || c.kind === "question")).length;
+  // everything that waits for the person: questions, approvals, and memory that would loosen safety
+  const waiting = cards.filter((c) => c.status === "open" &&
+    (c.kind === "confirm" || c.kind === "question" || (c.kind === "memory" && c.options.some((o) => o.primary)))).length;
   status.text = waiting ? `$(bell-dot) ${s.statusWaiting(waiting)}` : `$(circuit-board) ${s.statusIdle}`;
   status.backgroundColor = waiting ? new vscode.ThemeColor("statusBarItem.warningBackground") : undefined;
   for (const c of cards) {
@@ -144,7 +146,7 @@ function refresh(): void {
   }
   if (!view) return;
   const { statusWaiting, lookAt, wakeFailed, budget, agentWantsDevices, learned, learnedSafety,
-    deviceAlert, deviceVanished, deviceReset, deviceGone, offerWatch, watching, ...plain } = s;
+    deviceAlert, deviceVanished, deviceReset, deviceGone, offerWatch, watching, listenSafeAsk, ...plain } = s;
   const devices = (bench?.devices ?? []).map((d) => d.name + (core?.selected.includes(d.id) ? " ✓" : ""));
   const state: PanelState = { running: !!core?.running, agent: AGENTS[chosenAgent()]?.label ?? "", cards, devices, strings: plain };
   view.webview.postMessage({ type: "state", state });

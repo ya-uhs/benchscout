@@ -106,7 +106,7 @@ def test_two_quiet_opens_propose_listening_as_safe_pending_the_human(tmp_path):
         br.decide(aid, True)
         br.request("serial.listen", CH340, {"seconds": 0.1}, approval_id=aid)
     pending = [e for e in events if e["event"] == "memory_added" and e["entry"]["status"] == "pending"]
-    assert len(pending) == 1 and pending[0]["entry"]["data"] == {"listen_safe": True}
+    assert len(pending) == 1 and pending[0]["entry"]["data"] == {"listen_safe": True, "seen": 2}
     assert "2 times" in pending[0]["entry"]["text"]
 
 
@@ -189,3 +189,27 @@ def test_unknown_or_disruptive_commands_are_not_loosened(tmp_path):
     facts = [f for t in br.bench.targets_via("serial:usbserial-10") for f in t.facts]
     assert any("command `reboot`" in f for f in facts)
     br.end_session()
+
+
+
+def test_what_waits_for_the_human_is_shown_again_after_a_restart_but_only_once(tmp_path):
+    """Real bench 2026-11-01: a "treat listening as safe?" card was lost when the window reloaded."""
+    import json as _json
+    from benchscout.memory import Entry
+
+    fx = Path(__file__).parent.parent / "fixtures" / "bench_example.json"
+    first = Broker(FixtureIo(fx), tmp_path / "ws" / ".benchscout")
+    first.scan()
+    dev = first.bench.devices[first.bench.ports["serial:usbserial-10"].device_id]
+    key = first._key(dev)
+    first.memory.add(key, Entry(kind="safety", source="benchscout", target="serial:usbserial-10", status="pending",
+                                text="treat listening as SAFE?", data={"listen_safe": True}), first._header(dev))
+    first.memory.add("ffff-ffff-not-connected", Entry(kind="safety", source="benchscout", target="x", status="pending",
+                                                      text="a device that is not plugged in", data={"listen_safe": True}))
+    later = Broker(FixtureIo(fx), tmp_path / "ws" / ".benchscout")  # the next session
+    events = []
+    later.on_event = events.append
+    later.scan()
+    later.scan()
+    shown = [e["entry"]["text"] for e in events if e["event"] == "memory_added"]
+    assert shown == ["treat listening as SAFE?"], "once, and nothing about devices that are not connected"

@@ -51,6 +51,7 @@ class Broker:
         self.watches: dict = {}  # port id -> PortWatch (selected devices' ports held open)
         self.watch_offers: dict[str, str] = {}  # port id -> approval id: benchscout asked the human to watch it
         self.watch_declined: set[str] = set()  # ports the human said not to watch, this session
+        self._pending_shown: set[str] = set()  # memory entries waiting for the human that the panel was given
         from .memory import Memory
 
         self.memory = Memory(self.state.parent)  # design.md section 6
@@ -82,7 +83,12 @@ class Broker:
             self._apply_memory(self.last.bench)
             self.last.proposals = R.propose(self.last.bench)
             (self.state / "inventory.json").write_text(json.dumps(self.last.to_dict(), indent=2, default=str))
+            # what still waits for the human (from an earlier session) is shown again, for connected devices only
+            waiting = [(dev, e) for dev in self.last.bench.devices.values() for e in self.memory.entries(self._key(dev))
+                       if e.status == "pending" and e.id not in self._pending_shown]
         self._emit({"event": "scanned", "devices": list(self.last.bench.devices)})
+        for dev, e in waiting:
+            self._memory_event(dev, e)
         return self.last
 
     @property
@@ -271,12 +277,14 @@ class Broker:
         if seen >= 2 and not any(e.kind == "safety" and e.target == port_id and e.status in ("pending", "active", "rejected") for e in entries):
             e = self.memory.add(key, Entry(kind="safety", source="benchscout", target=port_id, status="pending",
                                            text=f"Listening to {port.path} did not reset {dev.name} ({seen} times). Treat listening as SAFE?",
-                                           data={"listen_safe": True}), self._header(dev))
+                                           data={"listen_safe": True, "seen": seen}), self._header(dev))
             self._memory_event(dev, e)
 
     def _memory_event(self, dev, entry) -> None:
         from dataclasses import asdict
 
+        if entry.status == "pending":
+            self._pending_shown.add(entry.id)
         self._emit({"event": "memory_added", "key": self._key(dev), "device": dev.id, "device_name": dev.name, "entry": asdict(entry)})
 
     def remember(self, ref: str, kind: str, text: str, evidence: str = "", data: dict | None = None, source: str = "agent") -> dict:

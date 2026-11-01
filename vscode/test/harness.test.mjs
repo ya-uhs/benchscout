@@ -251,3 +251,15 @@ test("approval reasons are shown in the person's language by the core's code", a
     assert.match(watch.body, /このポートを開くと機器がリセットされることがあります/);
   } finally { core.stop(); rmrf(root); }
 });
+
+test("benchscout's own safety proposal is said in the person's language; the agent's words stay", () => {
+  const core = new CoreClient("/nonexistent", tmpdir());
+  const h = new Harness(core, () => { throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 1 });
+  const entry = (over) => ({ id: "e1", kind: "safety", text: "Listening to /dev/cu.x did not reset X (2 times). Treat listening as SAFE?",
+    source: "benchscout", evidence: "", target: "serial:usbmodem1101", time: "2026-11-01T15:49:00", status: "pending", data: { listen_safe: true }, ...over });
+  core.emit("memoryAdded", { key: "k", device_name: "ESP32", entry: entry({}) });
+  core.emit("memoryAdded", { key: "k", device_name: "ESP32", entry: entry({ id: "e2", source: "agent", text: "no auto-reset circuit" }) });
+  const [own, agent] = h.cards;
+  assert.match(own.body, /serial:usbmodem1101 を開いても機器はリセットされませんでした\(2 回\)/);
+  assert.equal(agent.body, "no auto-reset circuit");
+});
