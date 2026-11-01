@@ -27,6 +27,11 @@ def main() -> None:
         shutil.rmtree(OUT)
     OUT.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(build / "dist" / "benchscout", OUT, symlinks=True)
+    links = [f for f in OUT.rglob("*") if f.is_symlink()]
+    if links:
+        # a .vsix is a zip and cannot hold them; a framework Python (python.org's on macOS) brings them
+        raise SystemExit(f"the frozen core has symlinks ({links[0].relative_to(OUT)}, ...), which a .vsix cannot hold. "
+                         "Build with a uv-managed Python: UV_PYTHON_PREFERENCE=only-managed uv sync ...")
     exe = OUT / ("benchscout.exe" if sys.platform == "win32" else "benchscout")
     print(f"built {exe} ({sum(f.stat().st_size for f in OUT.rglob('*') if f.is_file()) / 1e6:.0f} MB)")
 

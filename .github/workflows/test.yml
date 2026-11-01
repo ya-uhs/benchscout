@@ -33,6 +33,10 @@ jobs:
           - { os: macos-latest, target: darwin-arm64 }
           - { os: ubuntu-latest, target: linux-x64 }
     runs-on: ${{ matrix.os }}
+    env:
+      # the same standalone Python as a developer's uv: a framework Python (python.org's, on the macOS
+      # runner) puts symlinks into the frozen core, and a .vsix cannot hold symlinks
+      UV_PYTHON_PREFERENCE: only-managed
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
