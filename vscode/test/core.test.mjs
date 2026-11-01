@@ -79,7 +79,7 @@ test("start, see devices, select, approve what the agent asks, stop", async () =
     assert.equal((await exited)[0], 0);
   } finally {
     core.stop();
-    rmSync(root, { recursive: true, force: true });
+    try { rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch { /* Windows: still busy */ }
   }
 });
 

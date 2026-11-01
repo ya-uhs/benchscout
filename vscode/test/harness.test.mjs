@@ -3,6 +3,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
+
+/** Temp folders are best-effort: on Windows a core or agent that is still exiting keeps its folder busy. */
+function rmrf(dir) {
+  try { rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch { /* left for the OS */ }
+}
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { once } from "node:events";
@@ -26,7 +31,7 @@ async function bench(makeDriver) {
   const relay = { command: bin, args: ["mcp", "--workspace", root], env: { BENCHSCOUT_RUNTIME: root } };
   const h = new Harness(core, () => makeDriver(root, relay), s, { language: "English", maxTurnsPerHour: 5 });
   core.start();
-  const done = () => { h.stop(); core.stop(); rmSync(root, { recursive: true, force: true }); };
+  const done = () => { h.stop(); core.stop(); rmrf(root); };
   return { core, h, root, env, done };
 }
 
@@ -129,7 +134,7 @@ async function streamingBench(autonomy) {
   const h = new Harness(core, () => new ClaudeDriver(root, relay, join(import.meta.dirname, "fake-claude.mjs")), s,
     { language: "English", maxTurnsPerHour: 5, autonomy });
   core.start();
-  return { core, h, done: () => { delete process.env.FAKE_QUIET; h.stop(); core.stop(); rmSync(root, { recursive: true, force: true }); } };
+  return { core, h, done: () => { delete process.env.FAKE_QUIET; h.stop(); core.stop(); rmrf(root); } };
 }
 
 test("auto: a crash on a watched device wakes the agent with the line, without the human typing anything", async () => {
@@ -244,5 +249,5 @@ test("approval reasons are shown in the person's language by the core's code", a
     const watch = await until(h, (c) => c.kind === "confirm");
     assert.match(watch.title, /QinHeng USB Serial を見張りますか/);
     assert.match(watch.body, /このポートを開くと機器がリセットされることがあります/);
-  } finally { core.stop(); rmSync(root, { recursive: true, force: true }); }
+  } finally { core.stop(); rmrf(root); }
 });
