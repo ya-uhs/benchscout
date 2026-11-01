@@ -31,6 +31,7 @@ IDCODES: dict[int, dict] = {}
 LOG_SIGNATURES: list[tuple[re.Pattern, dict]] = []
 INSTRUMENT_KINDS: list[tuple[re.Pattern, str]] = []
 TOOLS: dict[str, dict] = {}  # external-tool actions defined as data (design.md section 4)
+GETS: dict[str, dict] = {}  # executable -> pinned official downloads per platform (fetch.py)
 SOURCES: list[Path] = []  # files actually read, for `benchscout knowledge` / debugging
 
 
@@ -58,6 +59,7 @@ def load(workspace: Path | None = None) -> None:
     logs: list[tuple[re.Pattern, dict]] = []
     instruments: list[tuple[re.Pattern, str]] = []
     tools: dict[str, dict] = {}
+    gets: dict[str, dict] = {}
     sources: list[Path] = []
     for d in layers(workspace):
         if not d.is_dir():
@@ -78,11 +80,13 @@ def load(workspace: Path | None = None) -> None:
                 logs.append((re.compile(e["pattern"], flags), e))
             for e in data.get("tool", []):
                 tools[e["name"]] = e  # a later layer replaces a tool of the same name
+            for exe, g in data.get("get", {}).items():
+                gets[exe] = g  # a later layer pins its own version
             for e in reversed(data.get("instrument", [])):
                 instruments.insert(0, (re.compile(e["model"], re.I), e["kind"]))
-    global USB_IDS, MULTI_CHANNEL_BOARDS, SHARED_SERIALS, IDCODES, LOG_SIGNATURES, INSTRUMENT_KINDS, SOURCES, TOOLS
+    global USB_IDS, MULTI_CHANNEL_BOARDS, SHARED_SERIALS, IDCODES, LOG_SIGNATURES, INSTRUMENT_KINDS, SOURCES, TOOLS, GETS
     USB_IDS, MULTI_CHANNEL_BOARDS, SHARED_SERIALS = usb, boards, shared
-    IDCODES, LOG_SIGNATURES, INSTRUMENT_KINDS, SOURCES, TOOLS = idcodes, logs, instruments, sources, tools
+    IDCODES, LOG_SIGNATURES, INSTRUMENT_KINDS, SOURCES, TOOLS, GETS = idcodes, logs, instruments, sources, tools, gets
 
 
 def _board(e: dict) -> dict:

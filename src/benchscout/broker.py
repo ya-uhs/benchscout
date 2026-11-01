@@ -30,13 +30,16 @@ RECENT_FOR_QUOTES = 2 * 1024 * 1024  # how much recent output a quote is checked
 
 class Broker:
     def __init__(self, io: Io, state_dir: str | Path = ".benchscout", *, locks: DeviceLocks | None = None,
-                 on_event: Callable[[dict], None] | None = None, approval_wait: float = 0.0):
+                 on_event: Callable[[dict], None] | None = None, approval_wait: float = 0.0,
+                 workspace_knowledge: bool = True):
         self.io = io
         self.state = Path(state_dir)
         self.state.mkdir(parents=True, exist_ok=True)
         from . import knowledge as K
 
-        K.load(self.state.parent)  # shipped + user + this workspace's .benchscout/knowledge/
+        # shipped + user + this workspace's .benchscout/knowledge/ (not for a folder VS Code does not trust:
+        # a project from elsewhere could declare its own actions safe)
+        K.load(self.state.parent if workspace_knowledge else None)
         self.artifacts = self.state / "artifacts"
         self.artifacts.mkdir(exist_ok=True)
         self.locks = locks
@@ -585,10 +588,13 @@ class Broker:
                 # the port is already open: listening opens nothing, so it cannot reset anything
                 impact = Impact(action, port_id, Effect.SAFE, "the port is already open (watched); reading it opens nothing",
                                 code="watched")
-            if impact.effect == Effect.SAFE or (approval_id is None and self.approvals.covered(action, port_id, impact.effect)):
+            # a tool not installed yet is downloaded only with the human's OK, even for a SAFE action
+            fetch = self._fetch_needed(spec)
+            if not fetch and (impact.effect == Effect.SAFE or
+                              (approval_id is None and self.approvals.covered(action, port_id, impact.effect))):
                 return self._run(impact, args)
             if approval_id is None:
-                approval_id = self.approvals.open(impact, key).id
+                approval_id = self.approvals.open(impact, key, fetch=fetch).id
 
         import time
 
@@ -687,14 +693,40 @@ class Broker:
         return {"error": f"{action} is classified but not implemented in this prototype"}
 
     # ---- external tools defined as data (design.md section 4) ------------------------------
-    def _run_tool(self, spec, port, args: dict) -> dict:
+    def _usable_tool(self, spec) -> tuple[str | None, str | None]:
+        """(path, why not): on PATH and new enough, else fetched before (fetch.py)."""
+        from . import fetch
+
         exe = self._which(spec.argv[0])
+        problem = self._version_problem(spec.version, exe) if exe and spec.version else None
+        if exe and not problem:
+            return exe, None
+        got = fetch.cached(spec.argv[0])
+        if got:
+            return got, None
+        return None, problem or f"{spec.argv[0]} is not installed"
+
+    def _fetch_needed(self, spec) -> str:
+        """What will be downloaded before this action can run (text for the approval card), or ""."""
+        from . import fetch
+
+        if not spec.argv or self._usable_tool(spec)[0]:
+            return ""
+        p = fetch.plan(spec.argv[0])
+        return fetch.describe(p) if p else ""
+
+    def _run_tool(self, spec, port, args: dict) -> dict:
+        from . import fetch
+
+        exe, problem = self._usable_tool(spec)
+        if not exe and fetch.plan(spec.argv[0]):
+            try:  # the human approved this action, and its card said what would be downloaded
+                exe = fetch.get(spec.argv[0])
+            except fetch.FetchError as e:
+                return {"error": str(e)}
         if not exe:
-            return {"error": f"{spec.argv[0]} is not installed", "fix": f"install {spec.argv[0]} and make sure it is on PATH"}
-        if spec.version:
-            problem = self._version_problem(spec.version)
-            if problem:
-                return {"error": problem}
+            return {"error": problem, "fix": f"install {spec.argv[0]} and make sure it is on PATH, or add a pinned "
+                                              f"[get.{spec.argv[0]}] for this platform in a knowledge file"}
         ws = self.state.parent
         dev = self.bench.devices[port.device_id]
 
@@ -732,7 +764,8 @@ class Broker:
         for pid, _ in watched:
             self._unwatch(pid)
         try:
-            out = subprocess.run(argv, capture_output=True, text=True, timeout=spec.timeout, cwd=ws)
+            out = subprocess.run(argv, capture_output=True, text=True, timeout=spec.timeout, cwd=ws,
+                                 encoding="utf-8", errors="replace")
             text, code = (out.stdout or "") + (out.stderr or ""), out.returncode
         except subprocess.TimeoutExpired as e:
             text, code = f"{e}", None
@@ -752,12 +785,13 @@ class Broker:
                 return str(d / exe)
         return None
 
-    def _version_problem(self, v: dict) -> str | None:
+    def _version_problem(self, v: dict, exe: str | None = None) -> str | None:
         import re
 
-        exe = self._which(v["argv"][0])
+        exe = exe or self._which(v["argv"][0])
         try:
-            out = subprocess.run([exe or v["argv"][0], *v["argv"][1:]], capture_output=True, text=True, timeout=30)
+            out = subprocess.run([exe or v["argv"][0], *v["argv"][1:]], capture_output=True, text=True, timeout=30,
+                                 encoding="utf-8", errors="replace")
         except (OSError, subprocess.TimeoutExpired) as e:
             return f"could not check the version of {v['argv'][0]}: {e}"
         m = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", out.stdout + out.stderr)

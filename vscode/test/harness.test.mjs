@@ -275,3 +275,12 @@ test("a port lost while the computer slept is one quiet, counted record; nobody 
   assert.match(h.cards[0].title, /Mac のスリープで SIPEED JTAG Debugger のポートが切れ、開き直しました\(2 回\)/);
   assert.equal(woken, 0);
 });
+
+test("an approval that downloads a tool first says so on the card", () => {
+  const core = new CoreClient("/nonexistent", tmpdir());
+  const h = new Harness(core, () => { throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 1 });
+  core.emit("approvalRequested", { id: "a1", action: "esptool.write_flash", port: "serial:usbmodem1101", args: "{}", effect: "dangerous",
+    status: "pending", impact: { reason: "overwrites flash", affected_ports: [], disturbs: [], code: "action:esptool.write_flash" },
+    by: "agent", fetch: "esptool 5.6.0 from github.com (official release, SHA-256 checked, about 63 MB)" });
+  assert.match(h.cards[0].body, /先にダウンロードするもの: esptool 5\.6\.0 from github\.com/);
+});

@@ -135,5 +135,11 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^2.2.0",
     "cross-spawn": "^7.0.6"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In a folder you have not trusted, benchscout does not read the folder's own .benchscout/knowledge files: a project from elsewhere could declare its actions safe."
+    }
   }
 }

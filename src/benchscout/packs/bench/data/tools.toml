@@ -4,6 +4,11 @@
 # A tool that opens the device itself (releases_device) gets it: benchscout stops watching the
 # device's ports while it runs and starts again afterwards. An action with no effect is DANGEROUS.
 # Add your own in ~/.config/benchscout/knowledge/*.toml or <workspace>/.benchscout/knowledge/*.toml.
+#
+# [get.<executable>]: where a tool comes from when it is not installed (or too old): its official
+# release for each platform, pinned to a version and a SHA-256. benchscout downloads it only when an
+# action needs it, after the human's OK on that action's card, into the per-user tools folder (fetch.py).
+# No pinned hash, no download. Windows on Arm uses the win32-x64 build (emulation).
 
 [[tool]]
 name = "fpga.program"
@@ -51,3 +56,13 @@ releases_device = true
 timeout = 300
 version = { argv = ["esptool", "version"], min = "5.0", why = "esptool 4.x stalled on the ESP32-S3 USB-Serial/JTAG; 5.x worked" }
 args.images = { type = "flash_map", required = true, doc = "offset:file pairs, files relative to the workspace" }
+
+# esptool (GPL-2.0): the official standalone builds, fetched on first use, not shipped with benchscout
+[get.esptool]
+version = "5.6.0"
+darwin-arm64 = { url = "https://github.com/espressif/esptool/releases/download/v5.6.0/esptool-v5.6.0-macos-arm64.tar.gz", sha256 = "08a58829a3f14bb08f2e39f4cad48dcb14b7000384268e7f06689836332d6e25", exe = "esptool-macos-arm64/esptool", size_mb = 63 }
+darwin-x64 = { url = "https://github.com/espressif/esptool/releases/download/v5.6.0/esptool-v5.6.0-macos-amd64.tar.gz", sha256 = "23921776a7df75f2e6f3ca10a604d74db4661e1b8a0ebb89bdddcd2d26f37055", exe = "esptool-macos-amd64/esptool", size_mb = 62 }
+linux-x64 = { url = "https://github.com/espressif/esptool/releases/download/v5.6.0/esptool-v5.6.0-linux-amd64.tar.gz", sha256 = "1590723cfa9675983f49d0bf2895b8507f8d2879082e51bb7ef02a8bca88d354", exe = "esptool-linux-amd64/esptool", size_mb = 78 }
+linux-arm64 = { url = "https://github.com/espressif/esptool/releases/download/v5.6.0/esptool-v5.6.0-linux-aarch64.tar.gz", sha256 = "7723120429394b4d6d974d694e5cf378e00259381a7f8856c2c88492041b9f59", exe = "esptool-linux-aarch64/esptool", size_mb = 71 }
+linux-armhf = { url = "https://github.com/espressif/esptool/releases/download/v5.6.0/esptool-v5.6.0-linux-armv7.tar.gz", sha256 = "65e2f91fba2e79a75243454ded44da57532c74e242e17f9890aa7fe6cd588ee4", exe = "esptool-linux-armv7/esptool", size_mb = 62 }
+win32-x64 = { url = "https://github.com/espressif/esptool/releases/download/v5.6.0/esptool-v5.6.0-windows-amd64.zip", sha256 = "d55a96fbeb97fd4cb05bd93f201e5c8f6518b7bfcde2fc6966fd0190fd891629", exe = "esptool-windows-amd64/esptool.exe", size_mb = 65 }

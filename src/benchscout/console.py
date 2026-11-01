@@ -44,6 +44,7 @@ def format_human(msg: dict, broker) -> str | None:
         also = f"\n   also disturbs: {', '.join(imp['affected_ports'])}" if imp.get("affected_ports") else ""
         scope = f"   approve {a['id']} session | approve {a['id']} 10m | " if a["effect"] == "disruptive" else "   "
         asker = f"   benchscout asks: {a['purpose']}\n" if a.get("by") == "benchscout" else ""
+        asker += f"   downloads first: {a['fetch']}\n" if a.get("fetch") else ""
         return (f"\n>>> APPROVAL NEEDED  [{a['effect'].upper()}]  {a['action']} on {a['port']}  {_args(a['args'])}\n"
                 f"{asker}   why: {imp['reason']}{also}\n"
                 f"   approve {a['id']}  (once) |{scope.removeprefix('  ')}deny {a['id']}")

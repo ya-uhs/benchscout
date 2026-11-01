@@ -114,6 +114,9 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
   (action, port, arg) and single use; DISRUPTIVE grants may cover (action, port) for the session
   or a time limit (R8). `test_core.py` covers this.
 - Recon (`bench_scan`) runs SAFE probes only.
+- An external tool is never installed up front: an action fetches it on first use from a pinned
+  official release (version + SHA-256 in `[get.<tool>]`), and only after the human's OK on that
+  action's card (`fetch.py`). Nothing unpinned is downloaded.
 
 ## Working in this repo
 

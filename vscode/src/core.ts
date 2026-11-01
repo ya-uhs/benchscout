@@ -27,6 +27,7 @@ export interface Approval {
   id: string; action: string; port: string; args: string; effect: Effect; status: string;
   impact: { reason: string; affected_ports: string[]; disturbs: string[]; code?: string };
   by?: "agent" | "benchscout"; // benchscout asks itself, e.g. to watch a selected device
+  fetch?: string; // a tool downloaded first (official release, pinned) if this is allowed
   subject?: string; // the device's name
   purpose?: string;
 }
@@ -70,7 +71,8 @@ export class CoreClient extends EventEmitter {
   pending = new Map<string, Approval>();
   questions = new Map<string, Question>();
 
-  constructor(private command: string, private workspace: string, private env: NodeJS.ProcessEnv = process.env) {
+  constructor(private command: string, private workspace: string, private env: NodeJS.ProcessEnv = process.env,
+              private extraArgs: string[] = []) {
     super();
   }
 
@@ -79,7 +81,7 @@ export class CoreClient extends EventEmitter {
   }
 
   start(): void {
-    this.proc = spawn(this.command, ["core", "--workspace", this.workspace, "--json"],
+    this.proc = spawn(this.command, ["core", "--workspace", this.workspace, "--json", ...this.extraArgs],
       { cwd: this.workspace, env: this.env });
     this.proc.on("error", (e) => this.emit("exit", null, `could not start "${this.command}": ${e.message}`));
     this.proc.stderr.on("data", (d) => { this.stderr = (this.stderr + d.toString()).slice(-4000); });

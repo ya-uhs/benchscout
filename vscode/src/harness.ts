@@ -174,11 +174,12 @@ export class Harness extends EventEmitter {
       }, (ans) => this.core.decide(a.id, ans.option === "once", "once").catch(() => undefined), `approval:${a.id}`);
       return;
     }
+    const fetch = a.fetch ? `\n${this.s.fetchFirst}: ${a.fetch}` : "";
     const options: CardOption[] = [{ id: "once", label: this.s.allowOnce, primary: true }];
     if (a.effect === "disruptive") options.push({ id: "session", label: this.s.allowSession });
     options.push({ id: "deny", label: this.s.deny });
     this.add({
-      kind: "confirm", title: this.s.actions[a.action] ?? a.action, body: this.reason(a),
+      kind: "confirm", title: this.s.actions[a.action] ?? a.action, body: this.reason(a) + fetch,
       detail: `${a.port} · ${describeArgs(a.args)}${a.impact.affected_ports.length ? ` · ${this.s.alsoAffects}: ${a.impact.affected_ports.join(", ")}` : ""}`,
       effect: a.effect, options, freeText: false,
     }, (ans) => this.core.decide(a.id, ans.option !== "deny", ans.option === "session" ? "session" : "once").catch(() => undefined),

@@ -167,7 +167,8 @@ async function start(ctx: vscode.ExtensionContext): Promise<void> {
   }
   if (core?.running) return;
   fs.mkdirSync(path.join(ws, ".benchscout"), { recursive: true }); // next time, open on its own (S2)
-  const c = new CoreClient(coreCommand(ctx), ws);
+  // VS Code's Workspace Trust: in a folder not trusted, its own .benchscout/knowledge is not read
+  const c = new CoreClient(coreCommand(ctx), ws, process.env, vscode.workspace.isTrusted ? [] : ["--no-workspace-knowledge"]);
   core = c;
   const max = vscode.workspace.getConfiguration("benchscout").get<number>("maxTurnsPerHour") ?? 20;
   harness?.stop();
@@ -249,6 +250,9 @@ export function activate(ctx: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand("benchscout.rescan", () => { askForAgent(); return core?.scan(); }),
     vscode.commands.registerCommand("benchscout.stop", () => { harness?.stop(); core?.stop(); }),
+    vscode.workspace.onDidGrantWorkspaceTrust(() => {  // trusted now: start again, reading the folder's knowledge
+      if (core?.running) { harness?.stop(); core.stop(); void start(ctx); }
+    }),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("benchscout.language")) {  // new cards and the panel speak it from now on
         s = strings(currentLanguage());

@@ -73,7 +73,8 @@ def cmd_core(a) -> None:
     from .runtime import agent_address
 
     ws = Path(a.workspace).resolve()
-    broker = Broker(_io(), ws / ".benchscout", locks=DeviceLocks(owner_info(ws)), approval_wait=a.wait)
+    broker = Broker(_io(), ws / ".benchscout", locks=DeviceLocks(owner_info(ws)), approval_wait=a.wait,
+                    workspace_knowledge=not a.no_workspace_knowledge)
     human = sys.stdin.isatty() and not a.json
     core = Core(broker, agent_address(ws)[0], human=human)
     broker.on_event = core.emit
@@ -83,6 +84,21 @@ def cmd_core(a) -> None:
         pass  # run() already stopped the core and released the devices
     except RuntimeError as e:  # another core already serves this folder
         sys.exit(f"benchscout: {e}. Use that terminal, or quit it first.")
+
+
+def cmd_fetch(a) -> None:
+    from . import fetch
+    from . import knowledge as K
+
+    K.load(Path.cwd())
+    p = fetch.plan(a.tool)
+    if not p:
+        sys.exit(f"benchscout: no pinned download of {a.tool} for {fetch.platform_key()}")
+    print(f"getting {fetch.describe(p)} ...", file=sys.stderr)
+    try:
+        print(fetch.get(a.tool))
+    except fetch.FetchError as e:
+        sys.exit(f"benchscout: {e}")
 
 
 def cmd_mcp(a) -> None:
@@ -159,10 +175,15 @@ def main(argv: list[str] | None = None) -> None:
     c.add_argument("--workspace", default=".")
     c.add_argument("--wait", type=float, default=100.0, help="seconds a call waits for a decision")
     c.add_argument("--json", action="store_true", help="JSON lines even at a terminal (what the extension uses)")
+    c.add_argument("--no-workspace-knowledge", action="store_true",
+                   help="ignore the folder's .benchscout/knowledge (VS Code passes it for a folder you have not trusted)")
     c.set_defaults(fn=cmd_core)
     m = sub.add_parser("mcp", help="MCP server for agents; relays to the folder's core")
     m.add_argument("--workspace", default=None)
     m.set_defaults(fn=cmd_mcp)
+    fe = sub.add_parser("fetch", help="download a tool now from its pinned official release (actions do it on first use)")
+    fe.add_argument("tool")
+    fe.set_defaults(fn=cmd_fetch)
     st = sub.add_parser("setup", help="write the skill and MCP config for an agent into this folder")
     st.add_argument("--agent", choices=sorted(SKILL_DIRS), default="claude")
     st.add_argument("--skill-only", action="store_true", help="only the skill (the VS Code extension passes the MCP config itself)")
