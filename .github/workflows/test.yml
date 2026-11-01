@@ -19,6 +19,8 @@ jobs:
         working-directory: vscode
       - run: npm test
         working-directory: vscode
+      - run: npm run package  # the .vsix without the core: vsce scans our own files for secrets here
+        working-directory: vscode
 
   package:
     # one .vsix per OS/CPU with the frozen core inside (PyInstaller does not cross-compile)
@@ -45,7 +47,6 @@ jobs:
         working-directory: vscode
         env:
           VSCE_TARGET: ${{ matrix.target }}
-        shell: bash
       - uses: actions/upload-artifact@v4
         with:
           name: benchscout-${{ matrix.target }}
