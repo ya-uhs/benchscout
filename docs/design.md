@@ -439,6 +439,11 @@ Pack: dev     ← 将来
     - 実機(Tang Nano 9K)でも、パネルで選ぶ → ファブリック UART を見張る → Copilot が `bench_log` で `hb` を読み、IDCODE を openFPGALoader の
       DB で引き、`ask_user` で次の方向を聞き、報告する、まで回った
     - VS Code の IPC ソケットはプロフィールのフォルダに作られ、パスが 103 文字を超えると起動しない
+19. **CI を初めて Windows で回した**(2026-11-01、GitHub Actions)。分かったこと:Windows の npm は CLI を `.cmd` で入れる(`copilot.cmd`)ので、
+    `.exe` だけを探していた拡張はエージェントを見つけられず、見つけても `.cmd` はシェルなしでは起動できない → cross-spawn(npm や execa が
+    使う)で起動し、引数(MCP の設定の JSON)を cmd.exe 向けに正しく渡す。npm は Windows ではスクリプトを cmd.exe で動かすので
+    `$VSCE_TARGET` が展開されない → vsce の API で .vsix を作る。macOS の runner の python.org 版 Python は Framework 形式で、固めたコアに
+    シンボリックリンクが入り .vsix(zip)に入らない → uv が管理する Python で固める。テスト・.vsix 作りとも 3 OS で通った。Windows の実機は未確認
 
 ## 11. 現状と移行(2026-10-31 時点)
 
@@ -536,7 +541,7 @@ Pack: dev     ← 将来
    - 機器のコマンドの実機確認(済:記憶と `serial.command`、§4)。応答と勝手に出る行を分ける Codec
    - コアの文言の日本語化の残り:承認の理由は済(コアが理由のコードを返し、パネルが `i18n.ts` で訳す。知らないコードはコアの英文のまま。
      エージェントが読む英文は変えない)。残りは benchscout 自身の記憶の文(「開いても安全として扱いますか」)と、ポートが消えたときの文
-   - Windows / Linux の CI と実機、esptool 5 での書き込みの実機確認
+   - Windows の実機(USB の機器、VS Code の画面)。esptool 5 での書き込みの実機確認
 
 **受け入れ試験**(これが通れば「寄せ集めではない」と言える):testbench の ESP32 で `panic` を起こしたとき、人が何も入力しなくても、
 benchscout がクラッシュに気づく → エージェントを起こす → エージェントがログを読み、引用付きでチップを特定する → 原因の見立てを報告する →
