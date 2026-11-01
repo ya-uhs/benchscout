@@ -133,10 +133,10 @@ def test_the_persons_own_tool_comes_first_then_the_shipped_one(tmp_path, monkeyp
     (shipped / name).write_text("", encoding="utf-8")
     monkeypatch.setenv("BENCHSCOUT_BUNDLED_TOOLS", str(tmp_path / "bundled"))
     monkeypatch.setenv("PATH", str(tmp_path / "nothing-here"))
-    assert fetch.find("benchscout-test-own") == str(shipped / name), "shipped with benchscout"
+    assert Path(fetch.find("benchscout-test-own")) == shipped / name, "shipped with benchscout"
     own = tmp_path / "own"
     own.mkdir()
     (own / name).write_text("#!/bin/sh\n", encoding="utf-8")
     (own / name).chmod(0o755)
     monkeypatch.setenv("PATH", str(own))
-    assert fetch.find("benchscout-test-own") == str(own / name), "the person's own install wins"
+    assert Path(fetch.find("benchscout-test-own")) == own / name, "the person's own install wins"  # (case-blind on Windows)
