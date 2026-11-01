@@ -46,6 +46,28 @@ def tools_dir() -> Path:
     return Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "benchscout" / "tools"
 
 
+def bundled_dir() -> Path:
+    """Tools shipped with the frozen core: <core folder>/tools/<exe>/ (packaging/bundle_tools.py)."""
+    if os.environ.get("BENCHSCOUT_BUNDLED_TOOLS"):
+        return Path(os.environ["BENCHSCOUT_BUNDLED_TOOLS"])
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent / "tools"
+    return Path(__file__).resolve().parents[2] / "vscode" / "bin" / "benchscout" / "tools"  # a dev checkout
+
+
+def find(exe: str) -> str | None:
+    """Where `exe` is: the person's own (PATH, then the usual per-user places a GUI-started app may lack),
+    then the one shipped with benchscout, then one fetched before. None if nowhere."""
+    found = shutil.which(exe)
+    if found:
+        return found
+    name = exe + (".exe" if sys.platform == "win32" else "")
+    for d in (Path.home() / ".local" / "bin", Path("/opt/homebrew/bin"), Path("/usr/local/bin"), bundled_dir() / exe):
+        if (d / name).is_file():
+            return str(d / name)
+    return cached(exe)
+
+
 def plan(exe: str) -> dict | None:
     """Where this platform gets `exe` from, or None. Windows on Arm runs the x64 build (emulation)."""
     g = K.GETS.get(exe)

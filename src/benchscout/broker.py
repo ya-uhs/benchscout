@@ -11,7 +11,6 @@ Approvals live in memory (`ApprovalBook`); nothing on disk grants anything.
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 import threading
 import time
@@ -776,13 +775,9 @@ class Broker:
 
     @staticmethod
     def _which(exe: str) -> str | None:
-        found = shutil.which(exe)
-        if found:
-            return found
-        for d in (Path.home() / ".local" / "bin", Path("/opt/homebrew/bin"), Path("/usr/local/bin")):
-            if (d / exe).exists():
-                return str(d / exe)
-        return None
+        from .fetch import find
+
+        return find(exe)  # the person's own, then shipped with benchscout, then fetched before
 
     def _version_problem(self, v: dict, exe: str | None = None) -> str | None:
         import re

@@ -1,0 +1,136 @@
+"""Ship openFPGALoader with the frozen core (design.md section 12, 2026-11-02).
+
+Other tools are fetched on first use from their official releases (fetch.py). openFPGALoader has no
+official build that runs as is on every OS, it is small, and its license (Apache-2.0) allows shipping
+it; its USB libraries (libftdi1, libusb: LGPL-2.1) go along as separate shared libraries with their
+licenses. Result: vscode/bin/benchscout/tools/openFPGALoader/ next to the core, which the core finds
+after the person's own (PATH) and before fetched tools.
+
+  macOS    the Homebrew build (brew install openfpgaloader); its non-system dylibs are copied into lib/,
+           pointed there with install_name_tool, and everything is signed again (ad hoc)
+  Linux    a build of the pinned tag (CI builds it); libftdi/libusb/hidapi copied into lib/, RPATH $ORIGIN/lib
+  Windows  the MSYS2 UCRT64 package; the DLLs it loads from MSYS2 copied next to it (found with ntldd)
+
+  uv run python packaging/bundle_tools.py [--exe PATH]     (run after packaging/build_core.py)
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import shutil
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+
+VERSION = "1.2.0"
+ROOT = Path(__file__).resolve().parent.parent
+OUT = ROOT / "vscode" / "bin" / "benchscout" / "tools" / "openFPGALoader"
+LICENSE_URL = f"https://raw.githubusercontent.com/trabucayre/openFPGALoader/v{VERSION}/LICENSE"
+# shared libraries that travel with it; everything else must be part of the OS
+SHIPPED_LIBS = re.compile(r"lib(ftdi1?|usb-1\.0|hidapi[\w-]*)[.\d-]*\.(so[.\d]*|dylib|dll)$", re.I)
+
+
+def run(*args: str | Path) -> str:
+    return subprocess.run([str(a) for a in args], check=True, capture_output=True, text=True).stdout
+
+
+def bundle_macos(exe: Path) -> list[Path]:
+    lib = OUT / "lib"
+    lib.mkdir(parents=True)
+    main = OUT / "openFPGALoader"
+    shutil.copy2(exe.resolve(), main)
+    main.chmod(0o755)
+    todo, shipped = [main], []
+    while todo:
+        f = todo.pop()
+        for dep in [ln.strip().split(" (")[0] for ln in run("otool", "-L", f).splitlines()[1:]]:
+            if dep.startswith(("/usr/lib/", "/System/", "@")):
+                continue
+            name = Path(dep).name
+            target = lib / name
+            if not target.exists():
+                shutil.copy2(Path(dep).resolve(), target)
+                target.chmod(0o755)
+                run("install_name_tool", "-id", f"@loader_path/{name}", target)
+                todo.append(target)
+                shipped.append(target)
+            run("install_name_tool", "-change", dep, ("@loader_path/lib/" if f == main else "@loader_path/") + name, f)
+    for f in [main, *shipped]:
+        run("codesign", "--force", "--sign", "-", f)  # install_name_tool invalidated the signatures
+    return shipped
+
+
+def bundle_linux(exe: Path) -> list[Path]:
+    lib = OUT / "lib"
+    lib.mkdir(parents=True)
+    main = OUT / "openFPGALoader"
+    shutil.copy2(exe, main)
+    shipped = []
+    for m in re.finditer(r"^\s*(\S+) => (\S+)", run("ldd", main), re.M):
+        if SHIPPED_LIBS.search(m.group(1)):
+            target = lib / m.group(1)
+            shutil.copy2(Path(m.group(2)).resolve(), target)
+            run("patchelf", "--set-rpath", "$ORIGIN", target)
+            shipped.append(target)
+    run("patchelf", "--set-rpath", "$ORIGIN/lib", main)
+    return shipped
+
+
+def bundle_windows(exe: Path) -> list[Path]:
+    OUT.mkdir(parents=True)
+    shutil.copy2(exe, OUT / "openFPGALoader.exe")
+    shipped = []
+    msys = exe.parent.parent  # .../msys64/ucrt64
+    for m in re.finditer(r"^\s*(\S+\.dll) => (.+?) \(0x", run("ntldd", "-R", exe), re.M | re.I):
+        dll = Path(m.group(2).strip())
+        if dll.is_file() and msys in dll.parents:  # from MSYS2, not from Windows itself
+            shutil.copy2(dll, OUT / dll.name)
+            shipped.append(OUT / dll.name)
+    return shipped
+
+
+def licenses(exe: Path) -> None:
+    out = OUT / "licenses"
+    out.mkdir()
+    try:
+        with urllib.request.urlopen(LICENSE_URL, timeout=30) as r:
+            (out / "openFPGALoader-LICENSE.txt").write_bytes(r.read())
+    except OSError as e:
+        sys.exit(f"could not get openFPGALoader's license from {LICENSE_URL}: {e}")
+    roots = [Path("/opt/homebrew/opt"), Path("/usr/local/opt"), Path("/usr/share/doc"), exe.parent.parent / "share" / "licenses"]
+    for pkg, names in {"libftdi": ("libftdi", "libftdi1-2", "mingw-w64-ucrt-x86_64-libftdi"),
+                       "libusb": ("libusb", "libusb-1.0-0", "mingw-w64-ucrt-x86_64-libusb")}.items():
+        for root in roots:
+            for n in names:
+                for f in [*(root / n).glob("COPYING*"), *(root / n).glob("LICENSE*"), *(root / n).glob("copyright")]:
+                    shutil.copy2(f, out / f"{pkg}-{f.name}.txt")
+    (OUT / "NOTICE.txt").write_text(
+        f"openFPGALoader {VERSION} (Apache-2.0) https://github.com/trabucayre/openFPGALoader\n"
+        "with libftdi1 and libusb-1.0 (LGPL-2.1, shipped as separate shared libraries you may replace)\n"
+        "and, where present, hidapi. Their license texts are in licenses/.\n", encoding="utf-8")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--exe", help="the openFPGALoader to ship (default: the one on PATH)")
+    a = ap.parse_args()
+    exe = Path(a.exe or shutil.which("openFPGALoader") or "")
+    if not exe.is_file():
+        sys.exit("no openFPGALoader to ship: brew install openfpgaloader (macOS), build it (Linux), "
+                 "or pacman -S mingw-w64-ucrt-x86_64-openFPGALoader (MSYS2), or give --exe")
+    if OUT.exists():
+        shutil.rmtree(OUT)
+    shipped = {"darwin": bundle_macos, "win32": bundle_windows}.get(sys.platform, bundle_linux)(exe)
+    licenses(exe)
+    main_exe = OUT / ("openFPGALoader.exe" if sys.platform == "win32" else "openFPGALoader")
+    version = subprocess.run([main_exe, "--Version"], capture_output=True, text=True).stdout.strip()
+    if f"v{VERSION}" not in version:
+        print(f"warning: shipping {version or 'an openFPGALoader that does not report its version'}, pinned is v{VERSION}")
+    size = sum(f.stat().st_size for f in OUT.rglob("*") if f.is_file()) / 1e6
+    print(f"shipped {main_exe.relative_to(ROOT)} ({version}) with {[f.name for f in shipped]}, {size:.1f} MB")
+
+
+if __name__ == "__main__":
+    main()

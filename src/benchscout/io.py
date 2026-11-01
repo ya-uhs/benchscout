@@ -11,7 +11,6 @@ import json
 import os
 import platform
 import re
-import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -107,7 +106,7 @@ class LiveIo:
         if system != "Darwin":
             return []
         out = subprocess.run(
-            ["system_profiler", "SPUSBHostDataType", "-json"], capture_output=True, text=True
+            ["/usr/sbin/system_profiler", "SPUSBHostDataType", "-json"], capture_output=True, text=True
         ).stdout
         try:
             root = json.loads(out).get("SPUSBHostDataType", [])
@@ -178,7 +177,9 @@ class LiveIo:
             return []
 
     def tools(self) -> dict[str, str | None]:
-        return {t: shutil.which(t) for t in TOOLS}
+        from .fetch import find
+
+        return {t: find(t) for t in TOOLS}  # also the ones shipped with benchscout or fetched before
 
     def visa_query(self, resource: str, command: str) -> str | None:
         try:
@@ -257,7 +258,9 @@ class LiveIo:
         return None
 
     def jtag_scan(self, select: list[str]) -> list[dict]:
-        exe = shutil.which("openFPGALoader")
+        from .fetch import find
+
+        exe = find("openFPGALoader")
         if not exe:
             return []
         args = [exe, "--detect", *select]  # how to reach this probe comes from the USB data

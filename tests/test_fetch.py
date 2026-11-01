@@ -124,3 +124,19 @@ def test_a_folder_not_trusted_has_its_own_knowledge_ignored(tmp_path, tools):
     assert "lab.hello" in A.all_actions()
     Broker(FixtureIo(FIXTURE), ws / ".benchscout", workspace_knowledge=False)
     assert "lab.hello" not in A.all_actions() and fetch.plan("benchscout-test-hello") is None
+
+
+def test_the_persons_own_tool_comes_first_then_the_shipped_one(tmp_path, monkeypatch):
+    name = "benchscout-test-own" + (".exe" if sys.platform == "win32" else "")
+    shipped = tmp_path / "bundled" / "benchscout-test-own"
+    shipped.mkdir(parents=True)
+    (shipped / name).write_text("", encoding="utf-8")
+    monkeypatch.setenv("BENCHSCOUT_BUNDLED_TOOLS", str(tmp_path / "bundled"))
+    monkeypatch.setenv("PATH", str(tmp_path / "nothing-here"))
+    assert fetch.find("benchscout-test-own") == str(shipped / name), "shipped with benchscout"
+    own = tmp_path / "own"
+    own.mkdir()
+    (own / name).write_text("#!/bin/sh\n", encoding="utf-8")
+    (own / name).chmod(0o755)
+    monkeypatch.setenv("PATH", str(own))
+    assert fetch.find("benchscout-test-own") == str(own / name), "the person's own install wins"

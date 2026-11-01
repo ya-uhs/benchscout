@@ -558,7 +558,10 @@ Pack: dev     ← 将来
    (Windows と Linux はまだ CI で回していない)。拡張は同梱のコアに実行権限を付けてから使う。VS Code の中での確認も済(§10-18)
 8. **次**:
    - 機器のコマンドの実機確認(済:記憶と `serial.command`、§4)。応答と勝手に出る行を分ける Codec
-   - openFPGALoader を CI でビルドしてコアに同梱(macOS の公式ビルドが無い)。probe-rs と OpenOCD の取得先と、ESP 以外のマイコンへの書き込みの操作
+   - (済 2026-11-02)openFPGALoader をコアに同梱(`packaging/bundle_tools.py`。macOS は Homebrew のビルド、Linux はタグからビルド、Windows は
+     MSYS2 のパッケージ。libftdi と libusb は別ファイルの共有ライブラリとして、ライセンスの文面と一緒に)。実機の Tang Nano を、PATH に
+     Homebrew が無い状態で同梱のものだけで特定できた。残り:Windows では FTDI の JTAG 側に WinUSB ドライバ(Zadig)が要る、Linux では
+     udev の規則が要る(どちらも libusb を使う道具に共通)。probe-rs と OpenOCD の取得先と、ESP 以外のマイコンへの書き込みの操作
    - コアの文言の日本語化の残り:承認の理由は済(コアが理由のコードを返し、パネルが `i18n.ts` で訳す。知らないコードはコアの英文のまま。
      エージェントが読む英文は変えない)。パネルの言語は設定と OS の言語で決まる(§10-20)。残りは benchscout 自身の記憶の文
      のうちポートが消えたときの文
