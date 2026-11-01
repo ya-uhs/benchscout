@@ -23,6 +23,9 @@ class Impact:
     reason: str
     disturbs: list[str] = field(default_factory=list)  # target ids
     affected_ports: list[str] = field(default_factory=list)
+    # which reason this is, so the panel can say it in the person's language: "action:<name>" for the
+    # action's own reason, or a rule's name. The English `reason` stays what the agent reads.
+    code: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -32,6 +35,7 @@ class Impact:
             "reason": self.reason,
             "disturbs": self.disturbs,
             "affected_ports": self.affected_ports,
+            "code": self.code,
         }
 
 
@@ -58,18 +62,22 @@ def classify(bench: Bench, action: str, port_id: str, args: dict | None = None) 
         raise KeyError(f"unknown port {port_id}")
     port = bench.ports[port_id]
     effect, disturbs_targets, reason = _base(action)
+    code = f"action:{action}" if reason != "unknown action" else "unknown_action"
     arg = (args or {}).get("command")
 
     if action in ("serial.listen", "serial.watch") and port.may_reset_on_open:
         effect = Effect.DISRUPTIVE
         reason = "opening this port can reset the device (DTR/RTS into an auto-reset circuit, or a native-USB chip resetting on open)"
+        code = "reset_on_open"
         disturbs_targets = True
     if action == "scpi.query" and arg is not None and not _is_pure_query(arg):
         action = "scpi.write"
         effect, disturbs_targets, reason = _base("scpi.write")
+        code = "action:scpi.write"
     if action == "scpi.write" and arg is not None and _ENERGIZING.match(arg):
         effect = Effect.DANGEROUS
         reason = "changes outputs that drive energy into the board"
+        code = "energizing"
 
     disturbed: list[str] = []
     if disturbs_targets:
@@ -78,4 +86,4 @@ def classify(bench: Bench, action: str, port_id: str, args: dict | None = None) 
                 if x.id not in disturbed:
                     disturbed.append(x.id)
     affected = sorted({p.id for tid in disturbed for p in bench.ports_reaching(tid)} - {port_id})
-    return Impact(action, port_id, effect, reason, disturbed, affected)
+    return Impact(action, port_id, effect, reason, disturbed, affected, code)

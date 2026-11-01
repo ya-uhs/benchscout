@@ -515,7 +515,8 @@ class Broker:
             w = self.watches.get(port_id)
             if w and w.alive and action in ("serial.listen", "serial.watch"):
                 # the port is already open: listening opens nothing, so it cannot reset anything
-                impact = Impact(action, port_id, Effect.SAFE, "the port is already open (watched); reading it opens nothing")
+                impact = Impact(action, port_id, Effect.SAFE, "the port is already open (watched); reading it opens nothing",
+                                code="watched")
             if impact.effect == Effect.SAFE or (approval_id is None and self.approvals.covered(action, port_id, impact.effect)):
                 return self._run(impact, args)
             if approval_id is None:

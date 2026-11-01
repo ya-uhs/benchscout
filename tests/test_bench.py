@@ -317,3 +317,16 @@ def test_crash_without_guru_meditation_is_an_alert_that_survives_a_quiet_answer(
     esp = esp_target(br.bench)
     assert any(f.startswith("ALERT: crash: abort() at PC 0x42001c85") for f in esp.facts)
 
+
+
+def test_every_reason_has_a_code_the_panel_can_translate(tmp_path):
+    """The panel says reasons in the person's language by code; the English reason stays for the agent."""
+    from benchscout.policy import classify
+
+    b = recon.run(FixtureIo(FIXTURE)).bench
+    assert classify(b, "serial.listen", "serial:usbserial-10").code == "reset_on_open"
+    assert classify(b, "jtag.scan", next(p for p in b.ports if p.startswith("jtag:"))).code == "action:jtag.scan"
+    assert classify(b, "no.such.action", "serial:usbserial-10").code == "unknown_action"
+    scpi = "visa:TCPIP0::192.168.1.50::INSTR"  # the PSU on the LAN
+    assert classify(b, "scpi.query", scpi, {"command": "OUTP CH1,ON"}).code == "energizing"
+    assert classify(b, "scpi.query", scpi, {"command": "DISP:BRIG 5"}).code == "action:scpi.write"

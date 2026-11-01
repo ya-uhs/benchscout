@@ -161,7 +161,7 @@ export class Harness extends EventEmitter {
     if (a.by === "benchscout" && a.action === "serial.watch") {
       // benchscout's own offer: watching is what lets it notice crashes; the human says yes or not now
       this.add({
-        kind: "confirm", title: this.s.offerWatch(a.subject || a.port), body: `${this.s.offerWatchWhy}\n${a.impact.reason}`,
+        kind: "confirm", title: this.s.offerWatch(a.subject || a.port), body: `${this.s.offerWatchWhy}\n${this.reason(a)}`,
         detail: a.port, effect: a.effect, freeText: false,
         options: [{ id: "once", label: this.s.watchIt, primary: true }, { id: "deny", label: this.s.notNow }],
       }, (ans) => this.core.decide(a.id, ans.option === "once", "once").catch(() => undefined), `approval:${a.id}`);
@@ -171,11 +171,17 @@ export class Harness extends EventEmitter {
     if (a.effect === "disruptive") options.push({ id: "session", label: this.s.allowSession });
     options.push({ id: "deny", label: this.s.deny });
     this.add({
-      kind: "confirm", title: this.s.actions[a.action] ?? a.action, body: a.impact.reason,
+      kind: "confirm", title: this.s.actions[a.action] ?? a.action, body: this.reason(a),
       detail: `${a.port} · ${describeArgs(a.args)}${a.impact.affected_ports.length ? ` · ${this.s.alsoAffects}: ${a.impact.affected_ports.join(", ")}` : ""}`,
       effect: a.effect, options, freeText: false,
     }, (ans) => this.core.decide(a.id, ans.option !== "deny", ans.option === "session" ? "session" : "once").catch(() => undefined),
     `approval:${a.id}`);
+  }
+
+  /** The core's reason in the person's language when the panel knows its code; else its own words. */
+  private reason(a: Approval): string {
+    const r = (a.impact.code && this.s.reasons[a.impact.code]) || a.impact.reason;
+    return r.charAt(0).toUpperCase() + r.slice(1);
   }
 
   private questionCard(q: Question): void {

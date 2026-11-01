@@ -184,6 +184,7 @@ test("an offered watch, once allowed, starts watching and says so", async () => 
     await core.select([first.options.find((o) => o.label.includes("USB Serial")).id]);  // as the panel does, without waking anyone
     const watch = await until(h, (c) => c.kind === "confirm" && /^Watch /.test(c.title));
     assert.match(watch.body, /notice crashes and resets/);
+    assert.match(watch.body, /\nOpening this port can reset the device/, "English: the core's own words, capitalised");
     void h.answer(watch.id, { option: "once" });
     const on = await until(h, (c) => c.kind === "notify" && /^Watching /.test(c.title));
     assert.match(on.detail, /\.benchscout\/logs\/serial_usbserial-10\.log/);
@@ -228,4 +229,20 @@ test("each turn's progress goes to its own card, one line per tool call, updated
     assert.deepEqual(two.progress, ["✓ bench_scan"]);
     assert.match(two.body, /got: second/);
   } finally { delete process.env.FAKE_QUIET; done(); }
+});
+
+test("approval reasons are shown in the person's language by the core's code", async () => {
+  const ja = strings("ja");
+  const root = mkdtempSync(join(win ? tmpdir() : "/tmp", "bsj"));
+  const env = { ...process.env, BENCHSCOUT_FIXTURE: join(repo, "fixtures", "bench_example.json"), BENCHSCOUT_RUNTIME: root, BENCHSCOUT_MEMORY: join(root, "memory") };
+  const core = new CoreClient(bin, root, env);
+  const h = new Harness(core, () => { throw new Error("not woken here"); }, ja, { language: "Japanese", maxTurnsPerHour: 5 });
+  core.start();
+  try {
+    const first = await until(h, (c) => c.kind === "question");
+    await core.select([first.options.find((o) => o.label.includes("QinHeng")).id]);
+    const watch = await until(h, (c) => c.kind === "confirm");
+    assert.match(watch.title, /QinHeng USB Serial を見張りますか/);
+    assert.match(watch.body, /このポートを開くと機器がリセットされることがあります/);
+  } finally { core.stop(); rmSync(root, { recursive: true, force: true }); }
 });

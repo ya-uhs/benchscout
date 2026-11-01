@@ -25,7 +25,7 @@ export interface Proposal { text: string; action?: string; port?: string; effect
 
 export interface Approval {
   id: string; action: string; port: string; args: string; effect: Effect; status: string;
-  impact: { reason: string; affected_ports: string[]; disturbs: string[] };
+  impact: { reason: string; affected_ports: string[]; disturbs: string[]; code?: string };
   by?: "agent" | "benchscout"; // benchscout asks itself, e.g. to watch a selected device
   subject?: string; // the device's name
   purpose?: string;

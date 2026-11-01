@@ -96,6 +96,8 @@ const en = {
   answered: "Answered",
   newInput: "Tell benchscout what you want…",
   effect: { safe: "Safe", disruptive: "Changes device state", dangerous: "May not be undoable" } as Record<string, string>,
+  // why an action needs an OK, by the core's reason code (policy.py); not listed: the core's English words
+  reasons: {} as Record<string, string>,
   actions: {
     "serial.listen": "listen to the serial port",
     "serial.send": "send text to the serial port",
@@ -205,6 +207,22 @@ const ja: typeof en = {
   answered: "回答済み",
   newInput: "benchscout にやりたいことを伝える…",
   effect: { safe: "安全", disruptive: "機器の状態が変わります", dangerous: "元に戻せない可能性があります" },
+  reasons: {
+    reset_on_open: "このポートを開くと機器がリセットされることがあります(DTR/RTS が自動リセット回路につながっている、またはネイティブ USB のチップが開いたときにリセットする)",
+    energizing: "基板に電力を送る出力を変えます",
+    unknown_action: "何をするか分からない操作です",
+    watched: "ポートはすでに開いています(見張り中)。読むだけで、何も開きません",
+    "action:serial.listen": "コンソールの出力を読むだけです",
+    "action:serial.watch": "ポートを開いたままにして読み続けます",
+    "action:serial.send": "ファームウェアが反応するバイトを送ります",
+    "action:jtag.scan": "IDCODE を読みます。プローブのチャネルを専有します",
+    "action:jtag.halt": "CPU を止めます",
+    "action:scpi.query": "問い合わせだけです(? で終わる)",
+    "action:scpi.write": "見ているかもしれない測定器の設定を変えます",
+    "action:fpga.program": "FPGA を書き換えます。ファブリックの中のものはすべて再起動します",
+    "action:esptool.chip_id": "チップ ID を読みますが、DTR/RTS でチップを ROM ブートローダーにリセットします",
+    "action:esptool.write_flash": "フラッシュを上書きします。戻せるようにバックアップを取ってください",
+  },
   actions: {
     "serial.listen": "シリアルを聞く",
     "serial.send": "シリアルに文字を送る",
