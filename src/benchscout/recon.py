@@ -137,6 +137,23 @@ def _serial_port(b: Bench, dev: Device, s: dict, kind: str = "serial", may_reset
                            [Evidence("serial-port", s["device"])]))
 
 
+def _tool_args(info: dict, dev: Device, port: Port) -> dict[str, list[str]]:
+    """The usb entry's `tools`, filled in for this port. An argument whose value is unknown (no serial
+    number) is dropped together with the option that introduces it."""
+    out = {}
+    for tool, template in info.get("tools", {}).items():
+        args: list[str] = []
+        for a in template:
+            v = a.replace("{device.serial}", dev.serial or "").replace("{port.interface}", str(port.interface or 0))
+            if not v:
+                if args and args[-1].startswith("-"):
+                    args.pop()
+                continue
+            args.append(v)
+        out[tool] = args
+    return out
+
+
 def _apply_usb_knowledge(b: Bench, dev: Device, info: dict, serials: list[dict], raw: dict) -> None:
     role = info.get("role")
     short = (dev.serial or dev.id.split(":")[-1]).replace(" ", "_")  # ids get passed as tool args
@@ -151,6 +168,7 @@ def _apply_usb_knowledge(b: Bench, dev: Device, info: dict, serials: list[dict],
             b.link(p.id, t.id, "uart", Evidence("usb-descriptor", "CDC-ACM of the chip"))
         if info.get("jtag"):
             p = b.add_port(Port(f"jtag:{short}", dev.id, "jtag", evidence=[Evidence("usb-descriptor", "built-in USB-JTAG interface")]))
+            p.tools = _tool_args(info, dev, p)
             b.link(p.id, t.id, "jtag")
         return
 
@@ -162,7 +180,9 @@ def _apply_usb_knowledge(b: Bench, dev: Device, info: dict, serials: list[dict],
                 dev.evidence.append(Evidence("usb-descriptor", f"serial '{dev.serial}' is shared by every unit of this model; two of these boards would be indistinguishable"))
             fpga = b.add_target(Target(f"target:{short}:fpga", None, "fpga", Confidence.UNKNOWN,
                                        facts=[f"on a {board['board']}"], evidence=[ev]))
-            jp = b.add_port(Port(f"jtag:{short}", dev.id, "jtag", interface=0, evidence=[ev]))
+            jtag_ch = next((ch for ch, what in board["channels"].items() if what == "jtag-fpga"), 0)
+            jp = b.add_port(Port(f"jtag:{short}", dev.id, "jtag", interface=jtag_ch, evidence=[ev]))
+            jp.tools = _tool_args(info, dev, jp)
             b.link(jp.id, fpga.id, "jtag", ev)
             for i, s in enumerate(serials):
                 ch = s.get("channel", i)
@@ -180,6 +200,7 @@ def _apply_usb_knowledge(b: Bench, dev: Device, info: dict, serials: list[dict],
         t = b.add_target(Target(f"target:{short}", None, "unknown", Confidence.UNKNOWN,
                                 facts=[f"behind {dev.name}"], evidence=[Evidence("usb-descriptor", dev.name)]))
         p = b.add_port(Port(f"{kind}:{short}", dev.id, kind, evidence=[Evidence("usb-descriptor", dev.name)]))
+        p.tools = _tool_args(info, dev, p)
         b.link(p.id, t.id, kind)
         for s in serials:  # virtual COM port of the probe goes to the same target
             sp = _serial_port(b, dev, s)
@@ -258,13 +279,11 @@ def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] 
                 r.ran.append(f"serial.listen {port.path}")
                 listen_into(io, port.path, targets, listen_seconds)
 
-        elif port.kind == "jtag" and b.tools.get("openFPGALoader") and b.devices[port.device_id].vid == 0x0403:
-            # openFPGALoader drives FTDI-compatible adapters; other JTAG (e.g. ESP32's
-            # built-in USB-JTAG) needs a different tool, so we do not point it there.
+        elif port.kind == "jtag" and b.tools.get("openFPGALoader") and port.tools.get("openFPGALoader"):
+            # only where the USB data says how openFPGALoader reaches this probe; others stay unknown
             if classify(b, "jtag.scan", port.id).effect == Effect.SAFE:
-                dev = b.devices[port.device_id]
                 r.ran.append(f"jtag.scan {port.id}")
-                for found in io.jtag_scan(dev.serial):
+                for found in io.jtag_scan(port.tools["openFPGALoader"]):
                     code = found["idcode"]
                     part = K.IDCODES.get(code & 0x0FFFFFFF)
                     # Prefer the tool's own IDCODE database; fall back to ours.
@@ -313,7 +332,7 @@ def apply_log(t_list: list[Target], text: str, seen: str | None = None) -> None:
         if c["exact"]:
             t.name, t.confidence = c["exact"], Confidence.IDENTIFIED
             t.kind = "mcu" if t.kind == "unknown" else t.kind
-            t.evidence.append(Evidence("boot-log", f"ESP-ROM banner -> {c['exact']}{when}"))
+            t.evidence.append(Evidence("boot-log", f"named {c['exact']} by a log pattern in the knowledge files{when}"))
         elif c["family"] and t.confidence == Confidence.UNKNOWN:
             t.confidence = Confidence.FAMILY
             t.facts.append(c["family"])
@@ -340,7 +359,8 @@ def propose(b: Bench) -> list[Proposal]:
                     and not any(f.startswith("log:") for f in t.facts):
                 imp = classify(b, "serial.listen", port.id)
                 out.append(_from_impact(f"Listen on {port.path} to see what is behind {b.devices[port.device_id].name}", imp))
-            if port.kind == "jtag" and t.confidence == Confidence.UNKNOWN and not b.tools.get("openFPGALoader"):
+            if port.kind == "jtag" and t.confidence == Confidence.UNKNOWN and not b.tools.get("openFPGALoader") \
+                    and port.tools.get("openFPGALoader"):
                 imp = classify(b, "jtag.scan", port.id)
                 out.append(_from_impact(f"Scan the JTAG chain on {port.id} to identify the part", imp, "install openFPGALoader"))
     # one proposal per (text) is enough

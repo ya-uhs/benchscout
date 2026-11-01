@@ -40,7 +40,17 @@ class Impact:
 
 
 # SCPI writes that can push energy into the board.
-_ENERGIZING = re.compile(r"^\s*:?(OUTP|OUTPUT|VOLT|CURR|APPL|SOUR)", re.I)
+# Any command in a ;-joined line, after any leading nodes ("CH1:VOLT 5", "INST:NSEL 1;VOLT 5", ":SOUR1:VOLT 3.3"):
+# these SCPI subsystems set or switch outputs on supplies, generators and SMUs, whatever the vendor.
+_ENERGIZING = re.compile(r"^:?([A-Za-z0-9*]+:)*(OUTP|OUTPUT|VOLT|CURR|APPL|SOUR)", re.I)
+
+
+def _energizing(cmd: str) -> bool:
+    """Some command in the line sets an output; queries ("MEAS:VOLT?") only read."""
+    for c in (c.strip() for c in cmd.split(";")):
+        if c and not c.split()[0].endswith("?") and _ENERGIZING.match(c):
+            return True
+    return False
 
 
 def _is_pure_query(cmd: str) -> bool:
@@ -85,7 +95,7 @@ def classify(bench: Bench, action: str, port_id: str, args: dict | None = None) 
         action = "scpi.write"
         effect, disturbs_targets, reason = _base("scpi.write")
         code = "action:scpi.write"
-    if action == "scpi.write" and arg is not None and _ENERGIZING.match(arg):
+    if action == "scpi.write" and arg is not None and _energizing(arg):
         effect = Effect.DANGEROUS
         reason = "changes outputs that drive energy into the board"
         code = "energizing"

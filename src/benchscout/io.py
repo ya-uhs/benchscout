@@ -37,7 +37,7 @@ class Io(Protocol):
     def visa_query(self, resource: str, command: str) -> str | None: ...
     def serial_listen(self, path: str, seconds: float, baud: int, exclusive: bool = False, lines: str = "low",
                       send: bytes | None = None) -> str: ...  # `send` is written once, right after opening
-    def jtag_scan(self, usb_serial: str | None) -> list[dict]: ...  # [{idcode, manufacturer, model}]
+    def jtag_scan(self, select: list[str]) -> list[dict]: ...  # [{idcode, manufacturer, model}]; select: the probe's args
 
 
 class PortGone(OSError):
@@ -256,11 +256,11 @@ class LiveIo:
                 continue
         return None
 
-    def jtag_scan(self, usb_serial: str | None) -> list[dict]:
+    def jtag_scan(self, select: list[str]) -> list[dict]:
         exe = shutil.which("openFPGALoader")
         if not exe:
             return []
-        args = [exe, "--detect"] + (["--ftdi-serial", usb_serial] if usb_serial else [])
+        args = [exe, "--detect", *select]  # how to reach this probe comes from the USB data
         out = subprocess.run(args, capture_output=True, text=True, timeout=10)
         return parse_detect(out.stdout + out.stderr)
 
@@ -434,9 +434,10 @@ class FixtureIo:
             raise OSError(6, v["error"])
         return v
 
-    def jtag_scan(self, usb_serial: str | None) -> list[dict]:
-        self.calls.append(("jtag_scan", usb_serial))
-        v = self.data.get("jtag", {}).get(usb_serial or "", [])
+    def jtag_scan(self, select: list[str]) -> list[dict]:
+        self.calls.append(("jtag_scan", tuple(select)))
+        recorded = self.data.get("jtag", {})
+        v = next((recorded[a] for a in select if a in recorded), [])  # keyed by the probe's serial
         if isinstance(v, str):  # recorded raw tool output
             return parse_detect(v)
         return [{"idcode": int(c, 16), "manufacturer": None, "family": None, "model": None} for c in v]

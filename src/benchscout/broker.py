@@ -680,8 +680,10 @@ class Broker:
         if action in ("scpi.query", "scpi.write"):
             return self.io.visa_query(port.path, args["command"])
         if action == "jtag.scan":
-            dev = self.bench.devices[port.device_id]
-            return [dict(d, idcode=f"0x{d['idcode']:08X}") for d in self.io.jtag_scan(dev.serial)]
+            if not port.tools.get("openFPGALoader"):
+                return {"error": f"no way is known to reach {port_id} with openFPGALoader",
+                        "fix": "add `tools = { openFPGALoader = [...] }` for this USB id in a knowledge file"}
+            return [dict(d, idcode=f"0x{d['idcode']:08X}") for d in self.io.jtag_scan(port.tools["openFPGALoader"])]
         return {"error": f"{action} is classified but not implemented in this prototype"}
 
     # ---- external tools defined as data (design.md section 4) ------------------------------
@@ -705,6 +707,13 @@ class Broker:
         try:
             argv = [exe]
             for a in spec.argv[1:]:
+                if a == "{port.select*}":  # how this tool reaches this port, from the USB data
+                    sel = port.tools.get(spec.argv[0])
+                    if not sel:
+                        return {"error": f"no way is known to reach {port.id} with {spec.argv[0]}",
+                                "fix": f"add `tools = {{ {spec.argv[0]} = [...] }}` for this USB id in a knowledge file"}
+                    argv += sel
+                    continue
                 if a.startswith("{") and a.endswith("*}"):  # a list argument expands to several
                     for off, f in args[a[1:-2]]:
                         argv += [hex(off), path(f)]

@@ -63,9 +63,11 @@ load in `bench-session/`, which must look exactly like an end user's workspace.
   to FPGA SRAM or an image to flash as one DANGEROUS action defined as data. Editing and building
   code are out of scope.
 - What exists today and what is next: design.md sections 11 and 13. Shipped data is limited to
-  how USB interfaces behave when opened, what they carry, board wiring, and generic crash markers;
-  do not grow it. `test_without_any_shipped_data_benchscout_only_gets_stricter` guards the rule
-  that deleting it only makes benchscout stricter.
+  how USB interfaces behave when opened, what they carry and how a tool reaches them, board
+  wiring, generic crash markers (across SDKs, not one vendor's), and external-tool actions; do not
+  grow it. `test_without_any_shipped_data_benchscout_only_gets_stricter` guards the rule that
+  deleting it only makes benchscout stricter; `tests/test_unseen.py` keeps a bench of devices it
+  ships nothing about (other MCUs, an unknown FPGA board, a probe, instruments) honest and cautious.
 
 ## Commands
 
@@ -139,8 +141,8 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
 - Knowledge (design.md section 5): names and models come from devices and tools, or from the
   agent (with a quoted device output); interpretation is the agent's; what was learned goes to
   memory. Shipped data in `src/benchscout/packs/bench/data/` is only for safety rules by kind of
-  action. `knowledge.py` only loads and matches; `test_no_device_knowledge_in_code` keeps device
-  names out of it. Before adding any device-specific entry anywhere, ask whether the agent or
+  action. `knowledge.py` only loads and matches; `test_no_device_knowledge_in_code` keeps device,
+  vendor and USB-id words out of all product code (core, relay, extension; comments may cite the bench). Before adding any device-specific entry anywhere, ask whether the agent or
   memory should own it instead (almost always yes).
 
 ## Real bench (2026-10-31)

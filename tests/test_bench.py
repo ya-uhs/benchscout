@@ -252,11 +252,12 @@ def test_idcode_without_a_tool_database_stays_unknown(tmp_path):
     assert fpga.name is None
     assert any("0x0362D093" in e.detail for e in fpga.evidence)
 
-def test_openfpgaloader_only_targets_ftdi_jtag(tmp_path):
+def test_openfpgaloader_only_reaches_probes_the_usb_data_says_how_to(tmp_path):
     io = _variant(tmp_path, lambda d: d["tools"].append("openFPGALoader"))
     recon.run(io)
     scanned = [c[1] for c in io.calls if c[0] == "jtag_scan"]
-    assert scanned == ["210319A8C7D1"]  # the FT2232H board, not the ESP32's USB-JTAG
+    # the FT2232H board, with the cable options from usb.toml; not the ESP32's USB-JTAG (no entry for it)
+    assert scanned == [("-c", "ft2232", "--ftdi-serial", "210319A8C7D1", "--ftdi-channel", "0")]
 
 
 def test_port_that_vanishes_and_comes_back_still_yields_the_boot_log(tmp_path):
@@ -330,3 +331,16 @@ def test_every_reason_has_a_code_the_panel_can_translate(tmp_path):
     scpi = "visa:TCPIP0::192.168.1.50::INSTR"  # the PSU on the LAN
     assert classify(b, "scpi.query", scpi, {"command": "OUTP CH1,ON"}).code == "energizing"
     assert classify(b, "scpi.query", scpi, {"command": "DISP:BRIG 5"}).code == "action:scpi.write"
+
+
+
+def test_energizing_scpi_is_dangerous_whatever_the_vendor_syntax():
+    """Review 2026-11-02: "CH1:VOLT 5" (a channel node first) and a second ;-joined command slipped through."""
+    from benchscout.policy import classify as cls
+
+    b = recon.run(FixtureIo(FIXTURE)).bench
+    psu = "visa:TCPIP0::192.168.1.50::INSTR"
+    for cmd in ("OUTP CH1,ON", ":OUTPut ON", "CH1:VOLTage 5", "INST:NSEL 1;VOLT 5", ":SOUR1:VOLT 3.3", "APPL 5,0.1"):
+        assert cls(b, "scpi.write", psu, {"command": cmd}).effect == Effect.DANGEROUS, cmd
+    for cmd in ("SYST:BEEP", "DISP:BRIG 5", "MEAS:VOLT?"):
+        assert cls(b, "scpi.write", psu, {"command": cmd}).effect != Effect.DANGEROUS, cmd

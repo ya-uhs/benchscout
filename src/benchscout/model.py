@@ -54,6 +54,9 @@ class Port:
     evidence: list[Evidence] = field(default_factory=list)
     # firmware commands remembered for this port (design.md section 4): name -> {effect, eol, text, pending}
     commands: dict[str, dict] = field(default_factory=dict)
+    # how an external tool is pointed at this port, from the USB data (`tools` of its usb entry),
+    # e.g. {"openFPGALoader": ["-c", "ft2232", "--ftdi-serial", "<serial>", "--ftdi-channel", "0"]}
+    tools: dict[str, list[str]] = field(default_factory=dict)
 
 
 @dataclass

@@ -23,10 +23,44 @@ def clean_user_layer(tmp_path, monkeypatch):
     K.load()
 
 
+# Names of devices, vendors and USB ids that must never decide anything in code (design.md section 5).
+DEVICE_WORDS = ("ESP32", "Espressif", "ESP-ROM", "CH340", "QinHeng", "Gowin", "Xilinx", "Lattice", "Sipeed",
+                "Tang Nano", "Digilent", "STLINK", "ST-LINK", "Nucleo", "Rigol", "Siglent", "Keysight", "Guru",
+                "FT2232", "0x0403", "0x303A", "0x303a", "0x1A86", "0x1a86", "0x0483", "0x2E8A")
+
+
+def _python_code(path: Path) -> str:
+    """Code and string literals, without comments and docstrings (real-bench notes may name devices)."""
+    import io
+    import tokenize
+
+    out, prev = [], tokenize.NEWLINE
+    for tok in tokenize.generate_tokens(io.StringIO(path.read_text()).readline):
+        if tok.type == tokenize.COMMENT:
+            continue
+        if tok.type == tokenize.STRING and prev in (tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT, tokenize.NL):
+            prev = tok.type
+            continue  # a docstring
+        if tok.type not in (tokenize.NL, tokenize.COMMENT):
+            prev = tok.type
+        out.append(tok.string)
+    return " ".join(out)
+
+
+def _ts_code(path: Path) -> str:
+    import re
+
+    text = re.sub(r"/\*.*?\*/", " ", path.read_text(), flags=re.S)
+    return "\n".join(re.sub(r"(^|\s)//.*$", " ", line) for line in text.splitlines())
+
+
 def test_no_device_knowledge_in_code():
-    code = SRC.read_text()
-    for needle in ("ESP32", "CH340", "Gowin", "Xilinx", "Sipeed", "Digilent", "0x0403", "0x303A", "Guru"):
-        assert needle not in code, f"{needle} belongs in packs/bench/data, not knowledge.py"
+    """No device, vendor or USB id decides anything in the product code: core, relay, extension."""
+    root = Path(__file__).parent.parent
+    sources = [(p, _python_code(p)) for p in sorted((root / "src" / "benchscout").rglob("*.py"))]
+    sources += [(p, _ts_code(p)) for p in sorted((root / "vscode" / "src").rglob("*.ts"))]
+    found = [f"{p.relative_to(root)}: {w}" for p, code in sources for w in DEVICE_WORDS if w in code]
+    assert not found, "device knowledge belongs in packs/bench/data or memory, not code: " + "; ".join(found)
 
 
 def test_a_user_adds_a_bridge_and_a_log_alert_without_code(tmp_path):
@@ -94,3 +128,36 @@ def test_without_any_shipped_data_benchscout_only_gets_stricter(tmp_path, monkey
     finally:
         K.SHIPPED = shipped
         K.load()
+
+
+# What crashing firmware prints on different platforms. A device benchscout has never seen should still
+# wake the agent when it goes down, whatever its SDK (design.md section 17, "noticing").
+CRASHES = {
+    "Cortex-M (STM32Cube)": "HardFault_Handler: PC=0x08001234",
+    "nRF / CMSIS": "Fault: Usage Fault, CFSR=0x00010000",
+    "Zephyr": ">>> ZEPHYR FATAL ERROR 0: CPU exception on CPU 0",
+    "Mbed OS": "++ MbedOS Fault Handler ++",
+    "Pico SDK": "*** PANIC ***",
+    "Rust": "panicked at src/main.rs:42:5:",
+    "Go": "panic: runtime error: index out of range [3] with length 3",
+    "Linux": "Kernel panic - not syncing: Attempted to kill init!",
+    "MicroPython": "Traceback (most recent call last):",
+    "newlib assert": 'assertion "len > 0" failed: file "src/app.c", line 12, function: send',
+    "glibc assert": "app: main.c:7: main: Assertion `x' failed.",
+    "C++": "terminate called after throwing an instance of 'std::runtime_error'",
+    "FreeRTOS hook": "STACK OVERFLOW in task sensor",
+    "ESP-IDF watchdog": "E (10305) task_wdt: Task watchdog got triggered.",
+    "watchdog reset": "Reset cause: WDT reset",
+    "brownout": "BOR: brown-out reset detected",
+    "ESP-IDF": "Guru Meditation Error: Core  1 panic'ed (LoadProhibited). Exception was unhandled.",
+}
+CALM = ["hb 0000002a", "hb n=12 uptime_ms=12306", "[I] sensor ok", "watchdog enabled (timeout 5 s)",
+        "assert checks on", "Booting Zephyr OS build v3.6.0", "boot: 0x8 (SPI_FAST_FLASH_BOOT)", "ok panic"]
+
+
+def test_crashes_on_many_platforms_raise_an_alert_and_ordinary_lines_do_not():
+    K.load()
+    missed = [p for p, line in CRASHES.items() if not K.classify_log(line)["alerts"]]
+    assert not missed, f"no alert for: {missed}"
+    noisy = {line: K.classify_log(line)["alerts"] for line in CALM if K.classify_log(line)["alerts"]}
+    assert not noisy, f"false alarms: {noisy}"

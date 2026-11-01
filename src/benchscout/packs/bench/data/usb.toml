@@ -11,6 +11,8 @@
 #         instrument  USBTMC/VISA instrument
 #   may_reset_on_open: opening the port can reset what is behind it -> listening needs approval
 #   open_lines: "low" (default) drop DTR/RTS after open, "asserted" leave them as the OS set them
+#   tools: how an external tool is pointed at this part, e.g. openFPGALoader's cable options;
+#          {device.serial} and {port.interface} (the channel) are filled in. No entry: the tool is not used
 
 # Serial numbers burned identically into every unit of a model: not unique per board.
 shared_serials = ["FactoryAIOT Pro"]
@@ -49,12 +51,14 @@ may_reset_on_open = true
 vid = 0x0403
 pid = 0x6010  # FTDI FT2232H
 role = "multi"
+tools = { openFPGALoader = ["-c", "ft2232", "--ftdi-serial", "{device.serial}", "--ftdi-channel", "{port.interface}"] }
 
 [[usb]]
 vid = 0x0403
 pid = 0x6014  # FTDI FT232H
 role = "probe"
 probe = "jtag"
+tools = { openFPGALoader = ["-c", "ft232", "--ftdi-serial", "{device.serial}"] }
 
 [[usb]]
 vid = 0x303A
