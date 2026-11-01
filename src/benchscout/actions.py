@@ -148,6 +148,12 @@ BUILTIN: dict[str, Action] = {a.name: a for a in (
             Param("eol", str, "appended to data: \"\\n\" (default), \"\\r\\n\", or \"\" for single-byte commands", "\n"),
             Param("seconds", float, "how long to read the answer", 1.0, min=0.05, max=30),
             Param("baud", int, "baud rate", 115200, min=50, max=12_000_000))),
+    Action("serial.command", Effect.DISRUPTIVE, True, "runs a remembered firmware command; its effect is what memory says",
+           "run a firmware command remembered for this port (bench_remember kind command) by its name and read the "
+           "answer; a command remembered as safe runs without asking once the human confirmed it",
+           (Param("name", str, "the command as remembered, e.g. \"status\"", required=True),
+            Param("seconds", float, "how long to read the answer", 1.0, min=0.05, max=30),
+            Param("baud", int, "baud rate", 115200, min=50, max=12_000_000)), port_kinds=("serial",)),
     Action("jtag.scan", Effect.SAFE, False, "reads IDCODEs; needs exclusive use of the probe channel",
            "read the IDCODEs on a JTAG chain"),
     Action("jtag.halt", Effect.DISRUPTIVE, True, "stops the CPU", "halt the CPU over JTAG", implemented=False),

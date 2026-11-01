@@ -135,3 +135,57 @@ def test_memory_files_are_plain_toml_and_entries_can_be_deleted(tmp_path):
     assert data["device"] == "QinHeng USB Serial" and data["entry"][0]["text"].startswith("CH1 of the scope")
     br.memory.delete(files[0].stem, res["id"])
     assert tomllib.loads(files[0].read_text()).get("entry", []) == []
+
+
+# ---- firmware commands (design.md section 4) ----------------------------------------------
+
+def _cmd_bench(tmp_path):
+    import json as _json
+    from benchscout.broker import Broker
+    from benchscout.io import FixtureIo
+
+    fx = Path(__file__).parent.parent / "fixtures" / "bench_example.json"
+    data = _json.loads(fx.read_text())
+    data["streams"] = {"/dev/cu.usbserial-10": [{"after": 0.05, "text": "boot\n"}]}
+    data.setdefault("replies", {})["/dev/cu.usbserial-10"] = {"status\r\n": "uptime 42s\n", "status\n": "wrong eol\n"}
+    f = tmp_path / "bench.json"
+    f.write_text(_json.dumps(data))
+    br = Broker(FixtureIo(f), tmp_path / "ws" / ".benchscout")
+    br.scan()
+    dev = br.bench.ports["serial:usbserial-10"].device_id
+    br.select([dev])
+    return br
+
+
+def test_a_command_remembered_as_safe_waits_for_the_human_then_runs_without_asking(tmp_path):
+    br = _cmd_bench(tmp_path)
+    r = br.remember("serial:usbserial-10", "command", "prints uptime", data={"command": "status", "effect": "safe", "eol": "\r\n"})
+    assert r["status"] == "pending_human"
+    first = br.request("serial.command", "serial:usbserial-10", {"name": "status"})
+    assert first["status"] == "approval_required", "until the human confirms, it is gated like serial.send"
+    assert first["impact"]["code"] == "command_unconfirmed"
+    key = br._key(br.bench.devices[br.bench.ports["serial:usbserial-10"].device_id])
+    br.decide_memory(key, r["id"], True)
+    done = br.request("serial.command", "serial:usbserial-10", {"name": "status"})
+    assert done["status"] == "done" and done["impact"]["effect"] == "safe"
+    assert "uptime 42s" in done["result"]["preview"], "sent with the remembered line ending"
+    assert done["impact"]["code"] == "command_safe"
+    assert "remembered as SAFE (confirmed by the human): prints uptime" in done["impact"]["reason"]
+    br.end_session()
+
+
+def test_unknown_or_disruptive_commands_are_not_loosened(tmp_path):
+    br = _cmd_bench(tmp_path)
+    bad = br.request("serial.command", "serial:usbserial-10", {"name": "reboot"})
+    assert bad["status"] == "invalid_args" and "none yet" in bad["message"]
+    r = br.remember("serial:usbserial-10", "command", "restarts the firmware", data={"command": "reboot", "effect": "disruptive"})
+    assert r["status"] == "remembered"
+    assert br.request("serial.command", "serial:usbserial-10", {"name": "reboot"})["status"] == "approval_required"
+    assert br.remember("serial:usbserial-10", "command", "x", data={"effect": "safe"})["status"] == "rejected"
+    assert br.remember("serial:usbserial-10", "command", "x", data={"command": "a\nb"})["status"] == "rejected"
+    # a later scan still knows the commands, and shows them to the agent
+    br.scan()
+    assert "reboot" in br.bench.ports["serial:usbserial-10"].commands
+    facts = [f for t in br.bench.targets_via("serial:usbserial-10") for f in t.facts]
+    assert any("command `reboot`" in f for f in facts)
+    br.end_session()

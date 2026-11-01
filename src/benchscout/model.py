@@ -52,6 +52,8 @@ class Port:
     # "asserted" (leave them as the OS opened them; for chips that reset on the transition).
     open_lines: str = "low"
     evidence: list[Evidence] = field(default_factory=list)
+    # firmware commands remembered for this port (design.md section 4): name -> {effect, eol, text, pending}
+    commands: dict[str, dict] = field(default_factory=dict)
 
 
 @dataclass

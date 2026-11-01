@@ -70,6 +70,17 @@ def classify(bench: Bench, action: str, port_id: str, args: dict | None = None) 
         reason = "opening this port can reset the device (DTR/RTS into an auto-reset circuit, or a native-USB chip resetting on open)"
         code = "reset_on_open"
         disturbs_targets = True
+    if action == "serial.command":
+        known = port.commands.get((args or {}).get("name", ""))
+        if known and not known.get("pending"):
+            effect = Effect[known["effect"].upper()]
+            disturbs_targets = effect > Effect.SAFE
+            reason = (f"remembered as {known['effect'].upper()}" + (" (confirmed by the human)" if effect == Effect.SAFE else "")
+                      + (f": {known['text']}" if known.get("text") else ""))
+            code = f"command_{known['effect']}"
+        else:  # not remembered, or its SAFE is not confirmed yet: like sending bytes
+            reason = "a firmware command not confirmed as safe acts like sending bytes the firmware will act on"
+            code = "command_unconfirmed"
     if action == "scpi.query" and arg is not None and not _is_pure_query(arg):
         action = "scpi.write"
         effect, disturbs_targets, reason = _base("scpi.write")

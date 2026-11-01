@@ -101,6 +101,7 @@ const en = {
   actions: {
     "serial.listen": "listen to the serial port",
     "serial.send": "send text to the serial port",
+    "serial.command": "run a firmware command",
     "esptool.chip_id": "read the chip with esptool (resets the chip)",
     "esptool.write_flash": "write the flash",
     "jtag.scan": "read the JTAG chain",
@@ -212,6 +213,7 @@ const ja: typeof en = {
     energizing: "基板に電力を送る出力を変えます",
     unknown_action: "何をするか分からない操作です",
     watched: "ポートはすでに開いています(見張り中)。読むだけで、何も開きません",
+    command_unconfirmed: "SAFE と確認されていないファームウェアのコマンドは、文字を送るのと同じ扱いです",
     "action:serial.listen": "コンソールの出力を読むだけです",
     "action:serial.watch": "ポートを開いたままにして読み続けます",
     "action:serial.send": "ファームウェアが反応するバイトを送ります",
@@ -226,6 +228,7 @@ const ja: typeof en = {
   actions: {
     "serial.listen": "シリアルを聞く",
     "serial.send": "シリアルに文字を送る",
+    "serial.command": "ファームウェアのコマンドを実行する",
     "esptool.chip_id": "esptool でチップを読む(チップがリセットされます)",
     "esptool.write_flash": "フラッシュを書き換える",
     "jtag.scan": "JTAG チェーンを読む",

@@ -228,8 +228,8 @@ class Broker:
             shared = dev.serial in K.SHARED_SERIALS
             targets = [t for p in bench.ports_of(dev.id) for t in bench.targets_via(p.id)]
             for e in self.memory.entries(self._key(dev)):
-                if e.status != "active":
-                    continue
+                if e.status != "active" and not (e.kind == "command" and e.status == "pending"):
+                    continue  # (a command waiting for the human is still usable, gated like serial.send)
                 when = f"{e.time[:10]}, {e.source}"
                 if e.kind == "identity" and e.target in bench.targets:
                     t = bench.targets[e.target]
@@ -241,6 +241,11 @@ class Broker:
                         continue  # another unit of this model may answer to the same serial: never loosen safety on it
                     if e.target in bench.ports and e.data.get("listen_safe"):
                         bench.ports[e.target].may_reset_on_open = False
+                elif e.kind == "command" and e.data.get("command"):
+                    self._load_command(bench, dev, e)
+                    for t in bench.targets_via(e.target)[:1] if e.target in bench.ports else []:
+                        t.facts.append(f"command `{e.data['command']}` on {e.target}: {e.text} "
+                                       f"({e.data.get('effect', 'disruptive')}{', waiting for the human' if e.status == 'pending' else ''})")
                 elif e.kind == "interpretation" and e.data.get("pattern"):
                     self.patterns.setdefault(dev.id, []).append(e.data)
                 else:
@@ -280,6 +285,8 @@ class Broker:
 
         with self._lock:
             dev, target = self._resolve_ref(ref)
+            if kind == "command":
+                return self._remember_command(dev, ref, text, evidence, data or {}, source)
             if kind == "safety":
                 allowed = {"listen_safe"}
                 if not data or set(data) - allowed:
@@ -294,6 +301,48 @@ class Broker:
         self._memory_event(dev, e)
         return {"status": "pending_human" if e.status == "pending" else "remembered", "id": e.id}
 
+    def _remember_command(self, dev, ref: str, text: str, evidence: str, data: dict, source: str) -> dict:
+        """A firmware command for one port. Saying it is SAFE loosens safety, so that waits for the human."""
+        from .memory import Entry
+
+        cmd = str(data.get("command") or "").strip()
+        effect = str(data.get("effect") or "disruptive").lower()
+        if not cmd or "\n" in cmd or "\r" in cmd:
+            return {"status": "rejected", "message": 'a command entry needs data {"command": "<what to send>", "effect": '
+                                                     '"safe"|"disruptive"|"dangerous", "eol": "\\n" (optional)}'}
+        if effect not in ("safe", "disruptive", "dangerous"):
+            return {"status": "rejected", "message": "effect must be safe, disruptive or dangerous"}
+        port = next((p.id for p in self.bench.ports_of(dev.id) if p.id == ref or p.path == ref), None)
+        if not port:
+            serial = [p.id for p in self.bench.ports_of(dev.id) if p.kind == "serial"]
+            if len(serial) != 1:
+                return {"status": "rejected", "message": f"a command belongs to one port; give its id ({', '.join(serial) or 'none'})"}
+            port = serial[0]
+        key = self._key(dev)
+        for old in self.memory.entries(key):  # the same command again: the newer entry replaces the older
+            if old.kind == "command" and old.target == port and old.data.get("command") == cmd and old.status in ("active", "pending"):
+                self.memory.set_status(key, old.id, "superseded")
+        e = Entry(kind="command", text=text, source=source, evidence=evidence, target=port,
+                  status="pending" if effect == "safe" else "active",
+                  data={"command": cmd, "effect": effect, **({"eol": data["eol"]} if "eol" in data else {})})
+        e = self.memory.add(key, e, self._header(dev))
+        self._load_command(self.bench, dev, e)
+        self._memory_event(dev, e)
+        return {"status": "pending_human" if e.status == "pending" else "remembered", "id": e.id, "port": port,
+                **({"message": "a command remembered as safe runs without asking only after the human confirms it in "
+                               "the panel; until then serial.command asks like serial.send"} if e.status == "pending" else {})}
+
+    def _load_command(self, bench, dev, e) -> None:
+        from . import knowledge as K
+
+        port = bench.ports.get(e.target)
+        if not port or e.status not in ("active", "pending"):
+            return
+        effect = e.data.get("effect", "disruptive")
+        shared = dev.serial in K.SHARED_SERIALS  # another unit may answer to this serial: never loosen safety on it
+        port.commands[e.data["command"]] = {"effect": effect, "eol": e.data.get("eol", "\n"), "text": e.text,
+                                            "pending": e.status == "pending" or (effect == "safe" and shared)}
+
     def recall(self, ref: str | None = None) -> list[dict]:
         from dataclasses import asdict
 
@@ -307,6 +356,12 @@ class Broker:
         e = self.memory.set_status(key, entry_id, "active" if accept else "rejected")
         if accept and e.kind == "safety" and self.last and e.target in self.last.bench.ports and e.data.get("listen_safe"):
             self.last.bench.ports[e.target].may_reset_on_open = False
+        if e.kind == "command" and self.last and e.target in self.last.bench.ports:
+            port = self.last.bench.ports[e.target]
+            if accept:
+                self._load_command(self.last.bench, self.last.bench.devices[port.device_id], e)
+            else:
+                port.commands.pop(e.data.get("command", ""), None)
         self._emit({"event": "memory_decided", "key": key, "entry": asdict(e)})
         return asdict(e)
 
@@ -511,6 +566,11 @@ class Broker:
             kind = self.bench.ports[port_id].kind
             if spec.port_kinds and kind not in spec.port_kinds:
                 return {"status": "invalid_args", "message": f"{action} works on {'/'.join(spec.port_kinds)} ports, not on a {kind} port"}
+            if action == "serial.command" and args["name"] not in self.bench.ports[port_id].commands:
+                known = ", ".join(sorted(self.bench.ports[port_id].commands)) or "none yet"
+                return {"status": "invalid_args",
+                        "message": f"{args['name']!r} is not a remembered command of {port_id} (remembered: {known}). "
+                                   "Remember it first with bench_remember (kind command), or send it with serial.send"}
             impact = classify(self.bench, action, port_id, args)
             w = self.watches.get(port_id)
             if w and w.alive and action in ("serial.listen", "serial.watch"):
@@ -562,6 +622,9 @@ class Broker:
         if spec.argv:
             return self._run_tool(spec, port, args)
         w = self.watches.get(port_id)
+        if action == "serial.command":  # a remembered command is sent like text, with its own line ending
+            c = port.commands[args["name"]]
+            action, args = "serial.send", {"data": args["name"], "eol": c.get("eol", "\n"), "seconds": args["seconds"], "baud": args["baud"]}
         if w and w.alive and action in ("serial.listen", "serial.send") and args["baud"] != w.baud:
             # a different rate was asked for: reopen the watch at it (the port is SAFE to open, it was watched)
             self._unwatch(port_id)

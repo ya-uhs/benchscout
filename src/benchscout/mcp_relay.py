@@ -147,8 +147,11 @@ Actions:
         edit or delete it in the panel). `ref` is a device/port/target from bench_scan. `kind`:
         observation (what it does), config (wiring, probe nets the human told you), interpretation
         (data {"pattern": regex, "alert": text}: a line that means trouble on this device; it will be
-        watched for), command (a firmware command and what it does). kind "safety" (data
-        {"listen_safe": true} for one port) waits for the human to confirm. Quote evidence when you have it."""
+        watched for), command (a firmware command of one serial port, e.g. read from its `help`: data
+        {"command": "status", "effect": "safe"|"disruptive"|"dangerous", "eol": "\\r\\n" if not "\\n"}; text says
+        what it does; then run it with bench_do serial.command {"name": "status"}). kind "safety" (data
+        {"listen_safe": true} for one port) and a command with effect "safe" wait for the human to confirm
+        (until then it asks like serial.send). Quote evidence when you have it."""
         return await _call("remember", {"ref": ref, "kind": kind, "text": text, "evidence": evidence, "data": data})
 
     @mcp.tool()
