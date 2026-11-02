@@ -53,6 +53,10 @@ export interface DeviceEvent {
   cause?: "host_sleep"; // the computer had been asleep: the device did not necessarily do anything
 }
 
+/** Devices plugged in or pulled out since the last scan (the core notices by itself; design.md section 17). */
+export interface PluggedDevice { id: string; name: string; other: boolean; selected: boolean }
+export interface DevicesChanged { added: PluggedDevice[]; removed: PluggedDevice[] }
+
 export interface MemoryEntry {
   id: string; kind: string; text: string; source: string; evidence: string; target: string; time: string; status: string; data: Record<string, unknown>;
 }
@@ -72,6 +76,7 @@ export interface CoreEvents {
   toolDecided: [ToolProposal];
   questionAsked: [Question];
   deviceEvent: [DeviceEvent];
+  devicesChanged: [DevicesChanged];
   memoryAdded: [MemoryEvent];
   memoryDecided: [MemoryEvent];
   memoryForgotten: [{ key: string; id: string }];
@@ -194,6 +199,9 @@ export class CoreClient extends EventEmitter {
       case "device_event":
         this.emit("deviceEvent", msg as DeviceEvent);
         return;
+      case "devices_changed":
+        this.emit("devicesChanged", { added: msg.added ?? [], removed: msg.removed ?? [] } as DevicesChanged);
+        return;
       case "question_asked":
         this.questions.set(msg.question.id, msg.question);
         this.emit("questionAsked", msg.question);
@@ -205,7 +213,7 @@ export class CoreClient extends EventEmitter {
     }
     if (msg.id === undefined) return;
     if (msg.result && msg.result.bench) {
-      // a scan (ours, or the core's own first one with id "initial")
+      // a scan (ours, or the core's own: the first one with id "initial", one after a plug with id "plugged")
       this.emit("scan", msg.result.bench, (msg.result.proposals ?? []) as Proposal[]);
     }
     const w = this.waiting.get(msg.id);

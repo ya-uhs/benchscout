@@ -78,13 +78,18 @@ def build_server(client: CoreClient, language: str = "English") -> MCPServer:
     async def bench_scan() -> str:
         """Re-scan the bench. Returns what is connected, what each thing is (with evidence),
         what is unknown, proposed next steps, and which devices the human selected for this
-        session (only those can be used). Only safe probes run."""
+        session (only those can be used). Only safe probes run, and none on the selected devices
+        (they are in use: what their earlier probes got is shown again, marked as earlier; their
+        live output is in the watch log). benchscout notices plugs and unplugs by itself."""
         reply = await anyio.to_thread.run_sync(lambda: client.call("scan", timeout=60))
         if "error" in reply:
             return f"error: {reply['error']}"
         sel = reply["result"]["selected"]
         session = ("Selected for this session: " + ", ".join(sel)) if sel else \
             "No device is selected yet. Suggest which ones to select; the human selects them in the benchscout panel."
+        if reply["result"].get("unplugged"):
+            session += ("\nUnplugged for now (still selected; watched again when plugged back in; anything allowed for "
+                        "it before was withdrawn): " + ", ".join(reply["result"]["unplugged"]))
         watch = reply["result"].get("watch") or {}
         if watch:
             session += "\nSerial ports of the selected devices:\n" + "\n".join(f"- {p}: {w}" for p, w in watch.items())

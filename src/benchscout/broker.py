@@ -120,10 +120,15 @@ class Broker:
             self.on_event(event)
 
     # ---- recon ---------------------------------------------------------------
-    def scan(self) -> R.Recon:
+    def scan(self, only_new: bool = False) -> R.Recon:
+        """Look at the bench again. A device in the session is never probed again (its watch and the agent's
+        actions are using it; what its probes got before is kept). `only_new`: probe only devices that were not
+        there at the last scan (a plug noticed by the core; design.md section 17)."""
         with self._lock:
             busy = self.locks.holder if self.locks else None
-            self.last = R.run(self.io, busy=busy)
+            before = self.last.bench if self.last else None
+            keep = set(before.devices) if only_new and before else self.selected & set(before.devices if before else ())
+            self.last = R.run(self.io, busy=busy, keep=keep, heard=self.last.heard if self.last else None)
             for tid, kept in self.observed.items():
                 if tid not in self.last.bench.targets:
                     continue
@@ -138,10 +143,39 @@ class Broker:
             # what still waits for the human (from an earlier session) is shown again, for connected devices only
             waiting = [(dev, e) for dev in self.last.bench.devices.values() for e in self.memory.entries(self._key(dev))
                        if e.status == "pending" and e.id not in self._pending_shown]
+            changed = self._plugged(before, self.last.bench) if before else None
         self._emit({"event": "scanned", "devices": list(self.last.bench.devices)})
+        if changed:
+            self._emit(changed)
         for dev, e in waiting:
             self._memory_event(dev, e)
         return self.last
+
+    def _plugged(self, before, now) -> dict | None:
+        """Devices that came or went since the last scan. One the human chose that went away stays chosen, so it is
+        watched again when it comes back; but nothing granted for its ports carries over: an approval was for what
+        was plugged in then, and another board can come back under the same name and port. The same for a port that
+        went while its device stayed listed (handed to a VM: real bench, 2026-11-03)."""
+        def moved(a, b, p):  # a port of `a` that `b` lacks, or that is another device's there
+            return p not in b.ports or b.ports[p].device_id != a.ports[p].device_id
+
+        went_ports = {p for p in before.ports if moved(before, now, p) and before.ports[p].device_id in self.selected}
+        if went_ports:
+            self.approvals.withdraw_ports(went_ports)
+        for pid in [p for p, w in self.watches.items() if not w.alive]:  # it gave up waiting for the port
+            self.watches.pop(pid)
+        if any(moved(now, before, p) and now.ports[p].device_id in self.selected for p in now.ports):
+            self._autowatch()  # back: watched again (or asked about again)
+        came = [d for d in now.devices if d not in before.devices]
+        went = [d for d in before.devices if d not in now.devices]
+        if not came and not went:
+            return None
+
+        def view(b, d):
+            dev = b.devices[d]
+            return {"id": d, "name": dev.name, "other": dev.other, "selected": d in self.selected}
+
+        return {"event": "devices_changed", "added": [view(now, d) for d in came], "removed": [view(before, d) for d in went]}
 
     @property
     def bench(self):
@@ -197,7 +231,7 @@ class Broker:
     def _resolve_device(self, ref: str) -> str:
         b = self.bench
         devs = b.devices
-        if ref in devs:
+        if ref in devs or ref in self.selected:  # (one the human chose may be unplugged for now)
             return ref
         if ref.isdigit() and 1 <= int(ref) <= len(devs):  # the number shown in the console's list
             return list(devs)[int(ref) - 1]

@@ -10,7 +10,7 @@
 
 import { EventEmitter } from "events";
 import { AgentDriver, AgentEvent, PermissionAsk, WakeError } from "./agents/types";
-import { Approval, Bench, CoreClient, DeviceEvent, DownloadEvent, MemoryEvent, Question, ToolProposal, describeArgs, deviceViews } from "./core";
+import { Approval, Bench, CoreClient, DeviceEvent, DevicesChanged, DownloadEvent, MemoryEvent, Question, ToolProposal, describeArgs, deviceViews } from "./core";
 import { Strings } from "./i18n";
 
 export type CardKind = "question" | "confirm" | "report" | "notify" | "memory";
@@ -69,6 +69,7 @@ export class Harness extends EventEmitter {
     core.on("questionAsked", (q: Question) => this.questionCard(q));
     core.on("questionAnswered", (q: Question) => this.closeRef(`question:${q.id}`, q.choice ?? q.reply ?? ""));
     core.on("deviceEvent", (e: DeviceEvent) => this.deviceEvent(e));
+    core.on("devicesChanged", (c: DevicesChanged) => this.devicesChanged(c));
     core.on("memoryAdded", (m: MemoryEvent) => this.memoryCard(m));
     core.on("memoryDecided", (m: MemoryEvent) => this.closeRef(`memory:${m.entry.id}`, m.entry.status));
   }
@@ -126,6 +127,10 @@ export class Harness extends EventEmitter {
   // ---- cards -------------------------------------------------------------------------
 
   private add(card: Omit<Card, "id" | "time" | "progress" | "status"> & Partial<Card>, handler?: (a: Answer) => unknown, ref?: string): Card {
+    if (ref) {  // the same thing again (a device plugged in twice): the new card takes the old one's place
+      this.cards = this.cards.filter((x) => x.id !== ref);
+      this.handlers.delete(ref);
+    }
     const c: Card = { id: ref ?? `c${this.nextId++}`, time: Date.now(), status: "open", progress: [], ...card };
     this.cards.push(c);
     if (handler) this.handlers.set(c.id, handler);
@@ -290,7 +295,34 @@ export class Harness extends EventEmitter {
       (a) => (a.option === "forget" ? this.core.memoryDelete(m.key, e.id).catch(() => undefined) : undefined), `memory:${e.id}`);
   }
 
-  // ---- noticing: events from the watched devices -------------------------------------------
+  // ---- noticing: plugs and unplugs, and events from the watched devices ------------------------
+
+  /** A device plugged in is offered (choosing is the human's); one the human chose that is pulled out is said, and
+   *  closed again when it is back. Others (a keyboard, a camera) are only counted in the device list. */
+  private devicesChanged(c: DevicesChanged): void {
+    for (const d of c.removed) {
+      this.closeRef(`plugged:${d.id}`, "");  // an offer nobody answered: nothing to look at now
+      if (d.selected) {
+        this.add({ kind: "notify", title: this.s.unplugged(d.name), body: this.s.unpluggedBody, options: [], freeText: false },
+          undefined, `left:${d.id}`);
+      }
+    }
+    for (const d of c.added) {
+      if (d.selected) {
+        this.closeRef(`left:${d.id}`, this.s.pluggedBack);
+        continue;
+      }
+      if (d.other) continue;
+      this.add({ kind: "question", title: this.s.pluggedIn(d.name), body: this.s.pluggedInBody, freeText: true,
+        options: [{ id: "look", label: this.s.lookAt(d.name), primary: true }, { id: "no", label: this.s.notNow }] },
+      async (a) => {
+        if (a.option === "no") return;
+        await this.core.select([...this.core.selected, d.id]);
+        const ask = `${d.name} was just plugged in. Look at it: what it is, what it is doing, and what to check next.`;
+        return this.wake(a.text ? `${ask}\n\nThe human adds: ${a.text}` : ask, d.name);
+      }, `plugged:${d.id}`);
+    }
+  }
 
   private deviceEvent(e: DeviceEvent): void {
     const name = e.device_name ?? e.port;
@@ -320,6 +352,11 @@ export class Harness extends EventEmitter {
     if (e.kind === "watching") {
       this.add({ kind: "notify", title: this.s.watching(name), body: "", detail: log, options: [], freeText: false, status: "closed" });
       return;
+    }
+    if (this.cards.some((c) => c.id === `left:${dev}` && c.status === "open")) {
+      // pulled out by hand (the unplug card says so): its port coming back is the person plugging it in, not a reset
+      if (e.kind === "returned") this.closeRef(`left:${dev}`, this.s.pluggedBack);
+      if (e.kind === "gone" || e.kind === "returned") return;
     }
     if (e.kind !== "alert" && e.kind !== "returned") {  // gone, unwatchable, or anything new: say it, do not wake
       this.add({ kind: "notify", title: this.s.deviceGone(name), body: e.what, detail: log, options: [], freeText: false });

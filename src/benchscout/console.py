@@ -79,12 +79,20 @@ def format_human(msg: dict, broker) -> str | None:
                        for d, h in busy.items())
         return (f"Selected: {_names(broker, msg['selected'])}{held}\n"
                 f"Now ask your agent in this folder; approvals will appear here.")
+    if ev == "devices_changed":
+        came = [f"+ plugged in: {d['name']}" + (" (chosen before: watched again)" if d["selected"] else "")
+                for d in msg["added"]]
+        went = [f"- unplugged: {d['name']}" + (" (chosen: watched again when it is back; approvals for it withdrawn)"
+                                              if d["selected"] else "") for d in msg["removed"]]
+        return "\n".join(came + went)
     if ev == "stopped":
         return "benchscout core stopped; devices released."
     if "error" in msg:
         return f"error: {msg['error'].split(': ', 1)[-1].strip(chr(34))}"
     result = msg.get("result")
     if isinstance(result, dict) and "text" in result:  # a scan
+        if msg.get("id") == "plugged":  # the core's own, after a plug: the lines above said what changed
+            return "Devices now:\n" + "\n".join(_devices(result.get("bench", {})))
         return result["text"] + "\n\nDevices (select by number or port name):\n" + "\n".join(_devices(result.get("bench", {})))
     if isinstance(result, list):  # pending approvals
         if not result:

@@ -191,3 +191,5 @@ still shape the code:
 - PlatformIO's bundled esptool.py v4.5.1 could not write the ESP32-S3 over USB-Serial/JTAG;
   esptool v5.6.0 could.
 - Claude Code (CLI) keeps a call open through a 95 s approval wait; results say who approved.
+- A device handed to a VM (UTM) stays in macOS's USB list; only its serial port goes. Plugs are noticed by
+  polling USB devices and serial ports (`Io.plugged`), and a rescan never opens a device the session is using.

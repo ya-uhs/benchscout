@@ -30,6 +30,8 @@ class Io(Protocol):
     def serial_ports(self) -> list[dict]: ...
     def visa_resources(self) -> list[str]: ...
     def tools(self) -> dict[str, str | None]: ...
+    # what is plugged in, cheaply enough to ask every few seconds (noticing plugs and unplugs, design.md 17)
+    def plugged(self) -> frozenset[tuple]: ...
 
     # access: opens things; callers go through policy first
     def visa_query(self, resource: str, command: str) -> str | None: ...
@@ -176,6 +178,32 @@ class LiveIo:
 
         walk(root)
         return found
+
+    def plugged(self) -> frozenset[tuple]:
+        """(vid, pid, serial, location) of each USB device and ("port", path) of each serial port, from the OS's own
+        lists: nothing is opened and no device is asked anything (on Windows the hubs answer from what they hold; no
+        string descriptors are read). Ports too: a device handed to a VM stays in macOS's USB list and only its port
+        goes (real bench, 2026-11-03, UTM)."""
+        from serial.tools import list_ports
+
+        system = platform.system()
+        if system == "Darwin":
+            out = subprocess.run(["/usr/sbin/ioreg", "-r", "-c", "IOUSBHostDevice", "-w0", "-a", "-d1"], stdin=subprocess.DEVNULL,
+                                 capture_output=True, timeout=10).stdout
+            found = parse_ioreg(out)
+        elif system == "Linux":
+            found = linux_usb_devices(Path("/sys/bus/usb/devices"))
+        elif system == "Windows":
+            from .winusb_strings import usb_strings
+
+            try:
+                found = usb_strings(read_strings=False)
+            except OSError:
+                found = []
+        else:
+            found = []
+        return frozenset([(u["vid"], u["pid"], u.get("serial"), u.get("location")) for u in found]
+                         + [("port", p.device) for p in list_ports.comports() if p.vid is not None])
 
     def serial_ports(self) -> list[dict]:
         from serial.tools import list_ports
@@ -420,6 +448,24 @@ def linux_usb_devices(root: Path) -> list[dict]:
     return out
 
 
+def parse_ioreg(data: bytes) -> list[dict]:
+    """USB devices from `ioreg -r -c IOUSBHostDevice -w0 -a -d1` (macOS): a plist array, one dict per device."""
+    import plistlib
+
+    try:
+        items = plistlib.loads(data) if data.strip() else []
+    except Exception:  # plistlib raises several kinds on a cut-off answer
+        return []
+    out = []
+    for it in items if isinstance(items, list) else []:
+        if isinstance(it, dict) and isinstance(it.get("idVendor"), int):
+            out.append({"name": it.get("USB Product Name"), "vendor": it.get("USB Vendor Name"), "vid": it["idVendor"],
+                        "pid": it.get("idProduct", 0), "serial": it.get("USB Serial Number"),
+                        "location": f"0x{it['locationID']:08x}" if isinstance(it.get("locationID"), int) else None,
+                        "device_class": it.get("bDeviceClass")})
+    return out
+
+
 def parse_detect(text: str) -> list[dict]:
     """Parse `openFPGALoader --detect`. Each `index N:` block carries the tool's own
     database lookup (manufacturer/family/model), which beats our small table.
@@ -455,6 +501,8 @@ class _FixtureStream:
             if self.pending:
                 out, self.pending = self.pending, b""
                 return out
+            if not self.io.port_present(self.path):  # taken out of the fixture file: unplugged
+                raise PortGone("Device not configured (fixture)")
             now = time.monotonic() - self.t0
             if self.script and self.script[0]["after"] <= now:
                 ev = self.script.pop(0)
@@ -480,12 +528,15 @@ class FixtureIo:
     """Replays a bench described in JSON (see fixtures/)."""
 
     def __init__(self, path: str | Path):
-        self.data = json.loads(Path(path).read_text(encoding="utf-8"))
+        self.path = Path(path)
+        self.data = json.loads(self.path.read_text(encoding="utf-8"))
+        self._mtime = self.path.stat().st_mtime_ns
         self.calls: list[tuple] = []  # what access was attempted, for tests/audit
         self.exclusive_opens: list[str] = []
         self.bauds: list[int] = []
         self.lines: list[str] = []
         self.gone_until: dict[str, float] = {}
+        self.unplugged: set[str] = set()  # serial ports taken out of the file since it was first read
         self.streams_opened: list[str] = []
 
     def serial_stream(self, path: str, baud: int = 115200, exclusive: bool = False, lines: str = "low") -> _FixtureStream:
@@ -507,12 +558,31 @@ class FixtureIo:
         return st
 
     def port_present(self, path: str) -> bool:
-        return time.monotonic() >= self.gone_until.get(path, 0)
+        self._reread()
+        return path not in self.unplugged and time.monotonic() >= self.gone_until.get(path, 0)
+
+    def _reread(self) -> None:
+        """The fixture file is the bench: writing a device into it (or taking one out) plugs (unplugs) it."""
+        try:
+            m = self.path.stat().st_mtime_ns
+            if m != self._mtime:
+                paths = lambda d: {s["device"] for s in d.get("serial", [])}  # noqa: E731
+                was = paths(self.data)
+                self.data, self._mtime = json.loads(self.path.read_text(encoding="utf-8")), m
+                self.unplugged = (self.unplugged | (was - paths(self.data))) - paths(self.data)
+        except (OSError, json.JSONDecodeError):
+            pass  # half written: read it next time
+
+    def plugged(self) -> frozenset[tuple]:
+        return frozenset([(u["vid"], u["pid"], u.get("serial"), u.get("location")) for u in self.usb_devices()]
+                         + [("port", p["device"]) for p in self.serial_ports()])
 
     def usb_devices(self) -> list[dict]:
+        self._reread()
         return [dict(d, vid=int(d["vid"], 16), pid=int(d["pid"], 16)) for d in self.data.get("usb", [])]
 
     def serial_ports(self) -> list[dict]:
+        self._reread()
         return [dict(p, vid=int(p["vid"], 16), pid=int(p["pid"], 16)) for p in self.data.get("serial", [])]
 
     def visa_resources(self) -> list[str]:

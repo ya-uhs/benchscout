@@ -103,8 +103,10 @@ def clean(descriptor: bytes) -> str | None:
     return text.split("\0", 1)[0].strip() or None
 
 
-def usb_strings() -> list[dict]:
-    """[{vid, pid, manufacturer, product, serial}] for each device on every hub port; [] off Windows or on failure."""
+def usb_strings(read_strings: bool = True) -> list[dict]:
+    """[{vid, pid, manufacturer, product, serial, location}] for each device on every hub port; [] off Windows or on
+    failure. Without `read_strings` nothing is sent to any device: the hub answers from the descriptor it holds (used
+    every few seconds to notice plugs and unplugs)."""
     if sys.platform != "win32":
         return []
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
@@ -116,6 +118,7 @@ def usb_strings() -> list[dict]:
     kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
     found = []
     for path in _hub_paths():
+        string = _string if read_strings else (lambda *_: None)
         hub = kernel32.CreateFileW(path, GENERIC_WRITE, FILE_SHARE_WRITE, None, OPEN_EXISTING, 0, None)
         if not hub or hub == INVALID_HANDLE:
             continue
@@ -132,8 +135,9 @@ def usb_strings() -> list[dict]:
                 if int.from_bytes(raw[31:35], "little") != 1 or raw[24]:  # not DeviceConnected, or a hub
                     continue
                 vid, pid = int.from_bytes(raw[12:14], "little"), int.from_bytes(raw[14:16], "little")
-                found.append({"vid": vid, "pid": pid, "manufacturer": _string(kernel32, hub, port, raw[18]),
-                              "product": _string(kernel32, hub, port, raw[19]), "serial": _string(kernel32, hub, port, raw[20])})
+                found.append({"vid": vid, "pid": pid, "manufacturer": string(kernel32, hub, port, raw[18]),
+                              "product": string(kernel32, hub, port, raw[19]), "serial": string(kernel32, hub, port, raw[20]),
+                              "location": f"{path}#{port}"})
         finally:
             kernel32.CloseHandle(hub)
     return found

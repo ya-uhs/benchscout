@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // The inbox in a real VS Code, end to end, on a scripted bench with no hardware (fixtures/bench_e2e.json).
 // It checks what the unit tests cannot see: the extension starting its core, the webview drawing the
-// cards, a button press reaching the core, a watched port's crash turning into a card, Release/Use.
+// cards, a button press reaching the core, a watched port's crash turning into a card, Release/Use, and a device
+// plugged in and pulled out (by writing it into, and out of, a copy of the fixture: the file is the bench).
 // No agent is chosen, so nothing is woken (on a machine with Claude Code or Copilot installed too).
 //
 //   node scripts/e2e.mjs [--vsix FILE] [--core PATH]
@@ -10,7 +11,8 @@
 // whatever core a .vsix carries. E2E_DOWNLOAD_VSCODE=1 downloads VS Code (stable) first, as CI does.
 
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 const here = resolve(import.meta.dirname, "..");
@@ -67,8 +69,10 @@ async function until(what, read, ok, seconds = 45) {
 
 const DEVICE = "STMicroelectronics STLINK-V3";  // its console (fixtures/bench_e2e.json) crashes a few seconds after opening
 const DEVICE_ID = "/dev/cu.usbmodem21403";  // its port: the agent names the device by it
+const BENCH = join(mkdtempSync(join(tmpdir(), "benchscout-e2e-")), "bench.json");  // a copy: plugging in writes to it
+copyFileSync(join(repo, "fixtures", "bench_e2e.json"), BENCH);
 let failed = false;
-ui("start", ...(flag("--vsix") ? ["--vsix", flag("--vsix")] : []), "--fixture", join(repo, "fixtures", "bench_e2e.json"),
+ui("start", ...(flag("--vsix") ? ["--vsix", flag("--vsix")] : []), "--fixture", BENCH,
   "--core", core, "--language", "en");
 try {
   const step = (s) => console.log(`- ${s}`);
@@ -108,6 +112,26 @@ try {
   console.log(`  ${ui("mem-button", "e2e: prints sensor ok")}`);
   await until("the entry forgotten", "memory", (t) => !t.includes("e2e: prints sensor ok"));
   step("what the agent remembered is listed in the inbox and forgotten from there");
+
+  // the core notices plugs by itself: a new device is offered; a chosen one pulled out is said, and closed when back
+  const NEW = "Silicon Labs CP2102N USB to UART Bridge Controller";
+  const usb = { name: "CP2102N USB to UART Bridge Controller", vendor: "Silicon Labs", vid: "0x10c4", pid: "0xea60", serial: "0001", location: "0x01400000" };
+  const port = { device: "/dev/cu.usbserial-0001", vid: "0x10c4", pid: "0xea60", serial_number: "0001", description: "CP2102N" };
+  const plug = (on) => {
+    const d = JSON.parse(readFileSync(BENCH, "utf8"));
+    d.usb = d.usb.filter((u) => u.vid !== usb.vid).concat(on ? [usb] : []);
+    d.serial = d.serial.filter((s) => s.vid !== usb.vid).concat(on ? [port] : []);
+    writeFileSync(BENCH, JSON.stringify(d));
+  };
+  plug(true);
+  await until("the plugged-in card", "cards", (t) => t.includes(`Plugged in: ${NEW}`), 20);
+  console.log(`  ${ui("click", `Look at ${NEW}`)}`);
+  await until("the new device chosen", "devices", (t) => t.split("\n").some((r) => r.includes(NEW) && r.includes("Release")));
+  plug(false);
+  await until("the unplugged card", "cards", (t) => t.includes(`Unplugged: ${NEW}`), 20);
+  plug(true);
+  await until("the card closed when it is back", "cards", (t) => t.includes("back: watched again"), 20);
+  step("a device plugged in is offered; a chosen one pulled out is said, and closed when it is back");
   console.log("e2e: ok");
 } catch (e) {
   failed = true;

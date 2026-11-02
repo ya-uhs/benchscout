@@ -41,7 +41,8 @@ AGENT_METHODS = ("scan", "inventory", "impact", "do", "actions", "ask", "request
 def agent_dispatch(broker: Broker, method: str, params: dict) -> Any:
     if method == "scan":
         r = broker.scan()
-        return {"text": render(r), "selected": sorted(broker.selected), "watch": broker.watch_state()}
+        return {"text": render(r), "selected": sorted(broker.selected), "watch": broker.watch_state(),
+                "unplugged": sorted(d for d in broker.selected if d not in r.bench.devices)}
     if method == "inventory":
         return (broker.last or broker.scan()).to_dict()
     if method == "impact":
@@ -177,7 +178,7 @@ def parse_shorthand(line: str) -> dict:
 
 def control_dispatch(broker: Broker, method: str, params: dict) -> Any:
     if method == "scan":
-        r = broker.scan()
+        r = broker.scan(only_new=bool(params.get("only_new")))
         return {"text": render(r), "bench": r.bench.to_dict(), "proposals": [asdict(p) for p in r.proposals],
                 "selected": sorted(broker.selected)}
     if method == "inventory":
@@ -207,6 +208,43 @@ def control_dispatch(broker: Broker, method: str, params: dict) -> Any:
     raise ValueError(f"unknown control method {method!r}")
 
 
+PLUG_POLL_S = 2.0
+
+
+class PlugWatch:
+    """Notices devices plugged in or pulled out (design.md section 17). Every few seconds it asks the OS what is
+    plugged in, devices and serial ports (nothing is opened, no device is asked anything); a change it sees twice in
+    a row makes the core scan, probing only the new devices. A reset that re-enumerates and is back by the next look is not a change:
+    the port's own watch reports it."""
+
+    def __init__(self, io, on_change, interval: float = PLUG_POLL_S):
+        self.io, self.on_change, self.interval = io, on_change, interval
+        self._stop = threading.Event()
+
+    def start(self) -> None:
+        if hasattr(self.io, "plugged"):
+            threading.Thread(target=self._run, name="plugs", daemon=True).start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _run(self) -> None:
+        try:
+            scanned = seen = self.io.plugged()
+        except Exception:
+            return  # cannot look here: a rescan still shows what changed
+        while not self._stop.wait(self.interval):
+            try:
+                now = self.io.plugged()
+            except Exception:
+                continue
+            if now != seen:
+                seen = now  # look once more before believing it
+            elif now != scanned:
+                scanned = now
+                self.on_change()
+
+
 class Core:
     def __init__(self, broker: Broker, address: str | Path, out: IO[str] = sys.stdout, human: bool = False):
         self.broker = broker
@@ -215,6 +253,8 @@ class Core:
         self.human = human  # readable text for a person at a terminal instead of JSON lines
         self._out_lock = threading.Lock()
         self.server: AgentServer | None = None
+        # a plug or an unplug: the core scans the new devices by itself and sends the result like any scan's
+        self.plugs = PlugWatch(broker.io, lambda: self.handle_line('{"id": "plugged", "method": "scan", "params": {"only_new": true}}'))
 
     def emit(self, msg: dict) -> None:
         with self._out_lock:
@@ -261,6 +301,7 @@ class Core:
         self.start()
         if initial_scan:  # the first read comes at once, before any LLM is involved (docs/notes.md review R4)
             self.handle_line('{"id": "initial", "method": "scan"}')
+        self.plugs.start()
         try:
             for line in inp:
                 if not self.handle_line(line):
@@ -269,6 +310,7 @@ class Core:
             self.stop()
 
     def stop(self) -> None:
+        self.plugs.stop()
         if self.server:
             self.server.close()
             self.server = None

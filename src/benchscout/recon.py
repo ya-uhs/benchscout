@@ -28,6 +28,9 @@ class Recon:
     bench: Bench
     proposals: list[Proposal] = field(default_factory=list)
     ran: list[str] = field(default_factory=list)  # audit of probes actually executed
+    # what each port's SAFE probe got, so a later scan that leaves the device alone (it is in use, or only new devices
+    # are probed) still shows it: port id -> {"probe": "idn" | "listen" | "jtag", "time": ..., "result" | "error": ...}
+    heard: dict[str, dict] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {"bench": self.bench.to_dict(), "proposals": [asdict(p) for p in self.proposals], "ran": self.ran}
@@ -289,9 +292,13 @@ def _add_visa(b: Bench, res: str, names: dict | None = None) -> None:
     b.link(p.id, t.id, "scpi")
 
 
-def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] | None = None) -> Recon:
+def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] | None = None,
+        keep: set[str] | frozenset[str] = frozenset(), heard: dict[str, dict] | None = None) -> Recon:
     """`busy(device_id)` names another benchscout window holding that device; its ports are
-    left alone (docs/notes.md review S1/S2)."""
+    left alone (docs/notes.md review S1/S2). Devices in `keep` are not probed either (the session is using them,
+    or only newly plugged devices are being looked at): what their probes got before (`heard`) is shown again."""
+    import time
+
     b = build(io)
     r = Recon(b)
 
@@ -305,44 +312,68 @@ def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] 
                 if fact not in t.facts:
                     t.facts.append(fact)
             continue
+        if port.device_id in keep:
+            if heard and port.id in heard:
+                r.heard[port.id] = heard[port.id]
+                _fold(b, targets, heard[port.id], earlier=True)
+            continue
 
+        got: dict | None = None
         if port.kind in SCPI_PORTS and port.path:
             if classify(b, "scpi.query", port.id, {"command": "*IDN?"}).effect == Effect.SAFE:
                 r.ran.append(f"scpi.query *IDN? {port.path}")
-                idn = io.visa_query(port.path, "*IDN?")
-                for t in targets:
-                    if idn:
-                        info = K.parse_idn(idn)
-                        t.name = f"{info['maker'].split()[0].title()} {info['model']}"
-                        t.confidence = Confidence.IDENTIFIED
-                        t.evidence.append(Evidence("scpi *IDN?", idn))
-                    else:
-                        t.facts.append("no answer to *IDN?")
+                got = {"probe": "idn", "result": io.visa_query(port.path, "*IDN?")}
 
         elif port.kind == "serial" and port.path:
             if classify(b, "serial.listen", port.id).effect == Effect.SAFE:
                 r.ran.append(f"serial.listen {port.path}")
-                listen_into(io, port.path, targets, listen_seconds)
+                try:
+                    got = {"probe": "listen", "result": io.serial_listen(port.path, listen_seconds, 115200, False, "low")}
+                except Exception as e:  # serial.SerialException / OSError: device went away
+                    got = {"probe": "listen", "error": str(e)}
 
         elif port.kind == "jtag" and b.tools.get("openFPGALoader") and port.tools.get("openFPGALoader") \
                 and not b.devices[port.device_id].needs_udev and not b.devices[port.device_id].needs_winusb:
             # only where the USB data says how openFPGALoader reaches this probe; others stay unknown
             if classify(b, "jtag.scan", port.id).effect == Effect.SAFE:
                 r.ran.append(f"jtag.scan {port.id}")
-                for found in io.jtag_scan(port.tools["openFPGALoader"]):
-                    code = found["idcode"]
-                    # the tool's own IDCODE database names it; benchscout keeps no table (design.md section 5)
-                    name = " ".join(x for x in (found.get("manufacturer"), found.get("model")) if x)
-                    src = "openFPGALoader database" if found.get("model") else "not in openFPGALoader's database"
-                    for t in targets:
-                        if name and t.kind in ("fpga", "mcu", "unknown"):
-                            t.name, t.confidence = name, Confidence.IDENTIFIED
-                            if t.kind == "unknown":
-                                t.kind = "fpga"
-                        t.evidence.append(Evidence("jtag idcode", f"0x{code:08X} ({src})"))
+                got = {"probe": "jtag", "result": io.jtag_scan(port.tools["openFPGALoader"])}
+        if got is not None:
+            got["time"] = time.strftime("%Y-%m-%d %H:%M")
+            r.heard[port.id] = got
+            _fold(b, targets, got)
 
     r.proposals = propose(b)
     return r
+
+
+def _fold(b: Bench, targets: list[Target], got: dict, earlier: bool = False) -> None:
+    """What a probe got, into the targets it reaches. `earlier`: from a scan before this one (the device was left
+    alone this time); a log is then labelled with when it was heard, as output kept from before is."""
+    result = got.get("result")
+    if got["probe"] == "idn":
+        for t in targets:
+            if result:
+                info = K.parse_idn(result)
+                t.name = f"{info['maker'].split()[0].title()} {info['model']}"
+                t.confidence = Confidence.IDENTIFIED
+                t.evidence.append(Evidence("scpi *IDN?", result))
+            else:
+                t.facts.append("no answer to *IDN?")
+    elif got["probe"] == "listen":
+        _fold_listen(targets, result, got.get("error"), got["time"] if earlier else None)
+    elif got["probe"] == "jtag":
+        for found in result or []:
+            code = found["idcode"]
+            # the tool's own IDCODE database names it; benchscout keeps no table (design.md section 5)
+            name = " ".join(x for x in (found.get("manufacturer"), found.get("model")) if x)
+            src = "openFPGALoader database" if found.get("model") else "not in openFPGALoader's database"
+            for t in targets:
+                if name and t.kind in ("fpga", "mcu", "unknown"):
+                    t.name, t.confidence = name, Confidence.IDENTIFIED
+                    if t.kind == "unknown":
+                        t.kind = "fpga"
+                t.evidence.append(Evidence("jtag idcode", f"0x{code:08X} ({src})"))
 
 
 def listen_into(io: Io, path: str, targets: list[Target], seconds: float, exclusive: bool = False,
@@ -352,16 +383,24 @@ def listen_into(io: Io, path: str, targets: list[Target], seconds: float, exclus
     try:
         text = io.serial_listen(path, seconds, baud, exclusive, lines)
     except Exception as e:  # serial.SerialException / OSError: device went away
-        for t in targets:
-            t.facts.append(f"ALERT: port disappeared while listening ({e}); the device likely reset or re-enumerated")
+        _fold_listen(targets, None, str(e))
         return None
+    _fold_listen(targets, text, None)
+    return text
+
+
+def _fold_listen(targets: list[Target], text: str | None, error: str | None, seen: str | None = None) -> None:
+    when = f" (seen {seen})" if seen else ""
+    if text is None:
+        for t in targets:
+            t.facts.append(f"ALERT: port disappeared while listening ({error}); the device likely reset or re-enumerated{when}")
+        return
     if VANISHED_MARK in text:
         for t in targets:
-            fact = "the port vanished while listening (the device reset or re-enumerated) and came back; kept listening"
+            fact = f"the port vanished while listening (the device reset or re-enumerated) and came back; kept listening{when}"
             if fact not in t.facts:
                 t.facts.append(fact)
-    apply_log(targets, "\n".join(l for l in text.splitlines() if VANISHED_MARK not in l))
-    return text
+    apply_log(targets, "\n".join(l for l in text.splitlines() if VANISHED_MARK not in l), seen=seen)
 
 
 def apply_log(t_list: list[Target], text: str, seen: str | None = None) -> None:
