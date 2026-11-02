@@ -25,7 +25,7 @@ from .report import render
 
 LANGUAGE_NAMES = {"ja": "Japanese", "en": "English", "zh": "Chinese", "ko": "Korean", "de": "German", "fr": "French"}
 
-# Where each agent reads project skills (design.md section 15 S4).
+# Where each agent reads project skills (docs/notes.md review S4).
 SKILL_DIRS = {"claude": ".claude/skills", "copilot": ".agents/skills"}
 
 
@@ -135,7 +135,7 @@ def setup_workspace(cwd: Path, agent: str = "claude", skill_only: bool = False) 
             allow = perms.setdefault("allow", [])
             if "mcp__benchscout" not in allow:
                 allow.append("mcp__benchscout")
-            # The agent must not drive benchscout itself, e.g. start its own core (design.md 15 R3).
+            # The agent must not drive benchscout itself, e.g. start its own core (docs/notes.md review R3).
             deny = perms.setdefault("deny", [])
             if "Bash(benchscout:*)" not in deny:
                 deny.append("Bash(benchscout:*)")

@@ -1,4 +1,4 @@
-"""Per-device locks shared by every core of this OS user (design.md section 15 S1).
+"""Per-device locks shared by every core of this OS user (docs/notes.md review S1).
 
 One core runs per VS Code window, so two windows could otherwise both use the same
 board. Selecting a device acquires its lock, like labgrid's `acquire` on a place.

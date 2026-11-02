@@ -1,6 +1,6 @@
 """`benchscout mcp`: the agent's MCP server. It relays to the core of this workspace.
 
-It owns no broker, no ports and no approvals (design.md section 15 R2/R3). Every
+It owns no broker, no ports and no approvals (docs/notes.md review R2/R3). Every
 agent (Copilot, Claude Code, ...) that starts it reaches the same core, the one the
 human's panel controls. It never starts a core itself (S1): without one there is no
 human channel, so it says how to start one instead.

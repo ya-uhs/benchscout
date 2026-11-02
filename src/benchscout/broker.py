@@ -108,7 +108,7 @@ class Broker:
 
         self.memory = Memory(self.state.parent)  # design.md section 6
         # Output heard from each target, kept across re-scans so what was learned is not lost
-        # when the graph is rebuilt (design.md section 10). Per target: the latest output, plus
+        # when the graph is rebuilt (docs/notes.md, 実機で学んだこと). Per target: the latest output, plus
         # the latest one that named the part and the latest one that raised an alert, so a later
         # quiet answer does not wipe them (real bench: `hang` after `panic` lost the ESP32-S3).
         self.observed: dict[str, dict[str, tuple[str, str]]] = {}  # target id -> kind -> (time, text)

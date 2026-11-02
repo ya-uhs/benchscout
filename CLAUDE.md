@@ -8,6 +8,9 @@ classifies every action by its effect on device state and gates anything not SAF
 approval in the panel.
 
 **The source of truth for intent, direction and decisions is `docs/design.md`** (Japanese).
+Work notes (where things stand, what is next, what the real bench showed, design reviews) are in
+`docs/notes.md`. Keep them apart: a finding, a bug's story or a test run goes to notes.md; only the
+decision that comes out of it goes into design.md, briefly, in its decision log (section 12).
 Read it before design work. If this file or README.md disagrees with it, design.md wins;
 change design.md (its decision log, section 12) first when the direction changes.
 
@@ -62,7 +65,7 @@ load in `bench-session/`, which must look exactly like an end user's workspace.
 - **Scope**: bench observation, diagnosis and hardware operation, including writing a bitstream
   to FPGA SRAM or an image to flash as one DANGEROUS action defined as data. Editing and building
   code are out of scope.
-- What exists today and what is next: design.md sections 11 and 13. Shipped data is limited to
+- What exists today and what is next: docs/notes.md (現状, 次にやること). Shipped data is limited to
   how USB interfaces behave when opened, what they carry and how a tool reaches them, board
   wiring, generic crash markers (across SDKs, not one vendor's), and external-tool actions; do not
   grow it. `test_without_any_shipped_data_benchscout_only_gets_stricter` guards the rule that
@@ -116,12 +119,12 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
   things. SCPI: only the standard's status/identity queries are SAFE; anything else asks, and a standing grant
   (for the session, or "always on this instrument", which the human's channel writes to memory) covers that
   command header only; an output setting asks every time. One message per call, printable ASCII
-  (`tests/test_scpi.py`, `tests/test_gate_properties.py`, design.md U9, U12).
+  (`tests/test_scpi.py`, `tests/test_gate_properties.py`, docs/notes.md review U9, U12).
 - Every proposal carries a `why:` that is the policy's actual reason
   (`test_proposal_reason_matches_policy`).
 - VISA `ASRL` resources are never sent `*IDN?`.
 - Approvals come only from the human control channel, never from the agent's channel, and live
-  in the core's memory (design.md section 16 R3). DANGEROUS grants are bound to
+  in the core's memory (design.md §3; docs/notes.md review R3). DANGEROUS grants are bound to
   (action, port, arg) and single use; DISRUPTIVE grants may cover (action, port) for the session
   or a time limit (R8), for SCPI only the command headers the human saw. The human may also allow every
   DISRUPTIVE call for the session ("allow all", control channel only); DANGEROUS still asks each time.
@@ -165,7 +168,7 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
 
 Bench: ESP32-S3 on its native USB-Serial/JTAG + Sipeed Tang Nano 9K (GW1N(R)-9C), both running the
 test firmware/bitstream from `testbench/` (known output; see testbench/README.md). Everything learned
-there is in design.md section 10; real outputs are kept in `fixtures/real/` for the tests. Points that
+there is in docs/notes.md (実機で学んだこと); real outputs are kept in `fixtures/real/` for the tests. Points that
 still shape the code:
 
 - ESP32-S3 native USB resets when DTR/RTS are dropped after opening; opened with the lines left

@@ -17,7 +17,7 @@ export interface AcpProfile {
   command: string;
   args: string[];
   // "flag": the agent takes MCP servers on its command line (Copilot CLI rejects stdio servers sent in
-  // session/new, design.md section 16 T8); "session": pass them in session/new as ACP intends.
+  // session/new, docs/notes.md review T8); "session": pass them in session/new as ACP intends.
   mcp: { via: "flag"; build: (relay: McpRelay) => string[] } | { via: "session" };
   install: string; // what to tell the human when it cannot be started
 }

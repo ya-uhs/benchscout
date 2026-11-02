@@ -2,7 +2,7 @@
 
 POSIX: a Unix socket in a directory only this OS user can open.
 Windows: a named pipe (the default pipe DACL lets other accounts read but not write).
-Nothing here grants anything: approvals exist only in a core's memory (design.md 15 R3).
+Nothing here grants anything: approvals exist only in a core's memory (docs/notes.md review R3).
 """
 
 from __future__ import annotations

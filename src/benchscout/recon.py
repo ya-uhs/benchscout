@@ -271,7 +271,7 @@ def _add_visa(b: Bench, res: str, names: dict | None = None) -> None:
 
 def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] | None = None) -> Recon:
     """`busy(device_id)` names another benchscout window holding that device; its ports are
-    left alone (design.md section 15 S1/S2)."""
+    left alone (docs/notes.md review S1/S2)."""
     b = build(io)
     r = Recon(b)
 

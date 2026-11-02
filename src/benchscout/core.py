@@ -257,7 +257,7 @@ class Core:
 
     def run(self, inp: IO[str] = sys.stdin, initial_scan: bool = True) -> None:
         self.start()
-        if initial_scan:  # the first read comes at once, before any LLM is involved (design.md 15 R4)
+        if initial_scan:  # the first read comes at once, before any LLM is involved (docs/notes.md review R4)
             self.handle_line('{"id": "initial", "method": "scan"}')
         try:
             for line in inp:

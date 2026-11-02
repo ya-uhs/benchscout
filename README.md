@@ -92,6 +92,6 @@ ESP32-S3 USB ─┬─ /dev/cu.usbmodem ─uart─┐
 
 ## Not done yet
 
-See [docs/design.md](docs/design.md) section 13: Copilot Chat inside VS Code using the tools (needs a
+See [docs/notes.md](docs/notes.md) (次にやること): Copilot Chat inside VS Code using the tools (needs a
 signed-in VS Code), device commands from memory, Japanese wording from the core (approval reasons),
 Windows/Linux in CI and on hardware, writing flash with esptool 5 on the real bench.

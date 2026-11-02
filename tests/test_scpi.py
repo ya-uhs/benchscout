@@ -1,7 +1,7 @@
 """SCPI: only what the standard fixes is judged by name; anything else asks, and what the human allows covers
 the command they saw, not others.
 
-Review 2026-11-02 (design.md section 16 U9, U12): a list of "output" command patterns decided which SCPI writes
+Review 2026-11-02 (docs/notes.md review U9, U12): a list of "output" command patterns decided which SCPI writes
 were DANGEROUS on top of a default whose session grant covered every command, so each miss spread. No such list is
 complete. Now nothing outside the standard runs before the human has seen it, a grant ("for the session", "always
 on this instrument") is bound to the command header, and only an output setting the list knows asks every time.

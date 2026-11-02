@@ -92,7 +92,7 @@ function chosenAgent(): string {
   return vscode.workspace.getConfiguration("benchscout").get<string>("agent") ?? "";
 }
 
-/** The expert skill, where the chosen agent reads it (design.md S4); the core carries the one source. */
+/** The expert skill, where the chosen agent reads it (docs/notes.md review S4); the core carries the one source. */
 function installSkill(ctx: vscode.ExtensionContext, ws: string): void {
   const id = chosenAgent();
   if (!AGENTS[id]) return;
@@ -272,7 +272,7 @@ export function activate(ctx: vscode.ExtensionContext): void {
     { dispose: () => { harness?.stop(); core?.stop(); } },
   );
 
-  // Opened on its own only in folders that already use benchscout (design.md 15 S2).
+  // Opened on its own only in folders that already use benchscout (docs/notes.md review S2).
   if (folder() && fs.existsSync(path.join(folder()!, ".benchscout"))) void start(ctx);
   refresh();
 }

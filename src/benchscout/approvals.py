@@ -1,4 +1,4 @@
-"""Approvals, held only in the core's memory (design.md section 15 R3 and R8).
+"""Approvals, held only in the core's memory (docs/notes.md review R3 and R8).
 
 - Only the control channel (the human's panel) calls `decide`. The agent's channel has
   no method that reaches it.
