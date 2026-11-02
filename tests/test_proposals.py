@@ -95,3 +95,27 @@ def test_only_the_human_decides_and_an_untrusted_folder_takes_none(broker, tmp_p
         agent_dispatch(broker, "tool_decide", {"id": res["proposal_id"], "accept": True})
     untrusted = Broker(FixtureIo(FIXTURE), tmp_path / "other" / ".benchscout", workspace_knowledge=False)
     assert untrusted.define_tool(PROGRAM, EVIDENCE)["status"] == "rejected"
+
+
+def test_the_agent_hears_defined_only_once_it_can_use_the_action(broker):
+    """Real bench, 2026-11-02 (Espressif's OpenOCD on the ESP32-S3): the agent's waiting call returned "defined" as
+    soon as the human pressed the button, before the definition was written and loaded, and its next bench_do was
+    told there was no such action."""
+    import threading
+
+    broker.approval_wait = 10
+    out = {}
+    def agent():
+        out.update(broker.define_tool(PROGRAM, EVIDENCE))
+        out["usable"] = "vendortool.program" in A.all_actions()  # what the agent's next bench_do would meet
+
+    t = threading.Thread(target=agent)
+    t.start()
+    for _ in range(100):
+        if broker.proposals._items:
+            break
+        __import__("time").sleep(0.02)
+    (pid,) = broker.proposals._items
+    broker.decide_tool(pid, True)
+    t.join(10)
+    assert out["status"] == "defined" and out["usable"]

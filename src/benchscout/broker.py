@@ -339,12 +339,14 @@ class Broker:
         from . import knowledge as K
         from .proposals import write
 
-        p = self.proposals.decide(proposal_id, accept)
-        if accept:
+        p = self.proposals.get(proposal_id)
+        if p is None or p.status != "pending":
+            raise ValueError(f"no pending tool proposal {proposal_id!r}")
+        if accept:  # the action exists before the agent's waiting call hears "defined" (real bench, 2026-11-02)
             write(self.state / "knowledge", p, date.today().isoformat())
             K.load(self.state.parent)
             self.scan()
-        return asdict(p)
+        return asdict(self.proposals.decide(proposal_id, accept))
 
     # ---- memory (design.md section 6) ---------------------------------------------------------
     def _key(self, dev) -> str:
