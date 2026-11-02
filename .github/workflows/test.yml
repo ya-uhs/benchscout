@@ -121,6 +121,11 @@ jobs:
         working-directory: vscode
         env:
           VSCE_TARGET: ${{ matrix.target }}
+      # the same control-channel tests, against the frozen core this .vsix carries
+      - run: npm test
+        working-directory: vscode
+        env:
+          BENCHSCOUT_TEST_BIN: ${{ github.workspace }}/vscode/bin/benchscout/benchscout${{ runner.os == 'Windows' && '.exe' || '' }}
       - uses: actions/upload-artifact@v4
         with:
           name: benchscout-${{ matrix.target }}
