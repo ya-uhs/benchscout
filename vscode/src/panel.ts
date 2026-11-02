@@ -18,6 +18,7 @@ export interface PanelState {
   agent: string; // label of the agent benchscout wakes, or "" if none chosen yet
   cards: Card[];
   devices: DeviceRow[];
+  allowAll: boolean; // the human allowed every DISRUPTIVE call for this session
   strings: Omit<Strings, "statusWaiting" | "lookAt" | "wakeFailed" | "budget" | "agentWantsDevices" | "learned" | "learnedSafety"
     | "deviceAlert" | "deviceVanished" | "deviceReset" | "deviceGone" | "offerWatch" | "watching" | "listenSafeAsk" | "hostSlept">;
 }
@@ -35,6 +36,9 @@ export function html(nonce: string, cspSource: string): string {
   .muted { color: var(--vscode-descriptionForeground); }
   textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 2.4em; background: var(--vscode-input-background);
              color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); border-radius: 3px; padding: 4px 6px; font: inherit; }
+  .allowall { display: flex; gap: 8px; align-items: center; margin: 6px 0; padding: 6px 8px; border-radius: 4px;
+              background: var(--vscode-inputValidation-warningBackground); border: 1px solid var(--vscode-inputValidation-warningBorder, transparent); }
+  .allowall span { flex: 1; }
   .card { border: 1px solid var(--vscode-panel-border); border-left-width: 4px; border-radius: 6px; padding: 8px 10px; margin: 8px 0; overflow-wrap: anywhere; }
   .card.question { border-left-color: var(--vscode-focusBorder); }
   .card.confirm { border-left-color: var(--vscode-editorWarning-foreground); background: var(--vscode-inputValidation-warningBackground); }
@@ -124,7 +128,10 @@ function render() {
   h += '<div class="row" style="flex-wrap:nowrap;margin-top:0"><textarea data-draft="_top" placeholder="' + esc(s.newInput) + '">' + esc(drafts._top ?? "") +
        '</textarea><button class="primary" data-tell="1">' + esc(s.send) + "</button></div>";
   h += '<div class="row">' + (state.running ? '<button data-cmd="rescan">' + esc(s.rescan) + '</button><button data-cmd="stop">' + esc(s.stop) + "</button>"
-                                            : '<button class="primary" data-cmd="start">' + esc(s.start) + "</button>") + "</div></div>";
+                                            : '<button class="primary" data-cmd="start">' + esc(s.start) + "</button>") + "</div>";
+  // while everything is allowed, say so at the top, with the way back
+  if (state.allowAll) h += '<div class="allowall"><span>' + esc(s.allowAllOn) + '</span><button data-cmd="allowAllOff">' + esc(s.allowAllOff) + "</button></div>";
+  h += "</div>";
   // what needs the person first: pinned, then decisions, then reports, then records (newest first within each)
   const rank = (c) => (c.pin ? 0 : c.kind === "confirm" || c.kind === "question" || (c.kind === "memory" && c.options.some((o) => o.primary)) ? 1 : c.kind === "report" ? 2 : 3);
   if (state.devices.length) {

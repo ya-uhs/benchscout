@@ -67,6 +67,7 @@ class Gate(RuleBasedStateMachine):
         self.used: set[str] = set()
         # (action, port, SCPI headers or None) the human allowed for the session
         self.session: set[tuple[str, str, frozenset | None]] = set()
+        self.allow_all = False  # the human allowed every DISRUPTIVE call
 
     def teardown(self):
         self.br.end_session()
@@ -100,7 +101,7 @@ class Gate(RuleBasedStateMachine):
             self.used.add(approval_id)
         else:
             subjects = self._impact(action, port, args).subjects
-            assert effect == Effect.DISRUPTIVE and any(
+            assert effect == Effect.DISRUPTIVE and self.allow_all or effect == Effect.DISRUPTIVE and any(
                 a == action and p == port and (s is None or subjects is not None and set(subjects) <= s)
                 for a, p, s in self.session), f"{action} {args} ({effect.name}) ran without the human's OK for it"
 
@@ -126,7 +127,23 @@ class Gate(RuleBasedStateMachine):
         args = json.loads(key)
         self._check(action, port, args, self.br.request(action, port, args, approval_id=aid, wait=0), approval_id=aid)
 
-    @rule(data=st.data(), grant=st.booleans(), scope=st.sampled_from(["once", "session", "always"]))
+    def _allow_all_on(self):
+        """Turning it on lets the agent's DISRUPTIVE calls already waiting go ahead."""
+        self.allow_all = True
+        for aid, (_, _, _, effect) in self.issued.items():
+            a = self.br.approvals.get(aid)
+            if effect == Effect.DISRUPTIVE and a is not None and a.status == "granted":
+                self.granted.add(aid)
+
+    @rule(on=st.booleans())
+    def human_switches_allow_all(self, on):
+        self.br.set_allow_all(on)
+        if on:
+            self._allow_all_on()
+        else:
+            self.allow_all = False
+
+    @rule(data=st.data(), grant=st.booleans(), scope=st.sampled_from(["once", "session", "always", "all"]))
     def human_decides(self, data, grant, scope):
         waiting = [a.id for a in self.br.approvals.pending() if a.by == "agent"]
         if not waiting:
@@ -142,6 +159,8 @@ class Gate(RuleBasedStateMachine):
             return
         if grant:
             self.granted.add(aid)
+            if scope == "all":
+                self._allow_all_on()
             if scope == "session":
                 subjects = self.br.approvals.get(aid).impact.get("subjects")
                 self.session.add((action, port, frozenset(subjects) if subjects is not None else None))

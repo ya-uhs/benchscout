@@ -62,6 +62,7 @@ export class Harness extends EventEmitter {
     core.on("scan", (b: Bench) => { if (!this.askedFirst) { this.askedFirst = true; this.firstQuestion(b); } });
     core.on("approvalRequested", (a: Approval) => this.approvalCard(a));
     core.on("approvalDecided", (a: Approval) => this.closeRef(`approval:${a.id}`, a.status));
+    core.on("allowAll", () => this.changed());  // the inbox shows it, with a way to turn it off
     core.on("questionAsked", (q: Question) => this.questionCard(q));
     core.on("questionAnswered", (q: Question) => this.closeRef(`question:${q.id}`, q.choice ?? q.reply ?? ""));
     core.on("deviceEvent", (e: DeviceEvent) => this.deviceEvent(e));
@@ -180,6 +181,7 @@ export class Harness extends EventEmitter {
     const options: CardOption[] = [{ id: "once", label: this.s.allowOnce, primary: true }];
     if (a.effect === "disruptive") options.push({ id: "session", label: command ? this.s.allowCommandSession : this.s.allowSession });
     if (command) options.push({ id: "always", label: this.s.allowAlwaysHere });
+    if (a.effect === "disruptive" && !this.core.allowAll) options.push({ id: "all", label: this.s.allowAllSession });
     options.push({ id: "deny", label: this.s.deny });
     const covers = a.effect !== "disruptive" ? "" : `\n${command ? this.s.commandCovers : this.s.sessionCovers}`;
     this.add({
@@ -189,7 +191,7 @@ export class Harness extends EventEmitter {
       detail: `${a.port} · ${describeArgs(a.args)}${a.impact.affected_ports.length ? ` · ${this.s.alsoAffects}: ${a.impact.affected_ports.join(", ")}` : ""}`,
       effect: a.effect, options, freeText: false,
     }, (ans) => this.core.decide(a.id, ans.option !== "deny",
-      ans.option === "session" || ans.option === "always" ? ans.option : "once").catch(() => undefined),
+      ans.option === "session" || ans.option === "always" || ans.option === "all" ? ans.option : "once").catch(() => undefined),
     `approval:${a.id}`);
   }
 

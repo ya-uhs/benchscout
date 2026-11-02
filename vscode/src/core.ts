@@ -54,6 +54,7 @@ export interface CoreEvents {
   selection: [string[], Record<string, { workspace?: string; pid?: number }>];
   approvalRequested: [Approval];
   approvalDecided: [Approval];
+  allowAll: [boolean];
   questionAsked: [Question];
   deviceEvent: [DeviceEvent];
   memoryAdded: [MemoryEvent];
@@ -69,6 +70,7 @@ export class CoreClient extends EventEmitter {
   private stderr = "";
   selected: string[] = [];
   pending = new Map<string, Approval>();
+  allowAll = false;  // the human allowed every DISRUPTIVE call for this session
   questions = new Map<string, Question>();
 
   constructor(private command: string, private workspace: string, private env: NodeJS.ProcessEnv = process.env,
@@ -99,7 +101,12 @@ export class CoreClient extends EventEmitter {
 
   scan(): Promise<any> { return this.call("scan"); }
   select(devices: string[]): Promise<any> { return this.call("select", { devices }); }
-  decide(approvalId: string, granted: boolean, scope: "once" | "session" | "always" | number = "once"): Promise<any> {
+  /** Allow every DISRUPTIVE call for the rest of the session (DANGEROUS still asks), or stop. */
+  setAllowAll(on: boolean): Promise<any> {
+    return this.call("allow_all", { on });
+  }
+
+  decide(approvalId: string, granted: boolean, scope: "once" | "session" | "always" | "all" | number = "once"): Promise<any> {
     return this.call("decide", { approval_id: approvalId, granted, scope });
   }
   memoryDecide(key: string, id: string, accept: boolean): Promise<any> {
@@ -135,6 +142,10 @@ export class CoreClient extends EventEmitter {
       case "approval_decided":
         this.pending.delete(msg.approval.id);
         this.emit("approvalDecided", msg.approval);
+        return;
+      case "allow_all":
+        this.allowAll = !!msg.on;
+        this.emit("allowAll", this.allowAll);
         return;
       case "memory_added":
         this.emit("memoryAdded", msg as MemoryEvent);

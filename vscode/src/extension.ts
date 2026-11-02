@@ -138,7 +138,8 @@ function refresh(): void {
   // everything that waits for the person: questions, approvals, and memory that would loosen safety
   const waiting = cards.filter((c) => c.status === "open" &&
     (c.kind === "confirm" || c.kind === "question" || (c.kind === "memory" && c.options.some((o) => o.primary)))).length;
-  status.text = waiting ? `$(bell-dot) ${s.statusWaiting(waiting)}` : `$(circuit-board) ${s.statusIdle}`;
+  status.text = (waiting ? `$(bell-dot) ${s.statusWaiting(waiting)}` : `$(circuit-board) ${s.statusIdle}`)
+    + (core?.running && core.allowAll ? ` · $(unlock) ${s.statusAllowAll}` : "");
   status.backgroundColor = waiting ? new vscode.ThemeColor("statusBarItem.warningBackground") : undefined;
   for (const c of cards) {
     if (c.kind === "confirm" && c.status === "open" && !notified.has(c.id)) {
@@ -155,7 +156,8 @@ function refresh(): void {
     return { id: d.id, label: d.name + (known ? ` — ${known}` : ""), selected: !!core?.selected.includes(d.id),
              watched: ports.some((p) => watched.has(p)), busy: !!busyElsewhere[d.id] || !!d.busyBy };
   });
-  const state: PanelState = { running: !!core?.running, agent: AGENTS[chosenAgent()]?.label ?? "", cards, devices, strings: plain };
+  const state: PanelState = { running: !!core?.running, agent: AGENTS[chosenAgent()]?.label ?? "", cards, devices,
+    allowAll: !!core?.running && !!core?.allowAll, strings: plain };
   view.webview.postMessage({ type: "state", state });
 }
 
@@ -221,6 +223,7 @@ export function activate(ctx: vscode.ExtensionContext): void {
           case "start": await start(ctx); break;
           case "stop": harness?.stop(); core?.stop(); break;
           case "rescan": askForAgent(); await core?.scan().catch(() => undefined); break;
+          case "allowAllOff": await core?.setAllowAll(false).catch(() => undefined); break;
           case "answer": await harness?.answer(m.id, { option: m.option, text: m.text }); break;
           case "tell": await harness?.tell(m.text); break;
           case "device": {  // the person releases a device for their own tools, or takes it back

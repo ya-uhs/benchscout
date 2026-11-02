@@ -123,8 +123,9 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
 - Approvals come only from the human control channel, never from the agent's channel, and live
   in the core's memory (design.md section 16 R3). DANGEROUS grants are bound to
   (action, port, arg) and single use; DISRUPTIVE grants may cover (action, port) for the session
-  or a time limit (R8), for SCPI only the command headers the human saw. `test_core.py` and
-  `tests/test_gate_properties.py` cover this.
+  or a time limit (R8), for SCPI only the command headers the human saw. The human may also allow every
+  DISRUPTIVE call for the session ("allow all", control channel only); DANGEROUS still asks each time.
+  `test_core.py` and `tests/test_gate_properties.py` cover this.
 - Recon (`bench_scan`) runs SAFE probes only.
 - An external tool is never installed up front: an action fetches it on first use from a pinned
   official release (version + SHA-256 in `[get.<tool>]`), and only after the human's OK on that

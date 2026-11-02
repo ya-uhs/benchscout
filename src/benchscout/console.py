@@ -8,7 +8,7 @@ import json
 HELP = ("1) Type the number of each device to work on (e.g. 1, or 1 2).\n"
         "2) Ask your agent (claude, Copilot) about them in this folder.\n"
         "3) When the agent needs something that is not SAFE, it shows up here with the exact\n"
-        "   approve/deny command to type. Other commands: pending | scan | quit")
+        "   approve/deny command to type. Other commands: allow-all on|off | pending | scan | quit")
 
 
 def _devices(bench: dict) -> list[str]:
@@ -42,7 +42,7 @@ def format_human(msg: dict, broker) -> str | None:
         a = msg["approval"]
         imp = a["impact"]
         also = f"\n   also disturbs: {', '.join(imp['affected_ports'])}" if imp.get("affected_ports") else ""
-        scope = f"   approve {a['id']} session | approve {a['id']} 10m | " if a["effect"] == "disruptive" else "   "
+        scope = f"   approve {a['id']} session | approve {a['id']} all | approve {a['id']} 10m | " if a["effect"] == "disruptive" else "   "
         if a["effect"] == "disruptive" and a["action"] in ("scpi.query", "scpi.write"):
             scope += f"approve {a['id']} always | "
         asker = f"   benchscout asks: {a['purpose']}\n" if a.get("by") == "benchscout" else ""
@@ -60,6 +60,9 @@ def format_human(msg: dict, broker) -> str | None:
     if ev == "approval_decided":
         a = msg["approval"]
         return f"<<< {a['id']}: {a['status']}" + (f" ({a['scope']})" if a["status"] == "granted" else "")
+    if ev == "allow_all":
+        return ("<<< allow all: ON. Whatever only changes a device's state runs without asking; what cannot be undone "
+                "still asks. `allow-all off` to stop." if msg["on"] else "<<< allow all: off. Calls ask again.")
     if ev == "selection_changed":
         busy = msg.get("busy") or {}
         held = "".join(f"\n   {_names(broker, [d])} is in use by another window ({h.get('workspace') or h.get('pid')})"

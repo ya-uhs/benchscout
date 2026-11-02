@@ -295,10 +295,25 @@ test("a SCPI command's card allows that command for the session or always, and s
     impact: { reason: "x", affected_ports: [], disturbs: [], code: subjects ? "scpi_command" : "energizing", subjects } });
   ask("a1", "disruptive", ["DISP:BRIG"]);
   const card = h.cards.find((c) => c.id === "approval:a1");
-  assert.deepEqual(card.options.map((o) => o.id), ["once", "session", "always", "deny"]);
+  assert.deepEqual(card.options.map((o) => o.id), ["once", "session", "always", "all", "deny"]);
   assert.match(card.body, /同じ命令\(値は問わない\)/);
   void h.answer(card.id, { option: "always" });
   assert.deepEqual(decided[0], ["a1", true, "always"]);
   ask("a2", "dangerous", ["VOLT"]);  // an output setting: once, or not at all
   assert.deepEqual(h.cards.find((c) => c.id === "approval:a2").options.map((o) => o.id), ["once", "deny"]);
+});
+
+test("allow all is on DISRUPTIVE cards only, and the inbox shows it with a way to turn it off", () => {
+  const core = new CoreClient("/nonexistent", tmpdir());
+  const decided = [];
+  core.decide = async (...a) => { decided.push(a); return {}; };
+  const h = new Harness(core, () => { throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 1 });
+  const ask = (id, action, effect) => core.emit("approvalRequested", { id, action, port: "serial:usbserial-10", args: "{}", effect,
+    status: "pending", by: "agent", impact: { reason: "x", affected_ports: [], disturbs: [], code: "" } });
+  ask("a1", "serial.send", "disruptive");
+  ask("a2", "esptool.write_flash", "dangerous");
+  assert.ok(h.cards.find((c) => c.id === "approval:a1").options.some((o) => o.id === "all" && o.label === "このセッション中はすべて許可"));
+  assert.ok(!h.cards.find((c) => c.id === "approval:a2").options.some((o) => o.id === "all"), "what cannot be undone asks each time");
+  void h.answer("approval:a1", { option: "all" });
+  assert.deepEqual(decided[0], ["a1", true, "all"]);
 });

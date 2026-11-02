@@ -458,3 +458,32 @@ def test_an_allowed_devices_request_returns_the_new_selection(io, tmp_path):
     dev = br.bench.ports[CH340].device_id
     assert got["status"] == "selected" and got["selected"] == [dev]
     br.end_session()
+
+
+def test_allow_all_runs_what_only_changes_state_until_turned_off_and_never_what_cannot_be_undone(io, tmp_path):
+    """The human's "allow everything for this session" (2026-11-02): every DISRUPTIVE call on the session's
+    devices runs without a card; DANGEROUS ones still ask each time (R8); it ends when the human turns it off."""
+    br = broker_with(io, tmp_path, CH340, PSU)
+    waiting = br.request("serial.send", CH340, {"data": "status", "seconds": 0.05})
+    first = br.request("serial.listen", CH340, {"seconds": 0.05})
+    br.decide(first["approval_id"], True, "all")
+    assert br.approvals.allow_all
+    assert br.request("serial.listen", CH340, {"seconds": 0.05}, approval_id=first["approval_id"])["status"] == "done"
+    assert br.request("serial.send", CH340, {"data": "status", "seconds": 0.05}, approval_id=waiting["approval_id"])["status"] == "done", \
+        "a DISRUPTIVE call already waiting goes ahead too"
+    assert br.request("serial.send", CH340, {"data": "reboot", "seconds": 0.05})["status"] == "done"
+    assert br.request("scpi.write", PSU, {"command": "DISP:BRIG 5"})["status"] == "done"
+    assert br.request("scpi.write", PSU, {"command": "OUTP CH1,ON"})["status"] == "approval_required", "an output setting still asks"
+    br.set_allow_all(False)
+    assert br.request("serial.send", CH340, {"data": "reboot", "seconds": 0.05})["status"] == "approval_required"
+
+
+def test_only_the_human_can_allow_all(io, tmp_path):
+    br = broker_with(io, tmp_path, CH340, PSU)
+    with pytest.raises(ValueError, match="no method"):
+        agent_dispatch(br, "allow_all", {"on": True})
+    danger = br.request("scpi.write", PSU, {"command": "OUTP CH1,ON"})
+    assert danger["status"] == "approval_required"
+    with pytest.raises(ValueError):
+        br.decide(danger["approval_id"], True, "all")  # not from a card for something that cannot be undone
+    assert not br.approvals.allow_all

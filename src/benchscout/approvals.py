@@ -20,7 +20,7 @@ from typing import Callable
 
 from .policy import Effect, Impact
 
-Scope = str | int  # "once" | "session" | minutes ("always" is the broker's: once, plus memory)
+Scope = str | int  # "once" | "session" | "all" | minutes ("always" is the broker's: once, plus memory)
 
 
 @dataclass
@@ -57,6 +57,9 @@ class ApprovalBook:
         self._cond = threading.Condition()
         self._items: dict[str, Approval] = {}
         self._grants: list[Grant] = []
+        # "allow everything for this session": every DISRUPTIVE call runs without asking until the human turns it
+        # off or benchscout stops. DANGEROUS calls still ask each time (R8).
+        self.allow_all = False
 
     # ---- agent side (via the broker) ------------------------------------------
     def open(self, impact: Impact, args: str, by: str = "agent", subject: str = "", purpose: str = "", fetch: str = "") -> Approval:
@@ -114,6 +117,8 @@ class ApprovalBook:
             return False
         now = self._clock()
         with self._cond:
+            if self.allow_all:
+                return True
             self._grants = [g for g in self._grants if g.expires is None or g.expires > now]
             return any(g.action == action and g.port == port
                        and (g.subjects is None or subjects is not None and set(subjects) <= g.subjects)
@@ -133,6 +138,9 @@ class ApprovalBook:
             if granted and scope != "once":
                 if a.effect != Effect.DISRUPTIVE.name.lower():
                     raise ValueError(f"only DISRUPTIVE actions can be granted beyond one use; this one is {a.effect.upper()}")
+            if granted and scope == "all":
+                pass  # this call, and set_allow_all below
+            elif granted and scope != "once":
                 expires = None if scope == "session" else self._clock() + 60 * int(scope)
                 subjects = a.impact.get("subjects")
                 self._grants.append(Grant(a.action, a.port, expires, frozenset(subjects) if subjects is not None else None))
@@ -140,7 +148,29 @@ class ApprovalBook:
             self._cond.notify_all()
         self._log(a.status, a)
         self._emit({"event": "approval_decided", "approval": asdict(a)})
+        if granted and scope == "all":
+            self.set_allow_all(True)
         return a
+
+    def set_allow_all(self, on: bool) -> None:
+        """Human side: allow every DISRUPTIVE call for the rest of the session, or stop doing so. Turning it on
+        also lets the agent's DISRUPTIVE calls already waiting on a card go ahead."""
+        with self._cond:
+            changed = self.allow_all != on
+            self.allow_all = on
+            waiting = [a for a in self._items.values()
+                       if on and a.status == "pending" and a.by == "agent" and a.effect == Effect.DISRUPTIVE.name.lower()]
+            for a in waiting:
+                a.status, a.scope = "granted", "all"
+            self._cond.notify_all()
+        for a in waiting:
+            self._log("granted", a)
+            self._emit({"event": "approval_decided", "approval": asdict(a)})
+        if changed:
+            if self._audit:  # the audit log says when the human allowed everything, and when they stopped
+                with open(self._audit, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"t": time.time(), "what": "allow_all", "on": on}) + "\n")
+            self._emit({"event": "allow_all", "on": on})
 
     def pending(self) -> list[Approval]:
         with self._cond:

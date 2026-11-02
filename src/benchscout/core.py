@@ -133,11 +133,11 @@ def claim_address(address: str) -> None:
 def parse_scope(word: str | None):
     if not word or word == "once":
         return "once"
-    if word in ("session", "always"):
+    if word in ("session", "always", "all"):
         return word
     if word.endswith("m") and word[:-1].isdigit():
         return int(word[:-1])
-    raise ValueError(f"scope must be once, session, always (SCPI) or <N>m, not {word!r}")
+    raise ValueError(f"scope must be once, session, all, always (SCPI) or <N>m, not {word!r}")
 
 
 def parse_shorthand(line: str) -> dict:
@@ -154,6 +154,10 @@ def parse_shorthand(line: str) -> dict:
         return {"method": "decide", "params": params}
     if cmd == "select":
         return {"method": "select", "params": {"devices": args}}
+    if cmd == "allow-all":  # allow-all on|off
+        if not args or args[0] not in ("on", "off"):
+            raise ValueError("usage: allow-all on|off")
+        return {"method": "allow_all", "params": {"on": args[0] == "on"}}
     if cmd == "answer":  # answer <id> <option text or free reply>
         if len(args) < 2:
             raise ValueError("usage: answer <question_id> <option or reply>")
@@ -183,6 +187,8 @@ def control_dispatch(broker: Broker, method: str, params: dict) -> Any:
         return broker.recall(params.get("ref"))
     if method == "memory_decide":
         return broker.decide_memory(params["key"], params["id"], bool(params["accept"]))
+    if method == "allow_all":
+        return broker.set_allow_all(bool(params["on"]))
     if method == "memory_delete":
         return broker.forget(params["key"], params["id"])
     if method == "questions":

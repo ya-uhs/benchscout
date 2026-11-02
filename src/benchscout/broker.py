@@ -214,6 +214,10 @@ class Broker:
 
         if scope == "always":
             return self._allow_always(approval_id, granted)
+        if scope == "all":
+            a0 = self.approvals.get(approval_id)
+            if a0 is not None and a0.by != "agent":
+                raise ValueError("allow all is for the agent's requests; benchscout's own offers are answered one by one")
         a = self.approvals.decide(approval_id, granted, scope)
         if a.by == "benchscout" and a.action == "serial.watch" and self.watch_offers.get(a.port) == a.id:
             if granted:  # benchscout asked for itself: nobody is waiting on the call, so run it here
@@ -221,6 +225,12 @@ class Broker:
             else:
                 self.watch_declined.add(a.port)
         return asdict(a)
+
+    def set_allow_all(self, on: bool) -> dict:
+        """Control channel only: allow every DISRUPTIVE call for the rest of the session, or stop (R8: DANGEROUS
+        calls still ask each time)."""
+        self.approvals.set_allow_all(on)
+        return {"allow_all": self.approvals.allow_all}
 
     def _allow_always(self, approval_id: str, granted: bool) -> dict:
         """Control channel: "always on this instrument" for a SCPI call that asks once. The human saw the command
