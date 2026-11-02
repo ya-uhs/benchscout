@@ -45,7 +45,9 @@ const en = {
     (none ? `Windows has no driver for its USB interface ${none}, so nothing can open it. For a serial port, install the maker's driver (Windows Update often does). ` : "")
     + (winusb ? `openFPGALoader reaches interface ${winusb} through libusb, which on Windows needs the WinUSB driver there. ` : "")
     + "With Zadig (https://zadig.akeo.ie): Options › List All Devices, pick this device's interface, choose WinUSB, Replace Driver. "
-    + "An interface switched to WinUSB no longer appears as a COM port. Then press Rescan.",
+    + "An interface switched to WinUSB no longer appears as a COM port. Then press Rescan. "
+    + "Windows may refuse Zadig's driver (\"signer is not trusted\") on Arm PCs or where Code Integrity is enforced; "
+    + "then use the vendor's own programming tool instead: ask the agent to add it.",
   releaseHint: "Release a device to use it with your own tools (flashing, a terminal); Use takes it back.",
   inUse: "In use in another window",
   notifyShow: "Show",
@@ -165,7 +167,9 @@ const ja: typeof en = {
     (none ? `USB のインターフェース ${none} に Windows のドライバが無いので、どのプログラムも開けません。シリアルポートとして使うなら、メーカーのドライバを入れてください(多くは Windows Update が入れます)。` : "")
     + (winusb ? `openFPGALoader はインターフェース ${winusb} を libusb で開くので、Windows ではそこに WinUSB ドライバが要ります。` : "")
     + "Zadig(https://zadig.akeo.ie)で:Options › List All Devices → この機器のインターフェースを選ぶ → WinUSB → Replace Driver。"
-    + "WinUSB に替えたインターフェースは COM ポートとしては見えなくなります。終わったら再スキャンを押してください。",
+    + "WinUSB に替えたインターフェースは COM ポートとしては見えなくなります。終わったら再スキャンを押してください。"
+    + "Arm の PC や、コードの整合性の検査が強制されている PC では、Windows が Zadig のドライバを拒否することがあります"
+    + "(「signer is not trusted」)。そのときはベンダー公式の書き込みツールを使ってください(エージェントに追加を頼めます)。",
   releaseHint: "自分のツール(書き込みやターミナル)で使うときは「手放す」。戻すときは「使う」。",
   inUse: "別のウィンドウで使用中",
   notifyShow: "詳しく見る",

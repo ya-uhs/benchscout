@@ -14,6 +14,8 @@ _MARK = {Confidence.IDENTIFIED: "identified", Confidence.FAMILY: "family only", 
 NO_DRIVER = ("Windows has no driver for its USB interface(s) {ifaces}, so no program can open them yet. A serial port "
              "needs its maker's driver (Windows Update often installs it); a tool that talks to the chip over USB "
              "through libusb (openFPGALoader, OpenOCD, probe-rs) needs WinUSB on that interface (Zadig installs it). "
+             "Windows may refuse Zadig's self-signed driver on Arm PCs or where Code Integrity is enforced; then the "
+             "vendor's own programmer (with the maker's driver) is the way: propose it with bench_define_tool. "
              "Tell the user; installing a driver is theirs to do")
 
 

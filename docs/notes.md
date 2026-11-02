@@ -174,7 +174,7 @@ benchscout がクラッシュに気づく → エージェントを起こす →
    - **名前は機器から。** WMI の名前はドライバのもの(「USB Composite Device」「(Standard USB Host Controller)」)で、それを USB のディスクリプタとして出していた。ハブ経由で機器自身の文字列ディスクリプタを読む(USBView と同じ方法)。読めないときは Windows がバスから控えた製品名。ESP32-S3 は macOS と同じ「Espressif USB JTAG/serial debug unit」になった
    - **ドライバの無い機器。** Tang Nano の FT2232 は Windows にドライバが無く(2 つのインターフェースとも)、ポートができず一覧から消えていた。一覧に出し、どのインターフェースに何が無いか、何を入れれば使えるか(シリアルはメーカーのドライバ、libusb の道具は WinUSB)を言う。ドライバが無い機器は文字列ディスクリプタにも答えない(Windows が控えたシリアル番号だけ返る)ので、メーカー名で照合するボードの配線データはドライバを入れるまで当たらない
    - ESP32-S3 は開いてもリセットしなかった(Windows の usbser)。esptool 5.6.0 は初回に取得(win32-x64 をエミュレーションで実行)、chip-id とアプリ領域の書き込み・照合が通った。書き込みの間は見張りを外し、終わって戻すので、起動直後の 1 行目は取りこぼす
-   - 残り:Tang Nano の JTAG(同梱の openFPGALoader)は WinUSB を入れていないので未確認
+   - Tang Nano の JTAG(同梱の openFPGALoader):利用者が VM で Zadig を使ったが、Windows が WinUSB のパッケージを拒否した(setupapi.dev.log:「Driver package signer is not trusted by system, and Code Integrity is enforced」0xE0000243)。Zadig は自己署名のカタログで入れるので、Arm の Windows やコードの整合性の検査が強制された PC では通らないことがある。x64 の実機では未確認。そういう PC ではベンダー公式の書き込みツール(メーカーのドライバで動く)を `bench_define_tool` で加えるのが道。受信箱のカードとレポートにそう書いた。FT2232 のもう一方(UART)も FTDI のドライバが入らず(Windows Update が ARM64 用を配らなかった)
 
 
 ## 設計レビュー(旧 design.md §16)
