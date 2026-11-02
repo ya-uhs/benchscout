@@ -314,7 +314,7 @@ def linux_usb_devices(root: Path) -> list[dict]:
         except OSError:
             return None
 
-    out = []
+    out: list[dict] = []
     if not root.is_dir():
         return out
     for d in sorted(root.iterdir()):
@@ -405,7 +405,7 @@ class FixtureIo:
             self.exclusive_opens.append(path)
         st = _FixtureStream(self, path)
         if getattr(self, "_streams", None) is None:
-            self._streams = {}
+            self._streams: dict[str, _FixtureStream] = {}
         prev = self._streams.get(path)
         if prev:  # a reopen continues the same script
             st.script, st.t0 = prev.script, prev.t0
@@ -456,7 +456,7 @@ class FixtureIo:
     def jtag_scan(self, select: list[str]) -> list[dict]:
         self.calls.append(("jtag_scan", tuple(select)))
         recorded = self.data.get("jtag", {})
-        v = next((recorded[a] for a in select if a in recorded), [])  # keyed by the probe's serial
+        v: str | list[str] = next((recorded[a] for a in select if a in recorded), [])  # keyed by the probe's serial
         if isinstance(v, str):  # recorded raw tool output
             return parse_detect(v)
         return [{"idcode": int(c, 16), "manufacturer": None, "family": None, "model": None} for c in v]

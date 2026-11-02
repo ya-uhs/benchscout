@@ -79,7 +79,8 @@ class Param:
         return v
 
     def describe(self) -> str:
-        bits = [{FilePath: "file", FlashMap: "offset:file,..."}.get(self.type, self.type.__name__)]
+        names: dict[type, str] = {FilePath: "file", FlashMap: "offset:file,..."}
+        bits = [names.get(self.type, self.type.__name__)]
         if self.ext:
             bits.append("/".join(self.ext))
         if self.required:

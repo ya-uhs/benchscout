@@ -16,6 +16,7 @@ jobs:
       - run: uv sync --extra mcp --extra visa
       - run: uvx ruff@0.14.3 check src tests packaging
         if: runner.os == 'Linux'
+      - run: uv run mypy  # on each OS, so its own branches (msvcrt, fcntl) are checked
       - run: uv run pytest -q
       - uses: actions/setup-node@v4
         with:

@@ -14,12 +14,13 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from pathlib import Path
 from typing import IO
 
-from .runtime import WINDOWS, runtime_dir
+from .runtime import runtime_dir
 
-if WINDOWS:
+if sys.platform == "win32":  # (not runtime.WINDOWS: type checkers understand only this)
     import msvcrt
 
     def _try_lock(f: IO) -> bool:

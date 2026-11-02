@@ -18,7 +18,15 @@ dev = [
     "mypy>=1.13",
     "pyinstaller>=6.22.3",
     "pytest>=8",
+    "types-pyserial>=3.5",
 ]
+
+[tool.mypy]
+files = ["src/benchscout"]
+python_version = "3.11"
+check_untyped_defs = true
+# optional parts (pyvisa, mcp) are imported only where used; their absence must not fail the check
+ignore_missing_imports = true
 
 [build-system]
 requires = ["hatchling"]

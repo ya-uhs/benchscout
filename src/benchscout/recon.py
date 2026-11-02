@@ -10,7 +10,7 @@ from typing import Callable
 from . import knowledge as K
 from .io import VANISHED_MARK, Io
 from .model import Bench, Confidence, Device, Evidence, Port, Target
-from .policy import Effect, Impact, classify
+from .policy import SCPI_PORTS, Effect, Impact, classify
 
 
 @dataclass
@@ -85,7 +85,7 @@ def build(io: Io) -> Bench:
         by_dev.setdefault(did, []).append(s)
 
     for did, dev in list(b.devices.items()):
-        info = K.USB_IDS.get((dev.vid, dev.pid), {"role": "unknown"})
+        info = K.USB_IDS.get((dev.vid, dev.pid), {"role": "unknown"}) if dev.vid is not None and dev.pid is not None else {"role": "unknown"}
         serials = sorted(by_dev.get(did, []), key=lambda s: (s.get("channel", 99), s["device"]))
         _apply_usb_knowledge(b, dev, info, serials, raw_usb.get(did, {"serial": dev.serial}))
 
@@ -260,7 +260,7 @@ def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] 
                     t.facts.append(fact)
             continue
 
-        if port.kind in ("usbtmc", "lan-scpi"):
+        if port.kind in SCPI_PORTS and port.path:
             if classify(b, "scpi.query", port.id, {"command": "*IDN?"}).effect == Effect.SAFE:
                 r.ran.append(f"scpi.query *IDN? {port.path}")
                 idn = io.visa_query(port.path, "*IDN?")
@@ -274,7 +274,7 @@ def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] 
                     else:
                         t.facts.append("no answer to *IDN?")
 
-        elif port.kind == "serial":
+        elif port.kind == "serial" and port.path:
             if classify(b, "serial.listen", port.id).effect == Effect.SAFE:
                 r.ran.append(f"serial.listen {port.path}")
                 listen_into(io, port.path, targets, listen_seconds)

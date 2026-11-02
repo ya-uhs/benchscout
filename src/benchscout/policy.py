@@ -85,7 +85,8 @@ def scpi_headers(cmd: str) -> list[list[str]]:
     if any(not (32 <= ord(c) < 127 or c == "\t") for c in cmd):
         raise ScpiError("one SCPI message per call, in printable ASCII: no line breaks or other control characters "
                         "(benchscout ends the message)")
-    out, path = [], []
+    out: list[list[str]] = []
+    path: list[str] = []
     for unit in (u.strip() for u in cmd.split(";")):  # a ; inside a quoted string only adds units: stricter
         if not unit:
             continue

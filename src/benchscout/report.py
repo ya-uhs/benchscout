@@ -42,11 +42,11 @@ def render(r: Recon) -> str:
         lines.append("")
     if r.proposals:
         lines.append("Proposals:")
-        for i, p in enumerate(r.proposals, 1):
-            need = f"  (needs: {p.needs})" if p.needs else ""
-            lines.append(f"  {i}. [{p.effect.upper()}] {p.text}{need}")
-            if p.reason:
-                lines.append(f"     why: {p.reason}")
+        for i, pr in enumerate(r.proposals, 1):
+            need = f"  (needs: {pr.needs})" if pr.needs else ""
+            lines.append(f"  {i}. [{pr.effect.upper()}] {pr.text}{need}")
+            if pr.reason:
+                lines.append(f"     why: {pr.reason}")
     missing = [k for k, v in b.tools.items() if not v]
     if missing:
         lines.append("")

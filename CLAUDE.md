@@ -74,6 +74,7 @@ load in `bench-session/`, which must look exactly like an end user's workspace.
 ```
 uv sync --extra mcp --extra visa                                        # dev environment
 uv run pytest -q                                                        # all tests, fixture-only, no hardware
+uv run mypy && uvx ruff@0.14.3 check src tests packaging                  # types and lint (CI runs both)
 BENCHSCOUT_FIXTURE=fixtures/bench_example.json uv run benchscout scan   # recon without hardware
 uv run benchscout scan                                                  # recon on the real bench (safe probes only)
 BENCHSCOUT_FIXTURE=fixtures/bench_example.json uv run benchscout core   # core without hardware; type commands to approve

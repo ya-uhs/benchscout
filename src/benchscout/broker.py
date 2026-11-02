@@ -95,7 +95,12 @@ class Broker:
 
     @property
     def bench(self):
-        return (self.last or self.scan()).bench
+        return self.recon.bench
+
+    @property
+    def recon(self) -> R.Recon:
+        """The last scan, scanning first if there was none."""
+        return self.last or self.scan()
 
     def resolve_port(self, port: str) -> str:
         """Accept a port id (`serial:usbmodem1101`) or its path (`/dev/cu.usbmodem1101`)."""
@@ -162,6 +167,8 @@ class Broker:
         if q is None:
             return {"status": "unknown_question", "question_id": question_id}
         q = self.questions.wait(q.id, wait)
+        if q is None:
+            return {"status": "unknown_question", "question_id": question_id}
         if q.status == "pending":
             return {"status": "waiting", "question_id": q.id,
                     "tell_user": "The question is waiting in the benchscout inbox. Call again with this question_id to keep waiting."}
@@ -332,8 +339,8 @@ class Broker:
         if self.bench.ports[port].kind in SCPI_PORTS:
             try:
                 units = scpi_headers(cmd)
-            except A.ArgError as e:
-                return {"status": "rejected", "message": str(e)}
+            except A.ArgError as err:
+                return {"status": "rejected", "message": str(err)}
             if len(units) != 1:
                 return {"status": "rejected", "message": "remember one SCPI command (one header) per entry, without ';'"}
         key = self._key(dev)
@@ -538,7 +545,8 @@ class Broker:
         self._watching_event(port_id)
 
         def settled() -> None:  # it did not vanish when opened: benchscout's own observation (design.md 6)
-            if self.watches.get(port_id) is w and w.alive and w.vanishes == 0:
+            now = self.watches.get(port_id)
+            if now is not None and now is w and now.alive and now.vanishes == 0:
                 self._observe_open(port_id, "")
 
         threading.Timer(3.0, settled).start()
@@ -582,10 +590,11 @@ class Broker:
             w.stop()
 
     def _device_event(self, ev: dict) -> None:
-        port = self.last.bench.ports.get(ev["port"]) if self.last else None
-        if port:
+        last = self.last
+        port = last.bench.ports.get(ev["port"]) if last else None
+        if last and port:
             ev["device"] = port.device_id
-            ev["device_name"] = self.last.bench.devices[port.device_id].name
+            ev["device_name"] = last.bench.devices[port.device_id].name
         self._emit(ev)
 
     def end_session(self) -> None:
@@ -701,21 +710,21 @@ class Broker:
         if action == "serial.listen" and w and w.alive:
             text = w.read_window(args["seconds"])
             R.apply_log(self.bench.targets_via(port_id), text)
-            self.last.proposals = R.propose(self.bench)
+            self.recon.proposals = R.propose(self.bench)
             self._remember(port_id, text)
             return dict(self._save_artifact(f"{port_id}-listen-{args['baud']}.txt", text, preview=text[-2000:]),
                         watched_log=str(w.log.resolve()))
         if action == "serial.send" and w and w.alive:
             text = w.send((args["data"] + args["eol"]).encode(), args["seconds"])
             R.apply_log(self.bench.targets_via(port_id), text)
-            self.last.proposals = R.propose(self.bench)
+            self.recon.proposals = R.propose(self.bench)
             self._remember(port_id, text)
             safe_name = "".join(c if c.isalnum() else "_" for c in args["data"])[:24]
             return self._save_artifact(f"{port_id}-send-{safe_name}.txt", text, preview=text[-2000:])
         if action == "serial.listen":
             text = R.listen_into(self.io, port.path, self.bench.targets_via(port_id), args["seconds"],
                                  exclusive=True, baud=args["baud"], lines=port.open_lines)
-            self.last.proposals = R.propose(self.bench)  # what we heard may change the next steps
+            self.recon.proposals = R.propose(self.bench)  # what we heard may change the next steps
             self._remember(port_id, text)
             self._observe_open(port_id, text)
             if text is None:
@@ -727,7 +736,7 @@ class Broker:
             text = self.io.serial_listen(port.path, args["seconds"], args["baud"], True, port.open_lines,
                                          send=(args["data"] + args["eol"]).encode())
             R.apply_log(self.bench.targets_via(port_id), text)  # the answer can name the part too
-            self.last.proposals = R.propose(self.bench)
+            self.recon.proposals = R.propose(self.bench)
             self._remember(port_id, text)
             safe_name = "".join(c if c.isalnum() else "_" for c in args["data"])[:24]
             return self._save_artifact(f"{port_id}-send-{safe_name}.txt", text, preview=text[-2000:])

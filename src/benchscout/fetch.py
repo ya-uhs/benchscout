@@ -152,4 +152,7 @@ def _unpack(archive: Path, dest: Path) -> None:
         for m in t.getmembers():
             if not (root / m.name).resolve().is_relative_to(root) or m.issym() and not (root / m.name).parent.joinpath(m.linkname).resolve().is_relative_to(root):
                 raise FetchError(f"{archive.name} has a path outside its folder: {m.name}")
-        t.extractall(dest, **({"filter": "tar"} if hasattr(tarfile, "tar_filter") else {}))
+        if hasattr(tarfile, "data_filter"):  # Python 3.11.4 and later: also refuses device files and links leaving dest
+            t.extractall(dest, filter="data")
+        else:
+            t.extractall(dest)

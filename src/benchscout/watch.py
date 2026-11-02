@@ -109,11 +109,15 @@ class PortWatch:
     def _run(self) -> None:
         while not self._stop.is_set():
             self._check_sleep()
+            stream = self._stream
+            if stream is None:  # never opened: nothing to read
+                self.alive = False
+                return
             try:
-                chunk = self._stream.read(0.2)
+                chunk = stream.read(0.2)
             except PortGone as e:
                 self._check_sleep()
-                self._stream.close()
+                stream.close()
                 self.vanishes += 1
                 self._event("vanished", str(e))
                 if not self._reopen():
