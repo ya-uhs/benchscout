@@ -121,7 +121,8 @@ def python_runtime() -> list[str]:
 
 
 # ---- the Python distributions frozen into the core --------------------------------------------------
-def frozen_distributions() -> list[str]:
+def frozen_distribution_names() -> list[str]:
+    """The Python distributions PyInstaller froze into the core (from its TOC files), without benchscout itself."""
     def entries(x, out):
         if isinstance(x, tuple) and len(x) == 3 and all(isinstance(i, str) for i in x):
             out.append(x)
@@ -135,7 +136,11 @@ def frozen_distributions() -> list[str]:
         for name, _, _ in entries(ast.literal_eval((WORK / toc).read_text(encoding="utf-8")), []):
             names.add(re.split(r"[./\\]", name)[0])
     owners = md.packages_distributions()
-    dists = sorted({d for n in names for d in owners.get(n, [])} - {"benchscout"})
+    return sorted({d for n in names for d in owners.get(n, [])} - {"benchscout"})
+
+
+def frozen_distributions() -> list[str]:
+    dists = frozen_distribution_names()
     sections = []
     for name in dists:
         d = md.distribution(name)
