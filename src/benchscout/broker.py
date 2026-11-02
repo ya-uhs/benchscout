@@ -26,11 +26,58 @@ from .policy import SCPI_PORTS, Effect, Impact, classify, scpi_default, scpi_hea
 RECENT_FOR_QUOTES = 2 * 1024 * 1024  # how much recent output a quote is checked against
 
 
+class _Download:
+    """One tool's first-use download, in the background from the human's OK on, reported to the inbox as it goes
+    (design.md section 12, 2026-11-02). A call waits a while for it, then says it is still downloading."""
+
+    def __init__(self, exe: str, emit):
+        from . import fetch
+
+        p = fetch.plan(exe)
+        self.exe, self.version, self.emit = exe, p["version"] if p else "", emit
+        self.done, self.error, self.got, self._last = threading.Event(), "", 0, 0.0
+        self.total: int | None = None
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _event(self, state: str) -> None:
+        self.emit({"event": "download", "tool": self.exe, "version": self.version, "got": self.got, "total": self.total,
+                   "state": state, **({"error": self.error} if self.error else {})})
+
+    def _progress(self, got: int, total: int | None) -> None:
+        self.got, self.total = got, total
+        now = time.monotonic()
+        if now - self._last >= 0.5:
+            self._last = now
+            self._event("running")
+
+    def _run(self) -> None:
+        from . import fetch
+
+        self._event("running")
+        try:
+            fetch.get(self.exe, progress=self._progress)
+        except Exception as e:  # anything: the call that waits must hear why
+            self.error = str(e) or type(e).__name__
+            self._event("failed")
+        else:
+            self._event("done")
+        finally:
+            self.done.set()
+
+    def summary(self) -> str:
+        mb = lambda n: f"{n / 1e6:.0f}"  # noqa: E731
+        return f"{self.exe} {self.version}: {mb(self.got)}" + (f" of {mb(self.total)} MB" if self.total else " MB so far")
+
+
 class Broker:
     def __init__(self, io: Io, state_dir: str | Path = ".benchscout", *, locks: DeviceLocks | None = None,
                  on_event: Callable[[dict], None] | None = None, approval_wait: float = 0.0,
-                 workspace_knowledge: bool = True):
+                 workspace_knowledge: bool = True, download_wait: float = 45.0):
         self.io = io
+        # how long a call waits for a tool's first-use download before saying it is still downloading; with the
+        # approval wait it stays inside the relay's time for one call
+        self.download_wait = download_wait
+        self._downloads: dict[str, _Download] = {}
         self.state = Path(state_dir)
         self.state.mkdir(parents=True, exist_ok=True)
         from . import knowledge as K
@@ -705,6 +752,17 @@ class Broker:
                                      "approval_id to keep waiting."}
             if status != "granted":
                 return {"status": status, "approval_id": approval_id}
+        if fetch:  # the human's OK covers the download its card named: it runs now, in the background
+            job = self._download(spec.argv[0])
+            if not job.done.wait(self.download_wait):
+                return {"status": "downloading", "approval_id": approval_id, "download": job.summary(),
+                        "tell_user": f"benchscout is downloading {job.summary()} (the human allowed it). It keeps going; "
+                                     "call again with this approval_id to continue."}
+            if job.error:
+                return {"status": "download_failed", "approval_id": approval_id, "message": job.error,
+                        "tell_user": "The download failed; the approval still stands, so calling again with this "
+                                     "approval_id tries again."}
+        with self._lock:
             refused = self._outside_session(port_id)  # the device may have left the session meanwhile
             if refused:
                 return refused
@@ -793,6 +851,14 @@ class Broker:
         return {"error": f"{action} is classified but not implemented in this prototype"}
 
     # ---- external tools defined as data (design.md section 4) ------------------------------
+    def _download(self, exe: str) -> "_Download":
+        """The download of `exe`: the one already running or done, or a new one (also after a failed one)."""
+        with self._lock:
+            job = self._downloads.get(exe)
+            if job is None or job.error:
+                job = self._downloads[exe] = _Download(exe, self._emit)
+            return job
+
     def _usable_tool(self, spec) -> tuple[str | None, str | None]:
         """(path, why not): on PATH and new enough, else fetched before (fetch.py)."""
         from . import fetch

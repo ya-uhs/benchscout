@@ -317,3 +317,19 @@ test("allow all is on DISRUPTIVE cards only, and the inbox shows it with a way t
   void h.answer("approval:a1", { option: "all" });
   assert.deepEqual(decided[0], ["a1", true, "all"]);
 });
+
+test("a tool's first-use download is one card, updated as it goes and closed when done", () => {
+  const core = new CoreClient("/nonexistent", tmpdir());
+  const h = new Harness(core, () => { throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 1 });
+  const ev = (got, state) => core.emit("download", { tool: "esptool", version: "5.6.0", got, total: 65_000_000, state });
+  ev(0, "running");
+  ev(32_000_000, "running");
+  assert.equal(h.cards.length, 1);
+  assert.equal(h.cards[0].title, "esptool 5.6.0 をダウンロード中");
+  assert.match(h.cards[0].body, /^32 \/ 65 MB · 公式のリリース/);
+  assert.equal(h.cards[0].status, "open");
+  ev(65_000_000, "done");
+  assert.equal(h.cards.length, 1);
+  assert.equal(h.cards[0].title, "esptool 5.6.0 をダウンロードしました");
+  assert.equal(h.cards[0].status, "closed");
+});

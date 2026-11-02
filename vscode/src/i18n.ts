@@ -14,6 +14,11 @@ const en = {
   allowAllSession: "Allow everything for this session",
   allowAllOn: "Allowing everything: whatever only changes a device's state runs without asking; what cannot be undone still asks.",
   allowAllOff: "Turn off",
+  downloading: (tool: string) => `Downloading ${tool}`,
+  downloaded: (tool: string) => `Downloaded ${tool}`,
+  downloadFailed: (tool: string) => `Could not download ${tool}`,
+  downloadBody: (got: string, total: string | null) => (total ? `${got} of ${total} MB` : `${got} MB so far`) +
+    " · from its official release, checked against its pinned SHA-256. The agent's request goes on when it is done.",
   statusAllowAll: "allowing all",
   allowAlwaysHere: "Always on this instrument",
   commandCovers: "“For the session” lets this same command (any values) run without asking until benchscout stops; “Always” remembers it for this instrument (forget it in the inbox any time). Other commands still ask.",
@@ -114,6 +119,11 @@ const ja: typeof en = {
   allowAllSession: "このセッション中はすべて許可",
   allowAllOn: "すべて許可中:機器の状態が変わるだけの操作は聞かずに実行します。元に戻せない操作は毎回確認します。",
   allowAllOff: "解除",
+  downloading: (tool: string) => `${tool} をダウンロード中`,
+  downloaded: (tool: string) => `${tool} をダウンロードしました`,
+  downloadFailed: (tool: string) => `${tool} をダウンロードできませんでした`,
+  downloadBody: (got: string, total: string | null) => (total ? `${got} / ${total} MB` : `${got} MB`) +
+    " · 公式のリリースから取得し、固定した SHA-256 で確かめます。終わるとエージェントの依頼が続きます。",
   statusAllowAll: "すべて許可中",
   allowAlwaysHere: "この機器では今後も許可",
   commandCovers: "「セッション中は許可」は、benchscout を止めるまで、同じ命令(値は問わない)を聞かずに実行します。「今後も許可」は、この機器について覚えます(受信箱からいつでも忘れさせられます)。ほかの命令は引き続き確認します。",

@@ -110,7 +110,9 @@ serial.listen; unknown or out-of-range arguments are rejected with the valid one
 Safe actions run at once. Others wait while the human decides in the benchscout panel, then
 run or return denied. If the wait runs out you get approval_required with an approval_id:
 tell the user it is waiting in the panel, and call again with the same action, port, args
-and that approval_id. Never try to reach the hardware any other way.
+and that approval_id. A tool used for the first time is downloaded after the human's OK; if
+that takes longer than one call you get downloading (with how far it is): tell the user, and
+call again the same way. Never try to reach the hardware any other way.
 Actions:
 {catalog}""")
     async def bench_do(action: str, port: str, args: dict | None = None, approval_id: str | None = None) -> str:

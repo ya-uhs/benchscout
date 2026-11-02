@@ -95,8 +95,9 @@ def cached(exe: str) -> str | None:
     return str(f) if f.is_file() else None
 
 
-def get(exe: str) -> str:
-    """Download, check and unpack. Returns the executable's path."""
+def get(exe: str, progress=None) -> str:
+    """Download, check and unpack. Returns the executable's path. `progress(got, total)` is called as bytes arrive
+    (total is None when the server does not say)."""
     p = plan(exe)
     if not p:
         raise FetchError(f"no pinned download of {exe} for {platform_key()}")
@@ -108,7 +109,13 @@ def get(exe: str) -> str:
         archive = Path(tmp) / Path(p["url"].split("?")[0]).name
         try:
             with urllib.request.urlopen(p["url"], timeout=60, context=_tls()) as r, open(archive, "wb") as f:
-                shutil.copyfileobj(r, f)
+                total = int(r.headers.get("Content-Length") or 0) or None
+                got = 0
+                while chunk := r.read(256 * 1024):
+                    f.write(chunk)
+                    got += len(chunk)
+                    if progress:
+                        progress(got, total)
         except OSError as e:
             raise FetchError(f"could not download {p['url']}: {e}") from e
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()

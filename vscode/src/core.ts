@@ -20,6 +20,9 @@ export interface Target {
   hosted_on?: string | null; facts: string[]; evidence: Evidence[];
 }
 export interface Link { port_id: string; target_id: string; protocol: string }
+/** A tool's first-use download, after the human's OK (state: running, done, failed). */
+export interface DownloadEvent { tool: string; version: string; got: number; total: number | null; state: string; error?: string }
+
 export interface Bench { devices: Device[]; ports: Port[]; targets: Target[]; links: Link[] }
 export interface Proposal { text: string; action?: string; port?: string; effect: Effect; needs?: string | null; reason?: string | null }
 
@@ -55,6 +58,7 @@ export interface CoreEvents {
   approvalRequested: [Approval];
   approvalDecided: [Approval];
   allowAll: [boolean];
+  download: [DownloadEvent];
   questionAsked: [Question];
   deviceEvent: [DeviceEvent];
   memoryAdded: [MemoryEvent];
@@ -142,6 +146,9 @@ export class CoreClient extends EventEmitter {
       case "approval_decided":
         this.pending.delete(msg.approval.id);
         this.emit("approvalDecided", msg.approval);
+        return;
+      case "download":
+        this.emit("download", msg as DownloadEvent);
         return;
       case "allow_all":
         this.allowAll = !!msg.on;

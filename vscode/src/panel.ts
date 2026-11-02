@@ -20,8 +20,7 @@ export interface PanelState {
   cards: Card[];
   devices: DeviceRow[];
   allowAll: boolean; // the human allowed every DISRUPTIVE call for this session
-  strings: Omit<Strings, "statusWaiting" | "lookAt" | "wakeFailed" | "budget" | "agentWantsDevices" | "learned" | "learnedSafety"
-    | "deviceAlert" | "deviceVanished" | "deviceReset" | "deviceGone" | "offerWatch" | "watching" | "listenSafeAsk" | "hostSlept">;
+  strings: { [K in keyof Strings as Strings[K] extends (...a: never[]) => unknown ? never : K]: Strings[K] };  // the plain ones
 }
 
 export function html(nonce: string, cspSource: string): string {

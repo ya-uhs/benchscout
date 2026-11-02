@@ -140,3 +140,48 @@ def test_the_persons_own_tool_comes_first_then_the_shipped_one(tmp_path, monkeyp
     (own / name).chmod(0o755)
     monkeypatch.setenv("PATH", str(own))
     assert Path(fetch.find("benchscout-test-own")) == own / name, "the person's own install wins"  # (case-blind on Windows)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the test tool is a shell script")
+def test_a_long_download_runs_in_the_background_and_the_call_says_so(tmp_path, tools, monkeypatch):
+    """2026-11-02 (Windows VM): a first-use download (esptool, 65 MB) can outlast one agent call. After the human's
+    OK it runs in the background, the inbox hears its progress, and the call says "downloading" instead of timing
+    out; the same approval_id continues. A failed download can be tried again with that approval."""
+    import threading
+
+    archive, sha = _archive(tmp_path, {"hello/benchscout-test-hello": '#!/bin/sh\necho "hello $1"\n'})
+    ws = tmp_path / "ws"
+    _knowledge(ws, archive, sha)
+    data = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    f = tmp_path / "bench.json"
+    f.write_text(json.dumps(data), encoding="utf-8")
+    br = Broker(FixtureIo(f), ws / ".benchscout", download_wait=0.2)
+    events = []
+    br.on_event = events.append
+    br.scan()
+    br.select([br.bench.ports[br.resolve_port(VCP)].device_id])
+
+    real_get, release, attempts = fetch.get, threading.Event(), []
+
+    def slow_get(exe, progress=None):
+        attempts.append(exe)
+        if len(attempts) == 1:
+            raise fetch.FetchError("could not download: network unreachable")
+        progress(3_000_000, 10_000_000)
+        release.wait(10)
+        return real_get(exe, progress)
+
+    monkeypatch.setattr(fetch, "get", slow_get)
+    aid = br.request("lab.hello", VCP)["approval_id"]
+    br.decide(aid, True)
+    failed = br.request("lab.hello", VCP, approval_id=aid)
+    assert failed["status"] == "download_failed" and "network unreachable" in failed["message"]
+    waiting = br.request("lab.hello", VCP, approval_id=aid)  # tries again with the same approval
+    assert waiting["status"] == "downloading" and "3 of 10 MB" in waiting["download"] and waiting["approval_id"] == aid
+    assert any(e["event"] == "download" and e["state"] == "running" and e["total"] == 10_000_000 for e in events)
+    release.set()
+    done = br.request("lab.hello", VCP, approval_id=aid, wait=5)
+    assert done["status"] == "done" and f"hello {VCP}" in done["result"]["preview"]
+    assert [e["state"] for e in events if e["event"] == "download"][-1] == "done"
+    assert len(attempts) == 2, "one download running at a time, the failed one retried once"
+    br.end_session()

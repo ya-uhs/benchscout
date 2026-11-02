@@ -10,7 +10,7 @@
 
 import { EventEmitter } from "events";
 import { AgentDriver, AgentEvent, PermissionAsk, WakeError } from "./agents/types";
-import { Approval, Bench, CoreClient, DeviceEvent, MemoryEvent, Question, describeArgs, deviceViews } from "./core";
+import { Approval, Bench, CoreClient, DeviceEvent, DownloadEvent, MemoryEvent, Question, describeArgs, deviceViews } from "./core";
 import { Strings } from "./i18n";
 
 export type CardKind = "question" | "confirm" | "report" | "notify" | "memory";
@@ -63,6 +63,7 @@ export class Harness extends EventEmitter {
     core.on("approvalRequested", (a: Approval) => this.approvalCard(a));
     core.on("approvalDecided", (a: Approval) => this.closeRef(`approval:${a.id}`, a.status));
     core.on("allowAll", () => this.changed());  // the inbox shows it, with a way to turn it off
+    core.on("download", (d: DownloadEvent) => this.downloadCard(d));
     core.on("questionAsked", (q: Question) => this.questionCard(q));
     core.on("questionAnswered", (q: Question) => this.closeRef(`question:${q.id}`, q.choice ?? q.reply ?? ""));
     core.on("deviceEvent", (e: DeviceEvent) => this.deviceEvent(e));
@@ -193,6 +194,22 @@ export class Harness extends EventEmitter {
     }, (ans) => this.core.decide(a.id, ans.option !== "deny",
       ans.option === "session" || ans.option === "always" || ans.option === "all" ? ans.option : "once").catch(() => undefined),
     `approval:${a.id}`);
+  }
+
+  /** One card per tool download, updated in place as it goes, like VS Code's own download notices. */
+  private downloadCard(d: DownloadEvent): void {
+    const id = `download:${d.tool}`;
+    const name = `${d.tool} ${d.version}`.trim();
+    const mb = (n: number) => (n / 1e6).toFixed(0);
+    const title = d.state === "done" ? this.s.downloaded(name) : d.state === "failed" ? this.s.downloadFailed(name) : this.s.downloading(name);
+    const body = d.state === "failed" ? (d.error ?? "") : this.s.downloadBody(mb(d.got), d.total ? mb(d.total) : null);
+    const old = this.cards.find((c) => c.id === id);
+    if (old) {
+      Object.assign(old, { title, body, status: d.state === "running" ? "open" : "closed", time: Date.now() });
+      this.changed();
+      return;
+    }
+    this.add({ kind: "notify", title, body, options: [], freeText: false, status: d.state === "running" ? "open" : "closed" }, undefined, id);
   }
 
   /** The core's reason in the person's language when the panel knows its code; else its own words. */

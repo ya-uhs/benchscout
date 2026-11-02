@@ -148,8 +148,8 @@ function refresh(): void {
     }
   }
   if (!view) return;
-  const { statusWaiting, lookAt, wakeFailed, budget, agentWantsDevices, learned, learnedSafety,
-    deviceAlert, deviceVanished, deviceReset, deviceGone, offerWatch, watching, listenSafeAsk, hostSlept, ...plain } = s;
+  // the webview gets the plain strings; the ones that take arguments are used here, on this side
+  const plain = Object.fromEntries(Object.entries(s).filter(([, v]) => typeof v !== "function")) as PanelState["strings"];
   const devices: DeviceRow[] = (bench ? deviceViews(bench) : []).map((d) => {
     const known = d.things.map((t) => t.name).filter(Boolean).join(", ");
     const ports = bench!.ports.filter((p) => p.device_id === d.id).map((p) => p.id);
