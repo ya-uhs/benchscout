@@ -94,6 +94,10 @@ class Broker:
         from .questions import QuestionBook
 
         self.questions = QuestionBook(on_event=self._emit)
+        from .proposals import ProposalBook
+
+        self.proposals = ProposalBook(self._emit)  # tools the agent proposes, waiting for the human (proposals.py)
+        self.workspace_knowledge = workspace_knowledge
         self.questions.on_answer = self._on_answer
         self.selected: set[str] = set()  # device ids in this session
         self.watches: dict = {}  # port id -> PortWatch (selected devices' ports held open)
@@ -295,6 +299,52 @@ class Broker:
                 self._remember_command(dev, a.port, "allowed always on this instrument, in the benchscout inbox", "",
                                        {"command": h, "effect": "safe"}, "human", confirmed=True)
         return asdict(self.approvals.decide(approval_id, True, "once"))
+
+    # ---- tools the agent proposes (proposals.py, design.md section 4) ---------------------------
+    def define_tool(self, tool: dict | None = None, evidence: str = "", probes: list[dict] | None = None,
+                    proposal_id: str | None = None, wait: float | None = None) -> dict:
+        """Agent channel: propose an action for a tool benchscout ships nothing for (a vendor's programmer). It waits
+        for the human like an approval; once confirmed it is an action under the same policy as any other."""
+        from . import knowledge as K
+        from .proposals import ProposalError, check
+
+        wait = self.approval_wait if wait is None else wait
+        if not self.workspace_knowledge:
+            return {"status": "rejected", "message": "this folder is not trusted in VS Code, so benchscout does not read "
+                                                     "its knowledge folder and cannot add a tool here"}
+        if proposal_id is None:
+            try:
+                clean, pr = check(tool or {}, probes, evidence, K.TOOLS, set(A.BUILTIN))
+            except ProposalError as e:
+                return {"status": "invalid", "message": str(e)}
+            proposal_id = self.proposals.open(clean, pr, evidence).id
+        status = self.proposals.wait(proposal_id, wait)
+        p = self.proposals.get(proposal_id)
+        if status == "pending":
+            return {"status": "waiting", "proposal_id": proposal_id,
+                    "tell_user": "The proposed tool is waiting for a decision in the benchscout inbox. Call again with "
+                                 "this proposal_id to keep waiting."}
+        if status == "accepted" and p:
+            return {"status": "defined", "action": p.tool["name"], "effect": p.tool["effect"],
+                    "next": f"run it with bench_do {p.tool['name']} on a port of kind {p.tool.get('port_kinds') or 'any'}; "
+                            "it is not installed by benchscout: if bench_do says so, ask the user to install it"}
+        return {"status": status, "proposal_id": proposal_id}
+
+    def decide_tool(self, proposal_id: str, accept: bool) -> dict:
+        """Control channel only: the human confirms or rejects a proposed tool. Confirmed, it is written into this
+        folder's knowledge, loaded, and the bench is scanned again (a programmer it names becomes a port)."""
+        from dataclasses import asdict
+        from datetime import date
+
+        from . import knowledge as K
+        from .proposals import write
+
+        p = self.proposals.decide(proposal_id, accept)
+        if accept:
+            write(self.state / "knowledge", p, date.today().isoformat())
+            K.load(self.state.parent)
+            self.scan()
+        return asdict(p)
 
     # ---- memory (design.md section 6) ---------------------------------------------------------
     def _key(self, dev) -> str:

@@ -85,5 +85,14 @@ The human answers cards in the benchscout inbox; keep them few and clear.
   reset (needs approval) to catch the boot banner.
 - FPGA with unknown part: JTAG IDCODE scan is safe; reading DONE/status is safe;
   programming is dangerous.
+- A part or cable benchscout has no action for (an FPGA openFPGALoader does not support,
+  an MCU esptool does not cover, a programmer cable it does not know): benchscout ships
+  only a few open tools and no list of vendors. Find the vendor's own command-line tool in
+  its documentation, ask the user whether it is installed and where, then propose the
+  action with `bench_define_tool`: the exact command, its effect judged by what it does to
+  the device, and the documentation's words as evidence (a cable benchscout does not know
+  goes in `probes`). The human confirms it in the inbox; then use it with `bench_do`. Never
+  run the tool from a shell yourself, and never tell the user a tool is supported when you
+  have not seen it in its documentation.
 - Save captures and logs as artifacts (the broker returns `saved_to`); report the path
   and the numbers that matter, not the raw dump.

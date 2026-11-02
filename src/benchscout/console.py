@@ -60,6 +60,16 @@ def format_human(msg: dict, broker) -> str | None:
     if ev == "approval_decided":
         a = msg["approval"]
         return f"<<< {a['id']}: {a['status']}" + (f" ({a['scope']})" if a["status"] == "granted" else "")
+    if ev == "tool_proposed":
+        p = msg["proposal"]
+        t = p["tool"]
+        probes = ", ".join("%04x:%04x" % (x["vid"], x["pid"]) for x in p["probes"])
+        return (f">>> {p['id']}: the agent proposes a tool action {t['name']} ({t['effect'].upper()}: {t['reason']})\n"
+                f"    runs: {' '.join(t['argv'])}\n    evidence: {p['evidence']}\n"
+                + (f"    treats as a programmer: {probes}\n" if probes else "")
+                + f"    accept-tool {p['id']} | reject-tool {p['id']}")
+    if ev == "tool_decided":
+        return f"<<< tool {msg['proposal']['tool']['name']}: {msg['proposal']['status']}"
     if ev == "allow_all":
         return ("<<< allow all: ON. Whatever only changes a device's state runs without asking; what cannot be undone "
                 "still asks. `allow-all off` to stop." if msg["on"] else "<<< allow all: off. Calls ask again.")

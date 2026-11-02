@@ -144,6 +144,24 @@ Actions:
         return await _call("identify", {"target": target, "name": name, "quote": quote})
 
     @mcp.tool()
+    async def bench_define_tool(tool: dict | None = None, evidence: str = "", probes: list[dict] | None = None,
+                                proposal_id: str | None = None) -> str:
+        """Propose an action for a tool benchscout ships nothing for, e.g. the FPGA or MCU vendor's own command-line
+        programmer when openFPGALoader or esptool do not support the part or cable. Find the tool in the vendor's
+        documentation and check with the user that it is installed (benchscout never downloads it). `tool`:
+        {"name": "<tool>.<verb>", "argv": ["<program>", "...", "{bitstream}"], "effect": "safe"|"disruptive"|
+        "dangerous" (by what it does to the device: reading an IDCODE is safe, a reset disruptive, writing SRAM or
+        flash dangerous), "reason": one line, "doc": what it does, "args": {"bitstream": {"type": "file",
+        "required": true, "ext": [".bit"]}}, "port_kinds": ["jtag"], "releases_device": true, "timeout": 300}.
+        argv is run without a shell; it may use {port.path}, {device.serial} and the args. `evidence`: the vendor's
+        page and the words that say what the command does. `probes`: for a programmer cable benchscout does not know,
+        [{"vid": "0x1234", "pid": "0x5678", "probe": "jtag"}] so it becomes a port. The human confirms it in the
+        inbox, seeing the exact command; then it is an action like any other (bench_do), under the same policy.
+        If the wait runs out you get waiting: call again with the proposal_id."""
+        return await _call("define_tool", {"tool": tool, "evidence": evidence, "probes": probes, "proposal_id": proposal_id},
+                           timeout=APPROVAL_WAIT_S + 60)
+
+    @mcp.tool()
     async def bench_remember(ref: str, kind: str, text: str, evidence: str = "", data: dict | None = None) -> str:
         """Remember something about a device for next time, without asking the human (they can
         edit or delete it in the panel). `ref` is a device/port/target from bench_scan. `kind`:

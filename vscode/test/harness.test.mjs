@@ -350,3 +350,21 @@ test("Windows: a device that needs a driver gets one card saying which interface
   core.emit("scan", bench({}), []);  // after Zadig and a rescan
   assert.equal(card().status, "closed");
 });
+
+test("a tool the agent proposes is a card with the exact command, its effect and the agent's source", () => {
+  const core = new CoreClient("/nonexistent", tmpdir());
+  const decided = [];
+  core.toolDecide = async (...a) => { decided.push(a); return {}; };
+  const h = new Harness(core, () => { throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 1 });
+  core.emit("toolProposed", { id: "p1", status: "pending", evidence: "vendor guide ch. 4",
+    tool: { name: "vendortool.program", argv: ["vendortool", "--program", "{bitstream}"], effect: "dangerous", reason: "loads a bitstream" },
+    probes: [{ vid: 0x03fd, pid: 0x0013, probe: "jtag" }] });
+  const card = h.cards.find((c) => c.id === "tool:p1");
+  assert.equal(card.title, "エージェントが道具の使い方を追加したいと言っています: vendortool.program");
+  assert.match(card.body, /実行する命令: `vendortool --program \{bitstream\}`/);
+  assert.match(card.body, /エージェントが示した根拠: vendor guide ch\. 4/);
+  assert.match(card.body, /03fd:0013 \(jtag\)/);
+  assert.equal(card.effect, "dangerous");
+  void h.answer("tool:p1", { option: "accept" });
+  assert.deepEqual(decided[0], ["p1", true]);
+});

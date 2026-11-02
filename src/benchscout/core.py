@@ -34,7 +34,8 @@ from .report import render
 
 # ---- agent channel --------------------------------------------------------------
 
-AGENT_METHODS = ("scan", "inventory", "impact", "do", "actions", "ask", "request_devices", "identify", "remember", "recall", "log")
+AGENT_METHODS = ("scan", "inventory", "impact", "do", "actions", "ask", "request_devices", "identify", "remember", "recall",
+                 "log", "define_tool")
 
 
 def agent_dispatch(broker: Broker, method: str, params: dict) -> Any:
@@ -51,6 +52,8 @@ def agent_dispatch(broker: Broker, method: str, params: dict) -> Any:
         return broker.read_log(params["port"], int(params.get("lines") or 200), params.get("contains"))
     if method == "identify":
         return broker.identify(params["target"], params["name"], params.get("quote", ""))
+    if method == "define_tool":
+        return broker.define_tool(params.get("tool"), params.get("evidence", ""), params.get("probes"), params.get("proposal_id"))
     if method == "remember":
         return broker.remember(params["ref"], params["kind"], params["text"], params.get("evidence", ""), params.get("data"))
     if method == "recall":
@@ -154,6 +157,10 @@ def parse_shorthand(line: str) -> dict:
         return {"method": "decide", "params": params}
     if cmd == "select":
         return {"method": "select", "params": {"devices": args}}
+    if cmd in ("accept-tool", "reject-tool"):  # accept-tool <id>: a tool the agent proposed
+        if not args:
+            raise ValueError(f"usage: {cmd} <proposal id>")
+        return {"method": "tool_decide", "params": {"id": args[0], "accept": cmd == "accept-tool"}}
     if cmd == "allow-all":  # allow-all on|off
         if not args or args[0] not in ("on", "off"):
             raise ValueError("usage: allow-all on|off")
@@ -187,6 +194,8 @@ def control_dispatch(broker: Broker, method: str, params: dict) -> Any:
         return broker.recall(params.get("ref"))
     if method == "memory_decide":
         return broker.decide_memory(params["key"], params["id"], bool(params["accept"]))
+    if method == "tool_decide":
+        return broker.decide_tool(params["id"], bool(params["accept"]))
     if method == "allow_all":
         return broker.set_allow_all(bool(params["on"]))
     if method == "memory_delete":

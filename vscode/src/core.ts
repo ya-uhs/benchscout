@@ -23,6 +23,13 @@ export interface Link { port_id: string; target_id: string; protocol: string }
 /** A tool's first-use download, after the human's OK (state: running, done, failed). */
 export interface DownloadEvent { tool: string; version: string; got: number; total: number | null; state: string; error?: string }
 
+/** An action the agent proposed for a tool benchscout ships nothing for (proposals.py); the human decides. */
+export interface ToolProposal {
+  id: string; status: string; evidence: string;
+  tool: { name: string; argv: string[]; effect: "safe" | "disruptive" | "dangerous"; reason: string; doc?: string; port_kinds?: string[] };
+  probes: { vid: number; pid: number; probe: string }[];
+}
+
 export interface Bench { devices: Device[]; ports: Port[]; targets: Target[]; links: Link[] }
 export interface Proposal { text: string; action?: string; port?: string; effect: Effect; needs?: string | null; reason?: string | null }
 
@@ -59,6 +66,8 @@ export interface CoreEvents {
   approvalDecided: [Approval];
   allowAll: [boolean];
   download: [DownloadEvent];
+  toolProposed: [ToolProposal];
+  toolDecided: [ToolProposal];
   questionAsked: [Question];
   deviceEvent: [DeviceEvent];
   memoryAdded: [MemoryEvent];
@@ -105,6 +114,11 @@ export class CoreClient extends EventEmitter {
 
   scan(): Promise<any> { return this.call("scan"); }
   select(devices: string[]): Promise<any> { return this.call("select", { devices }); }
+  /** The human confirms (writes it into the folder's knowledge) or rejects a tool the agent proposed. */
+  toolDecide(id: string, accept: boolean): Promise<any> {
+    return this.call("tool_decide", { id, accept });
+  }
+
   /** Allow every DISRUPTIVE call for the rest of the session (DANGEROUS still asks), or stop. */
   setAllowAll(on: boolean): Promise<any> {
     return this.call("allow_all", { on });
@@ -146,6 +160,12 @@ export class CoreClient extends EventEmitter {
       case "approval_decided":
         this.pending.delete(msg.approval.id);
         this.emit("approvalDecided", msg.approval);
+        return;
+      case "tool_proposed":
+        this.emit("toolProposed", msg.proposal as ToolProposal);
+        return;
+      case "tool_decided":
+        this.emit("toolDecided", msg.proposal as ToolProposal);
         return;
       case "download":
         this.emit("download", msg as DownloadEvent);

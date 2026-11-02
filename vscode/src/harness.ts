@@ -10,7 +10,7 @@
 
 import { EventEmitter } from "events";
 import { AgentDriver, AgentEvent, PermissionAsk, WakeError } from "./agents/types";
-import { Approval, Bench, CoreClient, DeviceEvent, DownloadEvent, MemoryEvent, Question, describeArgs, deviceViews } from "./core";
+import { Approval, Bench, CoreClient, DeviceEvent, DownloadEvent, MemoryEvent, Question, ToolProposal, describeArgs, deviceViews } from "./core";
 import { Strings } from "./i18n";
 
 export type CardKind = "question" | "confirm" | "report" | "notify" | "memory";
@@ -64,6 +64,8 @@ export class Harness extends EventEmitter {
     core.on("approvalDecided", (a: Approval) => this.closeRef(`approval:${a.id}`, a.status));
     core.on("allowAll", () => this.changed());  // the inbox shows it, with a way to turn it off
     core.on("download", (d: DownloadEvent) => this.downloadCard(d));
+    core.on("toolProposed", (p: ToolProposal) => this.toolCard(p));
+    core.on("toolDecided", (p: ToolProposal) => this.closeRef(`tool:${p.id}`, p.status));
     core.on("questionAsked", (q: Question) => this.questionCard(q));
     core.on("questionAnswered", (q: Question) => this.closeRef(`question:${q.id}`, q.choice ?? q.reply ?? ""));
     core.on("deviceEvent", (e: DeviceEvent) => this.deviceEvent(e));
@@ -212,6 +214,17 @@ export class Harness extends EventEmitter {
       if (old) this.cards = this.cards.filter((c) => c !== old);
       this.add({ kind: "report", title: this.s.driverTitle(d.name), body, options: [], freeText: false }, undefined, id);
     }
+  }
+
+  /** A tool the agent proposed: the exact command, its declared effect and the agent's source, to add or not. */
+  private toolCard(p: ToolProposal): void {
+    const hex = (n: number) => n.toString(16).padStart(4, "0");
+    const probes = p.probes.map((x) => `${hex(x.vid)}:${hex(x.pid)} (${x.probe})`).join(", ");
+    this.add({
+      kind: "confirm", title: this.s.toolTitle(p.tool.name), effect: p.tool.effect, freeText: false,
+      body: this.s.toolBody(p.tool.argv.join(" "), this.s.effect[p.tool.effect] ?? p.tool.effect, p.tool.reason, p.evidence, probes),
+      options: [{ id: "accept", label: this.s.toolAccept, primary: true }, { id: "reject", label: this.s.toolReject }],
+    }, (a) => this.core.toolDecide(p.id, a.option === "accept").catch(() => undefined), `tool:${p.id}`);
   }
 
   /** One card per tool download, updated in place as it goes, like VS Code's own download notices. */

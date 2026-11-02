@@ -14,6 +14,13 @@ const en = {
   allowAllSession: "Allow everything for this session",
   allowAllOn: "Allowing everything: whatever only changes a device's state runs without asking; what cannot be undone still asks.",
   allowAllOff: "Turn off",
+  toolTitle: (name: string) => `The agent wants to add a tool: ${name}`,
+  toolBody: (cmd: string, effect: string, reason: string, evidence: string, probes: string) =>
+    `Runs: \`${cmd}\`\nWhat it does: ${reason} (${effect})\nThe agent's source: ${evidence}`
+    + (probes ? `\nAlso treats this USB device as a programmer: ${probes}` : "")
+    + "\nOnce added it is used like any other action: it asks you as its effect says. Nothing is downloaded; you install the tool.",
+  toolAccept: "Add it",
+  toolReject: "Do not add",
   downloading: (tool: string) => `Downloading ${tool}`,
   downloaded: (tool: string) => `Downloaded ${tool}`,
   downloadFailed: (tool: string) => `Could not download ${tool}`,
@@ -126,6 +133,13 @@ const ja: typeof en = {
   allowAllSession: "このセッション中はすべて許可",
   allowAllOn: "すべて許可中:機器の状態が変わるだけの操作は聞かずに実行します。元に戻せない操作は毎回確認します。",
   allowAllOff: "解除",
+  toolTitle: (name: string) => `エージェントが道具の使い方を追加したいと言っています: ${name}`,
+  toolBody: (cmd: string, effect: string, reason: string, evidence: string, probes: string) =>
+    `実行する命令: \`${cmd}\`\nすること: ${reason}(${effect})\nエージェントが示した根拠: ${evidence}`
+    + (probes ? `\nこの USB 機器を書き込み器として扱います: ${probes}` : "")
+    + "\n追加すると、ほかの操作と同じに扱います(影響度のとおりに確認します)。ダウンロードはしません。道具はご自身で入れてください。",
+  toolAccept: "追加する",
+  toolReject: "追加しない",
   downloading: (tool: string) => `${tool} をダウンロード中`,
   downloaded: (tool: string) => `${tool} をダウンロードしました`,
   downloadFailed: (tool: string) => `${tool} をダウンロードできませんでした`,
