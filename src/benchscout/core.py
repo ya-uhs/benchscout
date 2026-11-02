@@ -184,8 +184,7 @@ def control_dispatch(broker: Broker, method: str, params: dict) -> Any:
     if method == "memory_decide":
         return broker.decide_memory(params["key"], params["id"], bool(params["accept"]))
     if method == "memory_delete":
-        broker.memory.delete(params["key"], params["id"])
-        return {"deleted": params["id"]}
+        return broker.forget(params["key"], params["id"])
     if method == "questions":
         return [asdict(q) for q in broker.questions.pending()]
     raise ValueError(f"unknown control method {method!r}")

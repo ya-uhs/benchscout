@@ -1,0 +1,177 @@
+"""SCPI: only what the standard fixes is judged by name; anything else asks, and only the human loosens it.
+
+Review 2026-11-02 (design.md section 16): a list of "output" command patterns decided which SCPI writes were
+DANGEROUS, and every miss left a command one step weaker. No such list can be complete (vendors call an output
+INPut, BSWV AMP, *RCL a stored state ...). So the rules are inverted: the standard's status and identity queries
+are SAFE, every other query asks once, every other command asks each time, and only memory the human confirmed
+makes a command ask less. The property tests below throw random command lines at that.
+"""
+
+import json
+import string
+from pathlib import Path
+
+import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
+from benchscout import recon
+from benchscout.actions import ArgError
+from benchscout.broker import Broker
+from benchscout.io import FixtureIo
+from benchscout.policy import _SCPI_SAFE, _SCPI_STATUS_WRITES, Effect, classify, scpi_headers
+
+FIXTURE = Path(__file__).parent.parent / "fixtures" / "bench_example.json"
+PSU = "visa:TCPIP0::192.168.1.50::INSTR"
+BENCH = recon.run(FixtureIo(FIXTURE)).bench
+
+
+def effect(cmd: str, bench=BENCH) -> Effect:
+    return classify(bench, "scpi.query", PSU, {"command": cmd}).effect
+
+
+@pytest.fixture
+def broker(tmp_path):
+    f = tmp_path / "bench.json"
+    f.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    io = FixtureIo(f)
+    br = Broker(io, tmp_path / "ws" / ".benchscout")
+    br.scan()
+    br.select([br.bench.ports[PSU].device_id])
+    yield br, io
+    br.end_session()
+
+
+# ---- the hole that started this ------------------------------------------------------------------
+
+@pytest.mark.parametrize("cmd", ["*IDN?\nOUTP ON", "*IDN?\r\nOUTP ON", "*IDN?\rOUTP ON", "*IDN?\x00OUTP ON",
+                                 "*IDN?\x0bOUTP ON", "*IDN? OUTP ON", "*IDN?\u0085OUTP ON"])
+def test_a_second_message_after_a_line_break_cannot_ride_on_a_safe_query(cmd, broker):
+    """'*IDN?' + newline + 'OUTP ON' was SAFE: the check read one query, the instrument ran two messages."""
+    br, io = broker
+    with pytest.raises(ArgError):
+        effect(cmd)
+    res = br.request("scpi.query", PSU, {"command": cmd})
+    assert res["status"] == "invalid_args" and "one SCPI message" in res["message"]
+    assert not [c for c in io.calls if c[0].startswith("visa_") and c[2] == cmd], "nothing was sent"
+
+
+def test_a_command_is_sent_without_waiting_for_an_answer_and_a_query_reads_one(broker):
+    br, io = broker
+    aid = br.request("scpi.write", PSU, {"command": "DISP:BRIG 5"}, wait=0)["approval_id"]
+    br.decide(aid, True)
+    assert br.request("scpi.write", PSU, {"command": "DISP:BRIG 5"}, approval_id=aid)["status"] == "done"
+    assert ("visa_write", "TCPIP0::192.168.1.50::INSTR", "DISP:BRIG 5") in io.calls
+    assert br.request("scpi.query", PSU, {"command": "*IDN?"})["status"] == "done"  # SAFE: no card
+    assert ("visa_query", "TCPIP0::192.168.1.50::INSTR", "*IDN?") in io.calls
+
+
+# ---- memory: the agent learns, the human loosens --------------------------------------------------
+
+def test_a_command_remembered_as_asking_less_waits_for_the_human(broker):
+    br, _ = broker
+    dev = br.bench.ports[PSU].device_id
+    res = br.remember(dev, "command", "reads the output current; does not change the output (programming manual 4.2)",
+                      data={"command": "MEAS:CURR?", "effect": "safe"})
+    assert res["status"] == "pending_human" and res["port"] == PSU
+    assert effect("MEAS:CURR? CH1", br.bench) == Effect.DISRUPTIVE, "not before the human confirms"
+    key = br._key(br.bench.devices[dev])
+    br.decide_memory(key, res["id"], True)
+    assert effect("MEAS:CURR? CH1", br.bench) == Effect.SAFE
+    assert effect("MEASure:CURRent? CH1", br.bench) == Effect.SAFE, "the long form is the same command"
+    assert effect("MEAS:CURR?;OUTP ON", br.bench) == Effect.DANGEROUS, "it loosens that command only"
+    br.forget(key, res["id"])
+    assert effect("MEAS:CURR? CH1", br.bench) == Effect.DISRUPTIVE, "forgetting takes effect at once"
+
+
+def test_a_command_remembered_as_stricter_applies_at_once(broker):
+    br, _ = broker
+    dev = br.bench.ports[PSU].device_id
+    res = br.remember(dev, "command", "this SMU switches its output on to measure", data={"command": "READ?", "effect": "dangerous"})
+    assert res["status"] == "remembered"
+    assert effect("READ?", br.bench) == Effect.DANGEROUS
+    loosen = br.remember(dev, "command", "only sets the voltage", data={"command": "SOUR:VOLT", "effect": "disruptive"})
+    assert loosen["status"] == "pending_human", "DANGEROUS to DISRUPTIVE loosens too"
+    assert br.remember(dev, "command", "x", data={"command": "VOLT 5;OUTP ON", "effect": "disruptive"})["status"] == "rejected"
+
+
+def test_a_remembered_command_does_not_loosen_a_unit_the_instrument_may_read_another_way(broker):
+    """'SOUR:VOLT 5;CURR 1': SCPI reads CURR as SOUR:CURR, an instrument keeping no path as CURR. Both must allow it."""
+    br, _ = broker
+    dev = br.bench.ports[PSU].device_id
+    key = br._key(br.bench.devices[dev])
+    for c in ("SOUR:VOLT", "SOUR:CURR"):
+        r = br.remember(dev, "command", "sets a limit", data={"command": c, "effect": "disruptive"})
+        br.decide_memory(key, r["id"], True)
+    assert effect("SOUR:VOLT 5", br.bench) == Effect.DISRUPTIVE
+    assert effect("SOUR:VOLT 5;CURR 1", br.bench) == Effect.DANGEROUS, "CURR alone is not remembered"
+    assert effect("SOUR:VOLT 5;:SOUR:CURR 1", br.bench) == Effect.DISRUPTIVE
+
+
+# ---- properties over random command lines ------------------------------------------------------------
+
+LONG = ["MEASure", "VOLTage", "CURRent", "OUTPut", "SOURce", "SYSTem", "ERRor", "TRIGger", "INITiate", "DISPlay",
+        "INPut", "POWer", "CONFigure", "SENSe", "READ", "FETCh", "CALibration", "MEMory", "NEXT", "VERSion", "CH1", "BSWV"]
+node = st.sampled_from(LONG).flatmap(lambda w: st.sampled_from([w, w.upper(), w.lower(), "".join(c for c in w if c.isupper() or c.isdigit()) or w]))
+common = st.sampled_from(["*IDN", "*OPC", "*ESR", "*STB", "*CLS", "*RST", "*TST", "*CAL", "*RCL", "*SAV", "*WAI", "*SRE"])
+header = st.one_of(common, st.lists(node, min_size=1, max_size=4).map(":".join).flatmap(lambda h: st.sampled_from([h, ":" + h])))
+arg = st.text(alphabet=string.ascii_letters + string.digits + ",.+- ", max_size=12)
+unit = st.tuples(header, st.booleans(), arg).map(lambda t: t[0] + ("?" if t[1] else "") + (f" {t[2].strip()}" if t[2].strip() else ""))
+line = st.lists(unit, min_size=1, max_size=4).map(";".join)
+
+
+@settings(max_examples=400, deadline=None)
+@given(line)
+def test_safe_only_when_every_unit_is_a_status_query_the_standard_fixes(cmd):
+    if effect(cmd) == Effect.SAFE:
+        assert all(set(ways) <= _SCPI_SAFE for ways in scpi_headers(cmd)), cmd
+
+
+@settings(max_examples=400, deadline=None)
+@given(line)
+def test_any_command_outside_the_standards_status_writes_is_dangerous(cmd):
+    if any(not h.endswith("?") and h not in _SCPI_STATUS_WRITES for ways in scpi_headers(cmd) for h in ways):
+        assert effect(cmd) == Effect.DANGEROUS, cmd
+
+
+@settings(max_examples=300, deadline=None)
+@given(line, line)
+def test_adding_a_unit_never_makes_a_line_ask_less(a, b):
+    assert effect(f"{a};{b}") >= max(effect(a), effect(b))
+
+
+@settings(max_examples=300, deadline=None)
+@given(line)
+def test_case_and_long_or_short_form_do_not_change_the_effect(cmd):
+    assert effect(cmd.upper()) == effect(cmd.lower()) == effect(cmd)
+
+
+@settings(max_examples=300, deadline=None)
+@given(st.text(min_size=1, max_size=30))
+def test_anything_but_one_printable_ascii_message_is_refused_or_judged(cmd):
+    try:
+        e = effect(cmd)
+    except ArgError:
+        assert any(not (32 <= ord(c) < 127 or c == "\t") for c in cmd) or not cmd.strip(" \t;")
+        return
+    assert e in (Effect.SAFE, Effect.DISRUPTIVE, Effect.DANGEROUS)
+    if e == Effect.SAFE:
+        assert all(set(ways) <= _SCPI_SAFE for ways in scpi_headers(cmd))
+
+
+@settings(max_examples=150, deadline=None)
+@given(st.lists(st.tuples(unit, st.sampled_from(["safe", "disruptive", "dangerous"])), max_size=5), line)
+def test_memory_the_human_has_not_confirmed_never_makes_anything_ask_less(entries, cmd):
+    data = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        f = Path(d) / "bench.json"
+        f.write_text(json.dumps(data), encoding="utf-8")
+        br = Broker(FixtureIo(f), Path(d) / "ws" / ".benchscout")
+        br.scan()
+        before = effect(cmd, br.bench)
+        dev = br.bench.ports[PSU].device_id
+        for text, eff in entries:
+            br.remember(dev, "command", "agent says so", data={"command": text, "effect": eff})
+        assert effect(cmd, br.bench) >= before, "only the human loosens"

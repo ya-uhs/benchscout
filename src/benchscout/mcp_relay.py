@@ -149,9 +149,12 @@ Actions:
         (data {"pattern": regex, "alert": text}: a line that means trouble on this device; it will be
         watched for), command (a firmware command of one serial port, e.g. read from its `help`: data
         {"command": "status", "effect": "safe"|"disruptive"|"dangerous", "eol": "\\r\\n" if not "\\n"}; text says
-        what it does; then run it with bench_do serial.command {"name": "status"}). kind "safety" (data
-        {"listen_safe": true} for one port) and a command with effect "safe" wait for the human to confirm
-        (until then it asks like serial.send). Quote evidence when you have it."""
+        what it does; then run it with bench_do serial.command {"name": "status"}; or a SCPI command of one
+        instrument, by its header, as its programming manual describes it: data {"command": "MEAS:CURR?", "effect":
+        ...}; scpi.query/scpi.write then treat that header so on this instrument). kind "safety" (data
+        {"listen_safe": true} for one port), a firmware command with effect "safe" and a SCPI command made to ask
+        less than benchscout's default wait for the human to confirm (until then they ask as before); a stricter
+        one applies at once. Quote evidence (the manual's words) when you have it."""
         return await _call("remember", {"ref": ref, "kind": kind, "text": text, "evidence": evidence, "data": data})
 
     @mcp.tool()

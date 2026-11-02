@@ -34,6 +34,7 @@ class Io(Protocol):
 
     # access: opens things; callers go through policy first
     def visa_query(self, resource: str, command: str) -> str | None: ...
+    def visa_write(self, resource: str, command: str) -> bool: ...  # True once sent
     def serial_listen(self, path: str, seconds: float, baud: int, exclusive: bool = False, lines: str = "low",
                       send: bytes | None = None) -> str: ...  # `send` is written once, right after opening
     def jtag_scan(self, select: list[str]) -> list[dict]: ...  # [{idcode, manufacturer, model}]; select: the probe's args
@@ -190,6 +191,17 @@ class LiveIo:
                 inst.close()
         except Exception:
             return None
+
+    def visa_write(self, resource: str, command: str) -> bool:
+        try:
+            inst = self._visa().open_resource(resource, timeout=1500)
+            try:
+                inst.write(command)
+                return True
+            finally:
+                inst.close()
+        except Exception:
+            return False
 
     def serial_listen(self, path: str, seconds: float, baud: int = 115200, exclusive: bool = False,
                       lines: str = "low", send: bytes | None = None) -> str:
@@ -419,6 +431,10 @@ class FixtureIo:
     def visa_query(self, resource: str, command: str) -> str | None:
         self.calls.append(("visa_query", resource, command))
         return self.data.get("visa", {}).get(resource, {}).get(command)
+
+    def visa_write(self, resource: str, command: str) -> bool:
+        self.calls.append(("visa_write", resource, command))
+        return resource in self.data.get("visa", {})
 
     def serial_listen(self, path: str, seconds: float, baud: int = 115200, exclusive: bool = False,
                       lines: str = "low", send: bytes | None = None) -> str:

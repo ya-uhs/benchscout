@@ -22,7 +22,7 @@ from . import recon as R
 from .approvals import ApprovalBook, Scope
 from .io import Io
 from .locks import DeviceLocks
-from .policy import Effect, Impact, classify
+from .policy import SCPI_PORTS, Effect, Impact, classify, scpi_default, scpi_headers
 
 RECENT_FOR_QUOTES = 2 * 1024 * 1024  # how much recent output a quote is checked against
 
@@ -311,7 +311,8 @@ class Broker:
         return {"status": "pending_human" if e.status == "pending" else "remembered", "id": e.id}
 
     def _remember_command(self, dev, ref: str, text: str, evidence: str, data: dict, source: str) -> dict:
-        """A firmware command for one port. Saying it is SAFE loosens safety, so that waits for the human."""
+        """A firmware command for one serial port, or a SCPI command (by its header) for one instrument. Whatever
+        makes it run with fewer questions than benchscout would ask by itself waits for the human."""
         from .memory import Entry
 
         cmd = str(data.get("command") or "").strip()
@@ -321,25 +322,54 @@ class Broker:
                                                      '"safe"|"disruptive"|"dangerous", "eol": "\\n" (optional)}'}
         if effect not in ("safe", "disruptive", "dangerous"):
             return {"status": "rejected", "message": "effect must be safe, disruptive or dangerous"}
+        kinds = ("serial", *SCPI_PORTS)
         port = next((p.id for p in self.bench.ports_of(dev.id) if p.id == ref or p.path == ref), None)
         if not port:
-            serial = [p.id for p in self.bench.ports_of(dev.id) if p.kind == "serial"]
-            if len(serial) != 1:
-                return {"status": "rejected", "message": f"a command belongs to one port; give its id ({', '.join(serial) or 'none'})"}
-            port = serial[0]
+            ports = [p.id for p in self.bench.ports_of(dev.id) if p.kind in kinds]
+            if len(ports) != 1:
+                return {"status": "rejected", "message": f"a command belongs to one port; give its id ({', '.join(ports) or 'none'})"}
+            port = ports[0]
+        if self.bench.ports[port].kind in SCPI_PORTS:
+            try:
+                units = scpi_headers(cmd)
+            except A.ArgError as e:
+                return {"status": "rejected", "message": str(e)}
+            if len(units) != 1:
+                return {"status": "rejected", "message": "remember one SCPI command (one header) per entry, without ';'"}
         key = self._key(dev)
+        same = self._command_key(self.bench.ports[port], cmd)
         for old in self.memory.entries(key):  # the same command again: the newer entry replaces the older
-            if old.kind == "command" and old.target == port and old.data.get("command") == cmd and old.status in ("active", "pending"):
+            if (old.kind == "command" and old.target == port and old.status in ("active", "pending")
+                    and self._command_key(self.bench.ports[port], old.data.get("command", "")) == same):
                 self.memory.set_status(key, old.id, "superseded")
+        loosens = self._loosens(self.bench.ports[port], cmd, effect)
         e = Entry(kind="command", text=text, source=source, evidence=evidence, target=port,
-                  status="pending" if effect == "safe" else "active",
+                  status="pending" if loosens else "active",
                   data={"command": cmd, "effect": effect, **({"eol": data["eol"]} if "eol" in data else {})})
         e = self.memory.add(key, e, self._header(dev))
         self._load_command(self.bench, dev, e)
         self._memory_event(dev, e)
         return {"status": "pending_human" if e.status == "pending" else "remembered", "id": e.id, "port": port,
-                **({"message": "a command remembered as safe runs without asking only after the human confirms it in "
-                               "the panel; until then serial.command asks like serial.send"} if e.status == "pending" else {})}
+                **({"message": "it runs with fewer questions only after the human confirms it in the panel; until then "
+                               "it asks as before"} if e.status == "pending" else {})}
+
+    @staticmethod
+    def _command_key(port, cmd: str) -> str:
+        """How a remembered command is looked up: a firmware command by its text, a SCPI one by its header."""
+        if port.kind in SCPI_PORTS:
+            try:
+                return scpi_headers(cmd)[0][0]
+            except (A.ArgError, IndexError):
+                return ""
+        return cmd
+
+    @staticmethod
+    def _loosens(port, cmd: str, effect: str) -> bool:
+        """Would this entry make the command ask less than benchscout does by itself?"""
+        if port.kind in SCPI_PORTS:
+            key = Broker._command_key(port, cmd)
+            return not key or Effect[effect.upper()] < scpi_default(key)[0]
+        return effect == "safe"  # a firmware command is otherwise like sending bytes (DISRUPTIVE)
 
     def _load_command(self, bench, dev, e) -> None:
         from . import knowledge as K
@@ -348,9 +378,26 @@ class Broker:
         if not port or e.status not in ("active", "pending"):
             return
         effect = e.data.get("effect", "disruptive")
+        key = self._command_key(port, e.data["command"])
+        if not key:
+            return
+        loosens = self._loosens(port, e.data["command"], effect)
         shared = dev.serial in K.SHARED_SERIALS  # another unit may answer to this serial: never loosen safety on it
-        port.commands[e.data["command"]] = {"effect": effect, "eol": e.data.get("eol", "\n"), "text": e.text,
-                                            "pending": e.status == "pending" or (effect == "safe" and shared)}
+        port.commands[key] = {"effect": effect, "eol": e.data.get("eol", "\n"), "text": e.text, "loosens": loosens,
+                              "pending": e.status == "pending" or (loosens and shared)}
+
+    def forget(self, key: str, entry_id: str) -> dict:
+        """Control channel: the human removes an entry. What it loosened stops at once, not at the next scan."""
+        with self._lock:
+            e = next((x for x in self.memory.entries(key) if x.id == entry_id), None)
+            self.memory.delete(key, entry_id)
+            if e and self.last and e.target in self.last.bench.ports:
+                port = self.last.bench.ports[e.target]
+                if e.kind == "command":
+                    port.commands.pop(self._command_key(port, e.data.get("command", "")), None)
+                if e.kind == "safety" and e.data.get("listen_safe"):
+                    port.may_reset_on_open = True  # back to asking before opening
+        return {"deleted": entry_id}
 
     def recall(self, ref: str | None = None) -> list[dict]:
         from dataclasses import asdict
@@ -370,7 +417,7 @@ class Broker:
             if accept:
                 self._load_command(self.last.bench, self.last.bench.devices[port.device_id], e)
             else:
-                port.commands.pop(e.data.get("command", ""), None)
+                port.commands.pop(self._command_key(port, e.data.get("command", "")), None)
         self._emit({"event": "memory_decided", "key": key, "entry": asdict(e)})
         return asdict(e)
 
@@ -580,7 +627,10 @@ class Broker:
                 return {"status": "invalid_args",
                         "message": f"{args['name']!r} is not a remembered command of {port_id} (remembered: {known}). "
                                    "Remember it first with bench_remember (kind command), or send it with serial.send"}
-            impact = classify(self.bench, action, port_id, args)
+            try:
+                impact = classify(self.bench, action, port_id, args)
+            except A.ArgError as e:  # a SCPI line that is not one plain message
+                return {"status": "invalid_args", "message": str(e)}
             w = self.watches.get(port_id)
             if w and w.alive and action in ("serial.listen", "serial.watch"):
                 # the port is already open: listening opens nothing, so it cannot reset anything
@@ -682,6 +732,10 @@ class Broker:
             safe_name = "".join(c if c.isalnum() else "_" for c in args["data"])[:24]
             return self._save_artifact(f"{port_id}-send-{safe_name}.txt", text, preview=text[-2000:])
         if action in ("scpi.query", "scpi.write"):
+            # an answer is read only when the line asks for one: a command alone has none to wait for
+            asks = any(h[0].endswith("?") for h in scpi_headers(args["command"]))
+            if not asks:
+                return {"sent": self.io.visa_write(port.path, args["command"])}
             return self.io.visa_query(port.path, args["command"])
         if action == "jtag.scan":
             if not port.tools.get("openFPGALoader"):

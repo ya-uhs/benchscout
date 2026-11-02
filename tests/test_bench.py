@@ -103,10 +103,18 @@ def test_esptool_read_is_disruptive_and_hits_jtag(r):
 
 
 def test_scpi_classification(r):
+    """Only what the standard fixes is judged by name; the rest asks (policy.py, design.md section 12 2026-11-02)."""
     psu = next(p for p in r.bench.ports.values() if "192.168.1.50" in p.id)
-    assert classify(r.bench, "scpi.query", psu.id, {"command": "MEAS:CURR? CH1"}).effect == Effect.SAFE
-    assert classify(r.bench, "scpi.query", psu.id, {"command": ":TRIG:MODE SING"}).effect == Effect.DISRUPTIVE
-    assert classify(r.bench, "scpi.query", psu.id, {"command": "OUTP CH1,ON"}).effect == Effect.DANGEROUS
+
+    def effect(cmd):
+        return classify(r.bench, "scpi.query", psu.id, {"command": cmd}).effect
+
+    for cmd in ("*IDN?", ":syst:err?", "SYSTem:ERRor:NEXT?", "*IDN?;*OPC?", "*STB?"):
+        assert effect(cmd) == Effect.SAFE, cmd
+    for cmd in ("MEAS:CURR? CH1", "READ?", "VOLT?", "*CLS"):
+        assert effect(cmd) == Effect.DISRUPTIVE, cmd  # one card; the human knows what the instrument is
+    for cmd in (":TRIG:MODE SING", "OUTP CH1,ON", "*TST?", "*RST", "*IDN?;OUTP ON"):
+        assert effect(cmd) == Effect.DANGEROUS, cmd
 
 
 def test_proposals(r):
@@ -330,21 +338,24 @@ def test_every_reason_has_a_code_the_panel_can_translate(tmp_path):
     assert classify(b, "no.such.action", "serial:usbserial-10").code == "unknown_action"
     scpi = "visa:TCPIP0::192.168.1.50::INSTR"  # the PSU on the LAN
     assert classify(b, "scpi.query", scpi, {"command": "OUTP CH1,ON"}).code == "energizing"
-    assert classify(b, "scpi.query", scpi, {"command": "DISP:BRIG 5"}).code == "action:scpi.write"
+    assert classify(b, "scpi.query", scpi, {"command": "DISP:BRIG 5"}).code == "scpi_command"
+    assert classify(b, "scpi.query", scpi, {"command": "MEAS:VOLT?"}).code == "scpi_query"
+    assert classify(b, "scpi.query", scpi, {"command": "*IDN?"}).code == "scpi_status"
+    assert classify(b, "scpi.query", scpi, {"command": "*TST?"}).code == "scpi_procedure"
 
 
 
-def test_energizing_scpi_is_dangerous_whatever_the_vendor_syntax():
-    """Review 2026-11-02: "CH1:VOLT 5" (a channel node first) and a second ;-joined command slipped through."""
+def test_any_scpi_command_the_standard_does_not_fix_is_dangerous_whatever_the_vendor_syntax():
+    """Review 2026-11-02: a list of output commands ("OUTP", "VOLT" ...) missed "CH1:VOLT 5", then vendor syntax
+    no list can hold. So no list decides: every command outside the standard asks each time."""
     from benchscout.policy import classify as cls
 
     b = recon.run(FixtureIo(FIXTURE)).bench
     psu = "visa:TCPIP0::192.168.1.50::INSTR"
-    for cmd in ("OUTP CH1,ON", ":OUTPut ON", "CH1:VOLTage 5", "INST:NSEL 1;VOLT 5", ":SOUR1:VOLT 3.3", "APPL 5,0.1"):
+    for cmd in ("OUTP CH1,ON", ":OUTPut ON", "CH1:VOLTage 5", "INST:NSEL 1;VOLT 5", ":SOUR1:VOLT 3.3", "APPL 5,0.1",
+                "C1:BSWV WVTP,SINE,AMP,5", "INP ON", "*RCL 1", "SYST:BEEP", "DISP:BRIG 5", "PROG:RUN", "INIT"):
         assert cls(b, "scpi.write", psu, {"command": cmd}).effect == Effect.DANGEROUS, cmd
-    for cmd in ("SYST:BEEP", "DISP:BRIG 5", "MEAS:VOLT?"):
-        assert cls(b, "scpi.write", psu, {"command": cmd}).effect != Effect.DANGEROUS, cmd
-
+    assert cls(b, "scpi.write", psu, {"command": "MEAS:VOLT?"}).effect == Effect.DISRUPTIVE
 
 
 def test_every_serial_port_keeps_its_evidence_and_a_valid_open_mode():

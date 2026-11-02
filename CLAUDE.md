@@ -109,6 +109,10 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
   is DISRUPTIVE. Impact propagates over the graph (`policy.py`): reprogramming an FPGA
   also disturbs the UART implemented in its fabric.
 - An action or command with no declared effect is DANGEROUS.
+- Never make something DANGEROUS by matching a list of risky patterns on top of a weaker default: the list
+  is never complete and every miss is weaker. Default cautious and loosen only what a standard fixes or the
+  human confirmed. SCPI: only the standard's status/identity queries are SAFE, other queries DISRUPTIVE,
+  every other command DANGEROUS; one message per call, printable ASCII (`tests/test_scpi.py`, design.md U9).
 - Every proposal carries a `why:` that is the policy's actual reason
   (`test_proposal_reason_matches_policy`).
 - VISA `ASRL` resources are never sent `*IDN?`.

@@ -26,6 +26,8 @@ const en = {
   noFolder: "Open a folder first: benchscout keeps its logs and captures in the folder you work in.",
   firstQuestion: "Found on the bench:",
   learned: (name: string) => `Remembered about ${name}`,
+  commandAs: (cmd: string, effect: string) =>
+    `\`${cmd}\`: ${({ safe: "runs without asking", disruptive: "asks once (can be allowed for the session)", dangerous: "asks every time" } as Record<string, string>)[effect] ?? effect}`,
   learnedSafety: (name: string) => `Remember about ${name}? This loosens safety`,
   listenSafeAsk: (port: string, n: number) => `Opening ${port} did not reset the device (${n} times). Treat listening to it as safe, so it is watched without asking?`,
   accept: "Accept",
@@ -85,7 +87,7 @@ const en = {
     "fpga.program": "load a bitstream into the FPGA",
     "fpga.write_flash": "write a bitstream to the FPGA's flash",
     "scpi.query": "ask the instrument",
-    "scpi.write": "change instrument settings",
+    "scpi.write": "send a command to the instrument",
   } as Record<string, string>,
 };
 
@@ -115,6 +117,8 @@ const ja: typeof en = {
   noFolder: "先にフォルダを開いてください。benchscout は作業フォルダにログや取得データを保存します。",
   firstQuestion: "見つかった機器:",
   learned: (name: string) => `${name} について覚えたこと`,
+  commandAs: (cmd: string, effect: string) =>
+    `\`${cmd}\`:${({ safe: "聞かずに実行します", disruptive: "一度だけ確認します(セッション中まとめて許可できます)", dangerous: "毎回確認します" } as Record<string, string>)[effect] ?? effect}`,
   learnedSafety: (name: string) => `${name} について覚えますか?(安全の扱いが緩みます)`,
   listenSafeAsk: (port: string, n: number) => `${port} を開いても機器はリセットされませんでした(${n} 回)。聞くことを安全として扱い、次から確認なしで見張りますか?`,
   accept: "認める",
@@ -163,7 +167,15 @@ const ja: typeof en = {
   effect: { safe: "安全", disruptive: "機器の状態が変わります", dangerous: "元に戻せない可能性があります" },
   reasons: {
     reset_on_open: "このポートを開くと機器がリセットされることがあります(DTR/RTS が自動リセット回路につながっている、またはネイティブ USB のチップが開いたときにリセットする)",
-    energizing: "基板に電力を送る出力を変えます",
+    energizing: "出力・電圧・電流などを設定する命令です。基板に電力を送ることがあります",
+    scpi_status: "規格(IEEE 488.2 / SCPI)で意味が決まっている、状態や名前の問い合わせです",
+    scpi_query: "問い合わせは本来読むだけですが、動くものもあります(MEASure?/READ? は測定を始め、SMU は出力を入れることがあります)。この機器で何が起きるかは分かっていません",
+    scpi_command: "この命令で何が起きるかは機器しだいで、規格では決まっていません",
+    scpi_procedure: "規格上、自己診断や校正を走らせる命令です。出力が切り替わることがあります",
+    scpi_status_write: "状態レジスタだけを変えます(IEEE 488.2)",
+    command_safe: "記憶では SAFE(人が確認済み)",
+    command_disruptive: "記憶では DISRUPTIVE",
+    command_dangerous: "記憶では DANGEROUS",
     unknown_action: "何をするか分からない操作です",
     watched: "ポートはすでに開いています(見張り中)。読むだけで、何も開きません",
     command_unconfirmed: "SAFE と確認されていないファームウェアのコマンドは、文字を送るのと同じ扱いです",
@@ -172,8 +184,8 @@ const ja: typeof en = {
     "action:serial.send": "ファームウェアが反応するバイトを送ります",
     "action:jtag.scan": "IDCODE を読みます。プローブのチャネルを専有します",
     "action:jtag.halt": "CPU を止めます",
-    "action:scpi.query": "問い合わせだけです(? で終わる)",
-    "action:scpi.write": "見ているかもしれない測定器の設定を変えます",
+    "action:scpi.query": "SCPI の問い合わせです。何が起きるかは命令と機器しだいです",
+    "action:scpi.write": "SCPI の命令です。何が起きるかは機器しだいです",
     "action:fpga.program": "FPGA を書き換えます。ファブリックの中のものはすべて再起動します",
     "action:fpga.write_flash": "FPGA の設定用フラッシュを上書きします。今入っている設計は、そのファイルが無ければ戻せません",
     "action:esptool.chip_id": "チップ ID を読みますが、DTR/RTS でチップを ROM ブートローダーにリセットします",
@@ -190,7 +202,7 @@ const ja: typeof en = {
     "fpga.program": "FPGA にビットストリームを書き込む",
     "fpga.write_flash": "FPGA のフラッシュ(ROM)にビットストリームを書き込む",
     "scpi.query": "測定器に問い合わせる",
-    "scpi.write": "測定器の設定を変える",
+    "scpi.write": "測定器に命令を送る",
   },
 };
 

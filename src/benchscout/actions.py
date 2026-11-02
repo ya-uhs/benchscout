@@ -157,9 +157,14 @@ BUILTIN: dict[str, Action] = {a.name: a for a in (
     Action("jtag.scan", Effect.SAFE, False, "reads IDCODEs; needs exclusive use of the probe channel",
            "read the IDCODEs on a JTAG chain"),
     Action("jtag.halt", Effect.DISRUPTIVE, True, "stops the CPU", "halt the CPU over JTAG", implemented=False),
-    Action("scpi.query", Effect.SAFE, False, "query only (ends with '?')", "send a SCPI query and read the answer", _COMMAND),
-    Action("scpi.write", Effect.DISRUPTIVE, False, "changes instrument settings the user may be looking at",
-           "send a SCPI command that changes settings", _COMMAND),
+    # the command line decides the effect (policy.py): the standard's status and identity queries are SAFE, other
+    # queries ask once, any other command asks every time; these base effects apply only with no command at all
+    Action("scpi.query", Effect.DISRUPTIVE, False, "a SCPI query; what it does depends on the command and the instrument",
+           "send a SCPI query and read the answer (one message, printable ASCII; *IDN?, SYST:ERR? and the other "
+           "status queries run without asking, other queries ask once)", _COMMAND),
+    Action("scpi.write", Effect.DANGEROUS, False, "a SCPI command; what it does depends on the instrument",
+           "send a SCPI command (one message, printable ASCII); any command asks the human each time unless memory "
+           "the human confirmed says otherwise for this instrument", _COMMAND),
 )}
 
 
