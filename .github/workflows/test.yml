@@ -28,6 +28,40 @@ jobs:
       - run: npm run package  # the .vsix without the core: vsce scans our own files for secrets here
         working-directory: vscode
 
+  e2e:  # the inbox in a real VS Code on a scripted bench (vscode/scripts/e2e.mjs)
+    needs: pytest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --extra mcp --extra visa
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+        working-directory: vscode
+      - run: npm run package
+        working-directory: vscode
+      - run: xvfb-run -a npm run e2e
+        if: runner.os == 'Linux'
+        working-directory: vscode
+        env:
+          E2E_DOWNLOAD_VSCODE: "1"
+      - run: npm run e2e
+        if: runner.os != 'Linux'
+        working-directory: vscode
+        env:
+          E2E_DOWNLOAD_VSCODE: "1"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-${{ matrix.os }}
+          path: vscode/e2e-out/
+
   package:
     # one .vsix per OS/CPU with the frozen core inside (PyInstaller does not cross-compile)
     needs: pytest

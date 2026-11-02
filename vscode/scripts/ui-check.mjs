@@ -6,10 +6,13 @@
 // and prints the cards as text.
 //
 //   node scripts/ui-check.mjs start [--vsix FILE] [--workspace DIR] [--real] [--locale ja]
+//                                   [--fixture FILE] [--core PATH] [--language en|ja]
 //                                                                            install, launch, open the inbox
 //   node scripts/ui-check.mjs shot FILE.png                                  screenshot of the window
 //   node scripts/ui-check.mjs cards                                          the cards, as text
 //   node scripts/ui-check.mjs click "Button text"                            press a button in the inbox
+//   node scripts/ui-check.mjs devices                                        the device list, as text
+//   node scripts/ui-check.mjs device-button "Device name"                    press Release/Use on that device's row
 //   node scripts/ui-check.mjs stop                                           close it, delete the profile
 //
 // macOS paths by default; set VSCODE_BIN (the Electron executable) and VSCODE_CLI elsewhere.
@@ -91,16 +94,22 @@ async function start() {
   writeFileSync(join(profile, "ud", "User", "settings.json"), JSON.stringify({
     "workbench.startupEditor": "none", "security.workspace.trust.enabled": false, "telemetry.telemetryLevel": "off",
     "update.mode": "none", "extensions.autoCheckUpdates": false,
+    // --core: this core instead of the one inside the .vsix (a checkout's own, so a test sees the current code)
+    ...(flag("--core") ? { "benchscout.corePath": resolve(flag("--core")) } : {}),
+    ...(flag("--language") ? { "benchscout.language": flag("--language") } : {}),
   }, null, 1));
-  execFileSync(CLI, ["--user-data-dir", join(profile, "ud"), "--extensions-dir", join(profile, "ext"), "--install-extension", vsix, "--force"], { stdio: "ignore" });
+  // the CLI is code.cmd on Windows, which only a shell runs; the paths are quoted for it
+  const q = (a) => (process.platform === "win32" ? `"${a}"` : a);
+  execFileSync(q(CLI), ["--user-data-dir", join(profile, "ud"), "--extensions-dir", join(profile, "ext"), "--install-extension", vsix, "--force"].map(q),
+    { stdio: "ignore", shell: process.platform === "win32" });
   const port = 9300 + Math.floor(Math.random() * 600);
   const env = { ...process.env };
   if (real) { delete env.BENCHSCOUT_FIXTURE; } else {
-    env.BENCHSCOUT_FIXTURE = join(repo, "fixtures", "bench_example.json");
+    env.BENCHSCOUT_FIXTURE = resolve(flag("--fixture") ?? join(repo, "fixtures", "bench_example.json"));
     env.BENCHSCOUT_MEMORY = join(profile, "memory");
   }
   const p = spawn(BIN, ["--user-data-dir", join(profile, "ud"), "--extensions-dir", join(profile, "ext"),
-    `--remote-debugging-port=${port}`, "--disable-workspace-trust", ...(flag("--locale") ? ["--locale", flag("--locale")] : []),
+    `--remote-debugging-port=${port}`, "--disable-workspace-trust", ...(process.env.VSCODE_ARGS ?? "").split(" ").filter(Boolean), ...(flag("--locale") ? ["--locale", flag("--locale")] : []),
     "--new-window", ws], { env, detached: true, stdio: "ignore" });
   p.unref();
   writeFileSync(STATE, JSON.stringify({ port, pid: p.pid, profile, ws, vsix, real }));
@@ -139,6 +148,13 @@ async function main() {
   } else if (cmd === "cards") {
     console.log(await inbox(st.port, `[...doc.querySelectorAll(".card")].map((c) =>
       (c.classList.contains("closed") ? "  (done) " : "") + c.innerText.replace(/\\n+/g, " | ")).join("\\n")`));
+  } else if (cmd === "devices") {
+    console.log(await inbox(st.port, `[...doc.querySelectorAll(".dev")].map((d) => d.innerText.replace(/\\n+/g, " | ")).join("\\n")`));
+  } else if (cmd === "device-button") {  // the Release/Use button on the row of the device named rest[0]
+    const hit = await inbox(st.port, `(() => { const row = [...doc.querySelectorAll(".dev")].find((d) => d.innerText.includes(${JSON.stringify(rest[0])}));
+      const b = row?.querySelector("button"); if (!b) return ""; b.click(); return b.textContent.trim(); })()`);
+    if (!hit) throw new Error(`no device row with a button for "${rest[0]}"`);
+    console.log(`pressed: ${hit}`);
   } else if (cmd === "click") {
     const hit = await inbox(st.port, `(() => { const b = [...doc.querySelectorAll("button")].find((b) => b.textContent.trim() === ${JSON.stringify(rest[0])}
       || b.textContent.includes(${JSON.stringify(rest[0])})); if (!b) return ""; b.click(); return b.textContent.trim(); })()`);
@@ -157,7 +173,8 @@ async function main() {
     rmSync(STATE, { force: true });
     console.log("closed");
   } else {
-    console.error("usage: ui-check.mjs start [--vsix F] [--workspace D] [--real] [--locale ja] | shot F.png | cards | click TEXT | stop");
+    console.error("usage: ui-check.mjs start [--vsix F] [--workspace D] [--real] [--locale ja] [--fixture F] [--core P] [--language L]"
+      + " | shot F.png | cards | click TEXT | stop");
     process.exit(2);
   }
 }

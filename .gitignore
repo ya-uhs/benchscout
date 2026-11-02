@@ -11,3 +11,5 @@ skills-lock.json
 build/
 vscode/bin/
 vscode/THIRD_PARTY_NOTICES.txt
+vscode/.vscode-test/
+vscode/e2e-out/
