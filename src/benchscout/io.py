@@ -40,6 +40,30 @@ class Io(Protocol):
     def jtag_scan(self, select: list[str]) -> list[dict]: ...  # [{idcode, manufacturer, model}]; select: the probe's args
 
 
+def run_tool(argv: list[str], timeout: float, cwd: str | Path | None = None) -> tuple[str, int | None]:
+    """Run an external program and return (stdout + stderr, exit code; None if it was stopped at `timeout`).
+
+    Its stdin is empty, never the core's: the core's stdin is the control channel, and on Windows a child that
+    inherits a pipe another thread is reading waits for that read to finish (esptool sat there until the next line
+    on the control channel, Windows VM 2026-11-02). At the time limit the whole process tree is stopped: tools built
+    with PyInstaller leave a child holding the output pipes, and waiting on those never ends."""
+    p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd,
+                         text=True, encoding="utf-8", errors="replace")
+    try:
+        out, err = p.communicate(timeout=timeout)
+        return (out or "") + (err or ""), p.returncode
+    except subprocess.TimeoutExpired:
+        if platform.system() == "Windows":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], stdin=subprocess.DEVNULL, capture_output=True)
+        else:
+            p.kill()
+        try:
+            out, err = p.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            out, err = "", ""
+        return (out or "") + (err or "") + f"\n(stopped after {timeout:g} s)", None
+
+
 class PortGone(OSError):
     """The port vanished (the device reset or re-enumerated, or was unplugged)."""
 
@@ -102,7 +126,7 @@ class LiveIo:
             return linux_usb_devices(Path("/sys/bus/usb/devices"))
         if system == "Windows":
             out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_PNP_QUERY],
-                                 capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
+                                 stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
             from .winusb_strings import usb_strings
 
             try:
@@ -113,7 +137,7 @@ class LiveIo:
         if system != "Darwin":
             return []
         out = subprocess.run(
-            ["/usr/sbin/system_profiler", "SPUSBHostDataType", "-json"], capture_output=True, text=True
+            ["/usr/sbin/system_profiler", "SPUSBHostDataType", "-json"], stdin=subprocess.DEVNULL, capture_output=True, text=True
         ).stdout
         try:
             root = json.loads(out).get("SPUSBHostDataType", [])
@@ -282,8 +306,8 @@ class LiveIo:
         if not exe:
             return []
         args = [exe, "--detect", *select]  # how to reach this probe comes from the USB data
-        out = subprocess.run(args, capture_output=True, text=True, timeout=10)
-        return parse_detect(out.stdout + out.stderr)
+        text, _ = run_tool(args, timeout=10)
+        return parse_detect(text)
 
 
 WINDOWS_PNP_QUERY = (  # UTF-8 out: Windows PowerShell would print a device's name in the console's code page

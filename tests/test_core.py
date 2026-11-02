@@ -501,3 +501,32 @@ def test_the_streams_are_utf8_even_where_a_pipe_defaults_to_another_code_page():
                        env={**__import__("os").environ, "PYTHONIOENCODING": "cp1252"})
     assert r.returncode == 0, r.stderr.decode(errors="replace")
     assert r.stdout.decode("utf-8").strip() == "got あいう 回答 ■"
+
+
+def test_no_child_process_inherits_the_control_channel():
+    """Windows VM, 2026-11-02: the core's stdin is the control channel, read by its main thread. A child started
+    without its own stdin inherits that pipe, and on Windows it waits for the pending read: `esptool version` sat
+    until the next control line, 160 s, and the agent's call timed out. Every subprocess the product starts says
+    what its stdin is."""
+    import ast
+
+    src = Path(__file__).parent.parent / "src" / "benchscout"
+    missing = []
+    for f in src.rglob("*.py"):
+        for node in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "subprocess" and node.func.attr in ("run", "Popen", "call", "check_call", "check_output")
+                    and not any(k.arg == "stdin" for k in node.keywords)):
+                missing.append(f"{f.name}:{node.lineno}")
+    assert not missing, f"subprocesses without stdin=: {missing}"
+
+
+def test_a_tool_that_overruns_is_stopped_with_what_it_printed():
+    import sys
+
+    from benchscout.io import run_tool
+
+    text, code = run_tool([sys.executable, "-c", "import sys, time; print('started', flush=True); time.sleep(30)"], timeout=1)
+    assert code is None and "started" in text and "stopped after 1 s" in text
+    text, code = run_tool([sys.executable, "-c", "import sys; print(sys.stdin.read() == '')"], timeout=10)
+    assert (text.strip(), code) == ("True", 0), "its stdin is empty, not ours"

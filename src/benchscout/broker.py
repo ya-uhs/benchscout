@@ -11,7 +11,6 @@ Approvals live in memory (`ApprovalBook`); nothing on disk grants anything.
 from __future__ import annotations
 
 import json
-import subprocess
 import threading
 import time
 from pathlib import Path
@@ -20,7 +19,7 @@ from typing import Callable
 from . import actions as A
 from . import recon as R
 from .approvals import ApprovalBook, Scope
-from .io import Io
+from .io import Io, run_tool
 from .locks import DeviceLocks
 from .policy import SCPI_PORTS, Effect, Impact, classify, scpi_default, scpi_headers
 
@@ -865,11 +864,7 @@ class Broker:
         for pid, _ in watched:
             self._unwatch(pid)
         try:
-            out = subprocess.run(argv, capture_output=True, text=True, timeout=spec.timeout, cwd=ws,
-                                 encoding="utf-8", errors="replace")
-            text, code = (out.stdout or "") + (out.stderr or ""), out.returncode
-        except subprocess.TimeoutExpired as e:
-            text, code = f"{e}", None
+            text, code = run_tool(argv, spec.timeout, cwd=ws)
         finally:
             for pid, baud in watched:
                 self._watch(pid, baud)
@@ -887,11 +882,12 @@ class Broker:
 
         exe = exe or self._which(v["argv"][0])
         try:
-            out = subprocess.run([exe or v["argv"][0], *v["argv"][1:]], capture_output=True, text=True, timeout=30,
-                                 encoding="utf-8", errors="replace")
-        except (OSError, subprocess.TimeoutExpired) as e:
+            text, code = run_tool([exe or v["argv"][0], *v["argv"][1:]], timeout=30)
+        except OSError as e:
             return f"could not check the version of {v['argv'][0]}: {e}"
-        m = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", out.stdout + out.stderr)
+        if code is None:
+            return f"could not check the version of {v['argv'][0]}: it did not answer within 30 s"
+        m = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", text)
         if not m:
             return None
         have = tuple(int(x or 0) for x in m.groups())

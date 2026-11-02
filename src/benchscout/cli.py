@@ -38,7 +38,7 @@ def user_language(explicit: str | None = None) -> str:
         code = windows_locale_code(locale.getlocale()[0])
     if not code and sys.platform == "darwin":
         try:
-            out = subprocess.run(["defaults", "read", "-g", "AppleLanguages"], capture_output=True, text=True).stdout
+            out = subprocess.run(["defaults", "read", "-g", "AppleLanguages"], stdin=subprocess.DEVNULL, capture_output=True, text=True).stdout
             code = next((l.strip(' ",()') for l in out.splitlines() if l.strip(' ",()')), None)
         except OSError:
             code = None
