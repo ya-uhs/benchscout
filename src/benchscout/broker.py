@@ -527,6 +527,7 @@ class Broker:
         with self._lock:
             e = next((x for x in self.memory.entries(key) if x.id == entry_id), None)
             self.memory.delete(key, entry_id)
+            self._emit({"event": "memory_forgotten", "key": key, "id": entry_id})
             if e and self.last and e.target in self.last.bench.ports:
                 port = self.last.bench.ports[e.target]
                 if e.kind == "command":
@@ -540,6 +541,23 @@ class Broker:
 
         devs = [self._resolve_ref(ref)[0]] if ref else [self.bench.devices[d] for d in sorted(self.selected)] or list(self.bench.devices.values())
         return [{"device": d.name, "key": self._key(d), "entries": [asdict(e) for e in self.memory.entries(self._key(d))]} for d in devs]
+
+    def memory_view(self) -> list[dict]:
+        """Control channel: what is remembered about each device on the bench, with the file it lives in, for the
+        inbox's list (design.md section 6: the person sees, fixes and deletes it). Entries no longer in force
+        (superseded, rejected) are left out; the file keeps them."""
+        from dataclasses import asdict
+
+        out = []
+        for d in self.bench.devices.values():
+            if d.other:
+                continue
+            key = self._key(d)
+            entries = [asdict(e) for e in self.memory.entries(key) if e.status in ("active", "pending")]
+            if entries:
+                out.append({"device": d.id, "name": d.name, "key": key, "file": str(self.memory.device_file(key).path),
+                            "entries": entries})
+        return out
 
     def decide_memory(self, key: str, entry_id: str, accept: bool) -> dict:
         """Control channel only: the human confirms (or rejects) a safety-loosening entry."""

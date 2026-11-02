@@ -19,12 +19,21 @@ function webview() {
   const app = { innerHTML: "" };
   const posted = [];
   const listeners = {};
-  const document = { getElementById: () => app, addEventListener: () => {} };
+  const docListeners = {};
+  const document = { getElementById: () => app, addEventListener: (type, f) => { docListeners[type] = f; } };
   const window = { addEventListener: (type, f) => { listeners[type] = f; } };
   const acquireVsCodeApi = () => ({ postMessage: (m) => posted.push(m) });
   new Function("document", "window", "acquireVsCodeApi", script)(document, window, acquireVsCodeApi);
   return {
     posted,
+    /** Clicks an element carrying these data attributes (a button unless toggle is given), as the page's handler sees it. */
+    click(dataset, { button = !("toggle" in dataset) } = {}) {
+      const el = { dataset };
+      el.closest = (sel) => (sel === "button" ? (button ? el : null)
+        : sel.startsWith("[data-") && sel.slice(6, -1).replace(/-(.)/g, (_, c) => c.toUpperCase()) in dataset ? el : null);
+      docListeners.click({ target: el });
+      return app.innerHTML;
+    },
     render(state) {
       listeners.message({ data: { type: "state", state } });
       return app.innerHTML;
@@ -111,4 +120,24 @@ test("while everything is allowed, the inbox says so at the top with a way to tu
   assert.match(on, /<div class="allowall"><span>すべて許可中:[^<]*元に戻せない操作は毎回確認します。<\/span><button data-cmd="allowAllOff">解除<\/button><\/div>/);
   const off = w.render({ running: true, agent: "x", cards: [], devices: [], allowAll: false, strings: plainStrings("ja") });
   assert.ok(!off.includes("allowall"));
+});
+
+test("what is remembered is listed per device, folded at first; each entry can be forgotten or confirmed, and its file opened", () => {
+  const w = webview();
+  const memory = [{ device: "d1", name: "QinHeng USB Serial", key: "1a86-7523-x", file: "/home/u/.config/benchscout/memory/devices/1a86-7523-x.toml",
+    entries: [{ id: "m1", kind: "observation", text: "prints sensor ok", source: "agent", time: "2026-11-02T10:00", status: "active" },
+              { id: "m2", kind: "safety", text: "listening does not reset it", source: "benchscout", time: "2026-11-02T10:05", status: "pending" }] }];
+  const s = plainStrings("ja");
+  const folded = w.render({ running: true, agent: "x", cards: [], devices: [], memory, strings: s });
+  assert.ok(folded.includes(`${s.memoryTitle} (2)`) && !folded.includes("prints sensor ok"), "folded until opened");
+  const open = w.click({ toggle: "mem" });
+  assert.ok(open.includes("prints sensor ok") && open.includes(s.memoryKinds.observation) && open.includes(s.memoryPending));
+  w.click({ memforget: "1", key: "1a86-7523-x", id: "m1" });
+  w.click({ memdecide: "1", key: "1a86-7523-x", id: "m2" });
+  w.click({ memfile: memory[0].file });
+  assert.deepEqual(w.posted.filter((m) => m.type.startsWith("memory")), [
+    { type: "memoryForget", key: "1a86-7523-x", id: "m1" },
+    { type: "memoryDecide", key: "1a86-7523-x", id: "m2", accept: true },
+    { type: "memoryOpen", file: memory[0].file },
+  ]);
 });

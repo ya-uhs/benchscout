@@ -14,7 +14,7 @@ import * as vscode from "vscode";
 import { AcpDriver, COPILOT } from "./agents/acp";
 import { ClaudeDriver } from "./agents/claude";
 import { AgentDriver, McpRelay, WakeError } from "./agents/types";
-import { Bench, CoreClient, DeviceEvent, deviceViews } from "./core";
+import { Bench, CoreClient, DeviceEvent, deviceViews, MemoryGroup } from "./core";
 import { Card, Harness } from "./harness";
 import { languageName, pickLanguage, strings } from "./i18n";
 import { DeviceRow, PanelState, html } from "./panel";
@@ -45,6 +45,7 @@ const AGENTS: Record<string, { label: string; exe: string }> = {
 let core: CoreClient | undefined;
 let harness: Harness | undefined;
 let bench: Bench | undefined;
+let memoryGroups: MemoryGroup[] = [];  // the inbox's memory list, fetched from the core
 const watched = new Set<string>(); // serial ports the core holds open and logs
 let busyElsewhere: Record<string, unknown> = {}; // devices another benchscout window holds
 let view: vscode.WebviewView | undefined;
@@ -133,6 +134,13 @@ function askForAgent(): void {
     }, false, true);
 }
 
+/** What is remembered, for the inbox's list (design.md section 6: the person sees, fixes and deletes it). */
+async function loadMemory(): Promise<void> {
+  if (!core?.running) return;
+  memoryGroups = await core.memoryView().catch(() => memoryGroups);
+  refresh();
+}
+
 function refresh(): void {
   const cards: Card[] = harness?.cards ?? [];
   // everything that waits for the person: questions, approvals, and memory that would loosen safety
@@ -160,6 +168,7 @@ function refresh(): void {
   });
   const state: PanelState = { running: !!core?.running, agent: AGENTS[chosenAgent()]?.label ?? "", cards, devices,
     others: views.filter((d) => d.other).length,
+    memory: memoryGroups,
     allowAll: !!core?.running && !!core?.allowAll, strings: plain };
   view.webview.postMessage({ type: "state", state });
 }
@@ -181,7 +190,8 @@ async function start(ctx: vscode.ExtensionContext): Promise<void> {
   harness = new Harness(c, () => makeDriver(ctx, ws), s, { language: languageName(currentLanguage()), maxTurnsPerHour: max, autonomy });
   harness.on("changed", refresh);
   watched.clear();
-  c.on("scan", (b: Bench) => { bench = b; refresh(); });
+  c.on("scan", (b: Bench) => { bench = b; refresh(); void loadMemory(); });
+  for (const ev of ["memoryAdded", "memoryDecided", "memoryForgotten"] as const) c.on(ev, () => void loadMemory());
   c.on("selection", (selected: string[], busy: Record<string, unknown>) => {
     busyElsewhere = busy;
     for (const p of bench?.ports ?? []) if (!selected.includes(p.device_id)) watched.delete(p.id);  // released: not held any more
@@ -222,11 +232,19 @@ export function activate(ctx: vscode.ExtensionContext): void {
       v.onDidDispose(() => { view = undefined; });
       v.webview.onDidReceiveMessage(async (m) => {
         switch (m.type) {
-          case "ready": refresh(); break;
+          case "ready": refresh(); void loadMemory(); break;
           case "start": await start(ctx); break;
           case "stop": harness?.stop(); core?.stop(); break;
           case "rescan": askForAgent(); await core?.scan().catch(() => undefined); break;
           case "allowAllOff": await core?.setAllowAll(false).catch(() => undefined); break;
+          case "memoryForget": await core?.memoryDelete(m.key, m.id).catch(() => undefined); break;
+          case "memoryDecide": await core?.memoryDecide(m.key, m.id, !!m.accept).catch(() => undefined); break;
+          case "memoryOpen": {  // the file is plain TOML: the person fixes it in the editor
+            if (typeof m.file === "string" && memoryGroups.some((g) => g.file === m.file)) {
+              await vscode.window.showTextDocument(vscode.Uri.file(m.file));
+            }
+            break;
+          }
           case "answer": await harness?.answer(m.id, { option: m.option, text: m.text }); break;
           case "tell": await harness?.tell(m.text); break;
           case "device": {  // the person releases a device for their own tools, or takes it back

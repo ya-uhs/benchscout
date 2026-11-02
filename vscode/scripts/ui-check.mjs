@@ -13,6 +13,7 @@
 //   node scripts/ui-check.mjs click "Button text"                            press a button in the inbox
 //   node scripts/ui-check.mjs devices                                        the device list, as text
 //   node scripts/ui-check.mjs device-button "Device name"                    press Release/Use on that device's row
+//   node scripts/ui-check.mjs toggle mem | memory | mem-button "text"         the memory list: unfold, read, press its button
 //   node scripts/ui-check.mjs stop                                           close it, delete the profile
 //
 // macOS paths by default; set VSCODE_BIN (the Electron executable) and VSCODE_CLI elsewhere.
@@ -143,6 +144,7 @@ function state() {
 async function main() {
   if (cmd === "start") return start();
   const st = state();
+  if (cmd === "where") { console.log(JSON.stringify({ workspace: st.ws, profile: st.profile, port: st.port })); return; }
   if (cmd === "shot") {
     const s = await workbench(st.port);
     const r = await s.send("Page.captureScreenshot", { format: "png" });
@@ -154,6 +156,17 @@ async function main() {
       (c.classList.contains("closed") ? "  (done) " : "") + c.innerText.replace(/\\n+/g, " | ")).join("\\n")`));
   } else if (cmd === "devices") {
     console.log(await inbox(st.port, `[...doc.querySelectorAll(".dev")].map((d) => d.innerText.replace(/\\n+/g, " | ")).join("\\n")`));
+  } else if (cmd === "toggle") {  // fold or unfold a section of the inbox: devs, mem
+    const hit = await inbox(st.port, `(() => { const t = doc.querySelector('[data-toggle="${rest[0]}"]'); if (!t) return ""; t.click(); return t.textContent.trim(); })()`);
+    if (!hit) throw new Error(`no section "${rest[0]}" in the inbox`);
+    console.log(`toggled: ${hit}`);
+  } else if (cmd === "memory") {  // the memory list as text, one entry per line
+    console.log(await inbox(st.port, `[...doc.querySelectorAll(".mem-entry")].map((d) => d.innerText.replace(/\\n+/g, " | ")).join("\\n")`));
+  } else if (cmd === "mem-button") {  // press the button on the memory entry whose text contains rest[0]
+    const hit = await inbox(st.port, `(() => { const row = [...doc.querySelectorAll(".mem-entry")].find((d) => d.innerText.includes(${JSON.stringify(rest[0])}));
+      const b = row?.querySelector("button"); if (!b) return ""; b.click(); return b.textContent.trim(); })()`);
+    if (!hit) throw new Error(`no memory entry with "${rest[0]}"`);
+    console.log(`pressed: ${hit}`);
   } else if (cmd === "device-button") {  // the Release/Use button on the row of the device named rest[0]
     const hit = await inbox(st.port, `(() => { const row = [...doc.querySelectorAll(".dev")].find((d) => d.innerText.includes(${JSON.stringify(rest[0])}));
       const b = row?.querySelector("button"); if (!b) return ""; b.click(); return b.textContent.trim(); })()`);

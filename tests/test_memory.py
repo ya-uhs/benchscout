@@ -222,3 +222,20 @@ def test_memory_in_japanese_round_trips(tmp_path):
     m.add("k", Entry(kind="observation", source="agent", text="UART のカウンタは続いている(リセットなし)", evidence="hb 0000002a"))
     again = Memory(tmp_path / "ws", root=tmp_path / "mem")
     assert again.entries("k")[0].text == "UART のカウンタは続いている(リセットなし)"
+
+
+def test_the_inbox_lists_what_is_remembered_per_device_with_its_file(tmp_path):
+    """design.md section 6: the person sees, fixes (in the file) and deletes what was remembered."""
+    br = Broker(FixtureIo(FIXTURE), tmp_path / "ws" / ".benchscout")
+    events = []
+    br.on_event = events.append
+    br.scan()
+    dev = br.bench.ports["serial:usbserial-10"].device_id
+    a = br.remember(dev, "observation", "prints [I] sensor ok every second")
+    br.remember(dev, "config", "TX goes to the sensor board")
+    (group,) = [g for g in br.memory_view() if g["device"] == dev]
+    assert [e["text"] for e in group["entries"]] == ["prints [I] sensor ok every second", "TX goes to the sensor board"]
+    assert Path(group["file"]).is_file() and group["key"] in group["file"]
+    br.forget(group["key"], a["id"])
+    assert any(e["event"] == "memory_forgotten" and e["id"] == a["id"] for e in events), "the inbox hears it at once"
+    assert [e["text"] for g in br.memory_view() if g["device"] == dev for e in g["entries"]] == ["TX goes to the sensor board"]

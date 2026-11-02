@@ -9,7 +9,7 @@
 // --core: the core to run (default: the checkout's own, .venv/bin/benchscout), so the current code is tested
 // whatever core a .vsix carries. E2E_DOWNLOAD_VSCODE=1 downloads VS Code (stable) first, as CI does.
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -33,6 +33,24 @@ if (process.env.E2E_DOWNLOAD_VSCODE) {
 const core = resolve(flag("--core") ?? join(repo, ".venv", process.platform === "win32" ? "Scripts/benchscout.exe" : "bin/benchscout"));
 if (!existsSync(core)) throw new Error(`no core at ${core}: run \`uv sync --extra mcp --extra visa\` in ${repo}`);
 
+/** Calls a benchscout MCP tool the way an agent does, through the relay started in the inbox's workspace. */
+async function agentCall(tool, args) {
+  const ws = JSON.parse(execFileSync(process.execPath, [join(here, "scripts", "ui-check.mjs"), "where"], { encoding: "utf8" })).workspace;
+  const relay = spawn(core, ["mcp"], { cwd: ws, stdio: ["pipe", "pipe", "ignore"] });
+  const lines = [];
+  let buf = "";
+  relay.stdout.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\n")) >= 0) { lines.push(JSON.parse(buf.slice(0, i))); buf = buf.slice(i + 1); } });
+  const send = (m) => relay.stdin.write(JSON.stringify({ jsonrpc: "2.0", ...m }) + "\n");
+  const reply = async (id) => { for (let i = 0; i < 200; i++) { const m = lines.find((l) => l.id === id); if (m) return m; await sleep(50); } throw new Error(`no reply ${id}`); };
+  send({ id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "e2e", version: "0" } } });
+  await reply(1);
+  send({ method: "notifications/initialized" });
+  send({ id: 2, method: "tools/call", params: { name: tool, arguments: args } });
+  const m = await reply(2);
+  relay.kill();
+  return (m.result?.content ?? []).map((c) => c.text).join("");
+}
+
 function ui(...a) {
   return execFileSync(process.execPath, [join(here, "scripts", "ui-check.mjs"), ...a], { encoding: "utf8" }).trim();
 }
@@ -48,6 +66,7 @@ async function until(what, read, ok, seconds = 45) {
 }
 
 const DEVICE = "STMicroelectronics STLINK-V3";  // its console (fixtures/bench_e2e.json) crashes a few seconds after opening
+const DEVICE_ID = "/dev/cu.usbmodem21403";  // its port: the agent names the device by it
 let failed = false;
 ui("start", ...(flag("--vsix") ? ["--vsix", flag("--vsix")] : []), "--fixture", join(repo, "fixtures", "bench_e2e.json"),
   "--core", core, "--language", "en");
@@ -79,6 +98,16 @@ try {
   console.log(`  ${ui("device-button", DEVICE)}`);
   await until("the device in use again", "devices", (t) => t.split("\n").some((r) => r.includes(DEVICE) && r.includes("Release")));
   step("Release and Use on the device list reach the core");
+
+  // what the agent remembers shows in the inbox's memory list, and the person can forget it there
+  const saved = await agentCall("bench_remember", { ref: DEVICE_ID, kind: "observation", text: "e2e: prints sensor ok once a second" });
+  if (!saved.includes("remembered")) throw new Error(`bench_remember: ${saved}`);
+  await until("the memory list", "cards", () => true, 1);
+  console.log(`  ${ui("toggle", "mem")}`);
+  await until("the remembered entry", "memory", (t) => t.includes("e2e: prints sensor ok"));
+  console.log(`  ${ui("mem-button", "e2e: prints sensor ok")}`);
+  await until("the entry forgotten", "memory", (t) => !t.includes("e2e: prints sensor ok"));
+  step("what the agent remembered is listed in the inbox and forgotten from there");
   console.log("e2e: ok");
 } catch (e) {
   failed = true;

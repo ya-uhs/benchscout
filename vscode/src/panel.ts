@@ -23,6 +23,9 @@ export interface PanelState {
   devices: DeviceRow[];
   allowAll: boolean; // the human allowed every DISRUPTIVE call for this session
   others?: number; // USB devices benchscout has no data for (the agent sees them; listed here only as a count)
+  // what is remembered about each device on the bench (design.md section 6): seen, fixed in its file, deleted here
+  memory?: { device: string; name: string; key: string; file: string;
+             entries: { id: string; kind: string; text: string; source: string; time: string; status: string }[] }[];
   strings: { [K in keyof Strings as Strings[K] extends (...a: never[]) => unknown ? never : K]: Strings[K] };  // the plain ones
 }
 
@@ -75,6 +78,11 @@ export function html(nonce: string, cspSource: string): string {
   .dev .dname { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
   .dev .state { flex: none; font-size: .85em; }
   .dot.sel { background: var(--vscode-editorInfo-foreground); }
+  .memdev { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-weight: 600; }
+  .memdev .dname { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .mem-entry { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; padding: 3px 0 3px 10px; border-bottom: 1px solid var(--vscode-panel-border); }
+  .mem-entry .memtext { flex: 1 1 60%; min-width: 0; overflow-wrap: anywhere; }
+  .mem-entry .memmeta { font-size: .85em; }
   .hint { font-size: .85em; margin-top: 4px; }
 </style></head>
 <body><div id="app"></div>
@@ -82,6 +90,7 @@ export function html(nonce: string, cspSource: string): string {
 const vscode = acquireVsCodeApi();
 let state = null;
 let devsOpen = true;  // the device list, open until the person folds it
+let memOpen = false;  // what is remembered: folded until the person opens it
 const drafts = {};  // what the person typed, kept across re-renders
 const esc = (x) => String(x ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const send = (m) => vscode.postMessage(m);
@@ -151,6 +160,26 @@ function render() {
     }
     h += "</div>";
   }
+  if (state.memory && state.memory.length) {
+    const n = state.memory.reduce((a, g) => a + g.entries.length, 0);
+    h += '<div class="devs"><div class="devhead" data-toggle="mem">' + (memOpen ? "▾ " : "▸ ") + esc(s.memoryTitle) + " (" + n + ")</div>";
+    if (memOpen) {
+      for (const g of state.memory) {
+        h += '<div class="memdev"><span class="dname">' + esc(g.name) + '</span><button data-memfile="' + esc(g.file) + '">' + esc(s.memoryOpenFile) + "</button></div>";
+        for (const e of g.entries) {
+          const pending = e.status === "pending";
+          const ids = ' data-key="' + esc(g.key) + '" data-id="' + esc(e.id) + '"';
+          h += '<div class="mem-entry"><span class="muted">' + esc((s.memoryKinds && s.memoryKinds[e.kind]) || e.kind) + "</span>" +
+               '<span class="memtext">' + esc(e.text) + "</span>" +
+               '<span class="muted memmeta">' + esc(e.source + " · " + String(e.time || "").slice(0, 10) + (pending ? " · " + s.memoryPending : "")) + "</span>" +
+               (pending ? '<button data-memdecide="1"' + ids + ">" + esc(s.accept) + '</button><button data-memdecide="0"' + ids + ">" + esc(s.reject) + "</button>"
+                        : '<button data-memforget="1"' + ids + ">" + esc(s.forget) + "</button>") + "</div>";
+        }
+      }
+      h += '<div class="hint muted">' + esc(s.memoryHint) + "</div>";
+    }
+    h += "</div>";
+  }
   const open = state.cards.filter((c) => c.status !== "closed").reverse().sort((a, b) => rank(a) - rank(b));
   const closed = state.cards.filter((c) => c.status === "closed").reverse().slice(0, 15);
   h += open.map((c) => card(c, s)).join("") + closed.map((c) => card(c, s)).join("");
@@ -162,10 +191,14 @@ send({ type: "ready" });
 
 document.addEventListener("input", (e) => { const id = e.target.dataset?.draft; if (id) drafts[id] = e.target.value; });
 document.addEventListener("click", (e) => {
-  if (e.target.closest("[data-toggle]")) { devsOpen = !devsOpen; render(); return; }
+  const tog = e.target.closest("[data-toggle]");
+  if (tog) { if (tog.dataset.toggle === "mem") memOpen = !memOpen; else devsOpen = !devsOpen; render(); return; }
   const b = e.target.closest("button");
   if (!b) return;
   if (b.dataset.dev) { send({ type: "device", id: b.dataset.dev, use: b.dataset.use === "1" }); return; }
+  if (b.dataset.memfile) { send({ type: "memoryOpen", file: b.dataset.memfile }); return; }
+  if (b.dataset.memforget) { send({ type: "memoryForget", key: b.dataset.key, id: b.dataset.id }); return; }
+  if (b.dataset.memdecide) { send({ type: "memoryDecide", key: b.dataset.key, id: b.dataset.id, accept: b.dataset.memdecide === "1" }); return; }
   if (b.dataset.opt) send({ type: "answer", id: b.dataset.card, option: b.dataset.opt });
   else if (b.dataset.text) { const t = (drafts[b.dataset.card] ?? "").trim(); if (t) { send({ type: "answer", id: b.dataset.card, text: t }); delete drafts[b.dataset.card]; } }
   else if (b.dataset.tell) { const t = (drafts._top ?? "").trim(); if (t) { send({ type: "tell", text: t }); drafts._top = ""; } }

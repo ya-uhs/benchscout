@@ -192,6 +192,8 @@ def control_dispatch(broker: Broker, method: str, params: dict) -> Any:
         return broker.answer(params["question_id"], params.get("choice"), params.get("reply"))
     if method == "memory":
         return broker.recall(params.get("ref"))
+    if method == "memory_view":
+        return broker.memory_view()
     if method == "memory_decide":
         return broker.decide_memory(params["key"], params["id"], bool(params["accept"]))
     if method == "tool_decide":

@@ -57,6 +57,8 @@ export interface MemoryEntry {
   id: string; kind: string; text: string; source: string; evidence: string; target: string; time: string; status: string; data: Record<string, unknown>;
 }
 export interface MemoryEvent { key: string; device?: string; device_name?: string; entry: MemoryEntry }
+/** What is remembered about one device on the bench, and the file it lives in (the inbox's memory list). */
+export interface MemoryGroup { device: string; name: string; key: string; file: string; entries: MemoryEntry[] }
 
 export interface CoreEvents {
   ready: [];
@@ -72,6 +74,7 @@ export interface CoreEvents {
   deviceEvent: [DeviceEvent];
   memoryAdded: [MemoryEvent];
   memoryDecided: [MemoryEvent];
+  memoryForgotten: [{ key: string; id: string }];
   questionAnswered: [Question];
   exit: [number | null, string];
 }
@@ -127,6 +130,11 @@ export class CoreClient extends EventEmitter {
   decide(approvalId: string, granted: boolean, scope: "once" | "session" | "always" | "all" | number = "once"): Promise<any> {
     return this.call("decide", { approval_id: approvalId, granted, scope });
   }
+  /** What is remembered about each device on the bench, with each file (control channel). */
+  memoryView(): Promise<MemoryGroup[]> {
+    return this.call("memory_view", {});
+  }
+
   memoryDecide(key: string, id: string, accept: boolean): Promise<any> {
     return this.call("memory_decide", { key, id, accept });
   }
@@ -179,6 +187,9 @@ export class CoreClient extends EventEmitter {
         return;
       case "memory_decided":
         this.emit("memoryDecided", msg as MemoryEvent);
+        return;
+      case "memory_forgotten":
+        this.emit("memoryForgotten", { key: msg.key, id: msg.id });
         return;
       case "device_event":
         this.emit("deviceEvent", msg as DeviceEvent);
