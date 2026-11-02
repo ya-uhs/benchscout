@@ -13,6 +13,7 @@ export interface DeviceRow {
   busy: boolean; // held by another benchscout window
   noDriver: boolean; // the OS has no driver for it (Windows): nothing can open it until one is installed
   needsWinusb: boolean; // Windows: a libusb tool needs WinUSB on one of its interfaces
+  needsUdev?: boolean; // Linux: a libusb tool needs a udev rule for this device
 }
 
 export interface PanelState {
@@ -140,7 +141,7 @@ function render() {
     h += '<div class="devs"><div class="devhead" data-toggle="devs">' + (devsOpen ? "▾ " : "▸ ") + esc(s.devicesTitle) + " (" + state.devices.length + ")</div>";
     if (devsOpen) {
       for (const d of state.devices) {
-        const st = d.busy ? s.inUse : d.noDriver ? s.stateNoDriver : d.needsWinusb ? s.stateNeedsWinusb : d.watched ? s.stateWatched : d.selected ? s.stateSelected : s.stateFree;
+        const st = d.busy ? s.inUse : d.noDriver ? s.stateNoDriver : d.needsWinusb ? s.stateNeedsWinusb : d.needsUdev ? s.stateNeedsUdev : d.watched ? s.stateWatched : d.selected ? s.stateSelected : s.stateFree;
         const btn = d.busy ? "" : '<button data-dev="' + esc(d.id) + '" data-use="' + (d.selected ? "0" : "1") + '">' + esc(d.selected ? s.releaseDevice : s.useDevice) + "</button>";
         h += '<div class="dev"><span class="dot ' + (d.watched ? "" : d.selected ? "sel" : "off") + '"></span><span class="dname">' + esc(d.label) +
              '</span><span class="state muted">' + esc(st) + "</span>" + btn + "</div>";

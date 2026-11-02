@@ -365,3 +365,15 @@ test("a tool the agent proposes is a card with the exact command, its effect and
   void h.answer("tool:p1", { option: "accept" });
   assert.deepEqual(decided[0], ["p1", true]);
 });
+
+test("Linux: a device a libusb tool cannot open gets one card naming the node and the udev fix", () => {
+  const core = new CoreClient("/nonexistent", tmpdir());
+  const h = new Harness(core, () => { throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 1 });
+  const bench = (dev) => ({ devices: [{ id: "usb:0403:6010:x", name: "SIPEED JTAG Debugger", evidence: [], ...dev }], ports: [], targets: [], links: [] });
+  core.emit("scan", bench({ needs_udev: true, usb_node: "/dev/bus/usb/003/002" }), []);
+  const card = () => h.cards.find((c) => c.id === "driver:usb:0403:6010:x");
+  assert.equal(card().title, strings("ja").udevTitle("SIPEED JTAG Debugger"));
+  assert.equal(card().body, strings("ja").udevBody("/dev/bus/usb/003/002"));
+  core.emit("scan", bench({}), []);  // the rule took effect
+  assert.equal(card().status, "closed");
+});

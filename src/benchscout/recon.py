@@ -53,8 +53,9 @@ def build(io: Io) -> Bench:
         # Every USB device is listed with its raw clues (design.md section 3: benchscout enumerates; the agent
         # identifies). One with a serial port, described in the data (a debug probe), or that the OS has no driver
         # for is bench hardware; any other (a keyboard, a camera, or a programmer benchscout has no data for) is
-        # listed apart, so the agent still sees it. Hubs carry nothing.
-        if "hub" in (u.get("name") or "").lower():
+        # listed apart, so the agent still sees it. Hubs carry nothing: USB device class 09 where the OS says it (a
+        # Linux root hub is "xHCI Host Controller"), else the name.
+        if u.get("device_class") == 0x09 or "hub" in (u.get("name") or "").lower():
             continue
         other = (u["vid"], u["pid"]) not in K.USB_IDS and (u["vid"], u["pid"]) not in with_serial and not u.get("no_driver")
         did = _dev_id(u["vid"], u["pid"], u.get("serial"), u.get("location"))
@@ -71,6 +72,8 @@ def build(io: Io) -> Bench:
                 no_driver=list(u.get("no_driver") or []),
                 other=other,
                 drivers={int(k): v for k, v in (u.get("drivers") or {}).items()},
+                usb_node=u.get("usb_node"),
+                usb_writable=u.get("usb_writable"),
                 evidence=[Evidence("usb-descriptor", f"{_hex(u['vid'])}:{_hex(u['pid'])} {u.get('vendor') or ''} {u.get('name') or ''}".strip())],
             )
         )
@@ -110,11 +113,22 @@ WINUSB_CLASS = {"winusb", "libusbk", "libusb0"}  # drivers libusb can open on Wi
 
 
 def _libusb_interfaces(b: Bench) -> None:
-    """Windows: a port a libusb tool opens (tools.toml usb_access) whose interface has another driver (the maker's
-    serial driver, a COM port) cannot be opened by that tool: say which interface needs WinUSB."""
+    """A port a libusb tool opens (tools.toml usb_access) that this user cannot reach: on Linux the device's USB node
+    is not theirs to open (a udev rule is missing or not applied yet); on Windows the interface has another driver
+    (the maker's serial driver, a COM port). Say what is needed."""
     for p in b.ports.values():
         dev = b.devices.get(p.device_id)
-        if not dev or not dev.drivers or not p.tools:
+        if not dev or not p.tools:
+            continue
+        if dev.usb_writable is False and any(K.USB_ACCESS.get(t) == "libusb" for t in p.tools):
+            dev.needs_udev = True  # Linux: the node is not this user's to open
+            for t in b.targets_via(p.id):
+                t.facts.append(f"Linux: this user cannot open {dev.usb_node or 'the USB device'}, which {', '.join(sorted(p.tools))} "
+                               "opens through libusb. It needs a udev rule giving access (the tool's package often installs one, "
+                               "e.g. 99-openfpgaloader.rules); a rule takes effect when the device is plugged in again, or after "
+                               "`sudo udevadm control --reload-rules && sudo udevadm trigger`. Tell the user; that is theirs to do")
+            continue
+        if not dev.drivers:  # what follows is Windows: which driver each interface has
             continue
         iface = p.interface or 0
         driver = dev.drivers.get(iface)
@@ -311,7 +325,8 @@ def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] 
                 r.ran.append(f"serial.listen {port.path}")
                 listen_into(io, port.path, targets, listen_seconds)
 
-        elif port.kind == "jtag" and b.tools.get("openFPGALoader") and port.tools.get("openFPGALoader"):
+        elif port.kind == "jtag" and b.tools.get("openFPGALoader") and port.tools.get("openFPGALoader") \
+                and not b.devices[port.device_id].needs_udev and not b.devices[port.device_id].needs_winusb:
             # only where the USB data says how openFPGALoader reaches this probe; others stay unknown
             if classify(b, "jtag.scan", port.id).effect == Effect.SAFE:
                 r.ran.append(f"jtag.scan {port.id}")

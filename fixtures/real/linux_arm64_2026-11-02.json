@@ -1,0 +1,154 @@
+{
+ "_comment": "Ubuntu 24.04 ARM64 (UTM VM, kernel 6.8 with linux-modules-extra for cdc_acm/ftdi_sio), 2026-11-02: an ESP32-S3 (native USB) and a Sipeed Tang Nano 9K (FT2232) passed through. `sysfs`: the attributes benchscout reads from /sys/bus/usb/devices, every entry (root hubs and the VM's own QEMU tablet/mouse/keyboard included); `serial`: what pyserial's list_ports gave (io.LiveIo.serial_ports).",
+ "sysfs": {
+  "1-0:1.0": {
+   "bInterfaceNumber": "00",
+   "bInterfaceClass": "09"
+  },
+  "1-1": {
+   "idVendor": "0627",
+   "idProduct": "0001",
+   "manufacturer": "QEMU",
+   "product": "QEMU USB Tablet",
+   "serial": "28754-0000:00:03.0-1",
+   "bDeviceClass": "00"
+  },
+  "1-1:1.0": {
+   "bInterfaceNumber": "00",
+   "bInterfaceClass": "03"
+  },
+  "1-2": {
+   "idVendor": "0627",
+   "idProduct": "0001",
+   "manufacturer": "QEMU",
+   "product": "QEMU USB Mouse",
+   "serial": "89126-0000:00:03.0-2",
+   "bDeviceClass": "00"
+  },
+  "1-2:1.0": {
+   "bInterfaceNumber": "00",
+   "bInterfaceClass": "03"
+  },
+  "1-3": {
+   "idVendor": "0627",
+   "idProduct": "0001",
+   "manufacturer": "QEMU",
+   "product": "QEMU USB Keyboard",
+   "serial": "68284-0000:00:03.0-3",
+   "bDeviceClass": "00"
+  },
+  "1-3:1.0": {
+   "bInterfaceNumber": "00",
+   "bInterfaceClass": "03"
+  },
+  "2-0:1.0": {
+   "bInterfaceNumber": "00",
+   "bInterfaceClass": "09"
+  },
+  "3-0:1.0": {
+   "bInterfaceNumber": "00",
+   "bInterfaceClass": "09"
+  },
+  "3-2": {
+   "idVendor": "303a",
+   "idProduct": "1001",
+   "manufacturer": "Espressif",
+   "product": "USB JTAG/serial debug unit",
+   "serial": "24:58:7C:E9:40:00",
+   "bDeviceClass": "ef"
+  },
+  "3-2:1.0": {
+   "bInterfaceNumber": "00",
+   "bInterfaceClass": "02"
+  },
+  "3-2:1.1": {
+   "bInterfaceNumber": "01",
+   "bInterfaceClass": "0a"
+  },
+  "3-2:1.2": {
+   "bInterfaceNumber": "02",
+   "bInterfaceClass": "ff"
+  },
+  "3-3": {
+   "idVendor": "0403",
+   "idProduct": "6010",
+   "manufacturer": "SIPEED",
+   "product": "JTAG Debugger",
+   "serial": "FactoryAIOT Pro",
+   "bDeviceClass": "00"
+  },
+  "3-3:1.0": {
+   "bInterfaceNumber": "00",
+   "bInterfaceClass": "ff"
+  },
+  "3-3:1.1": {
+   "bInterfaceNumber": "01",
+   "bInterfaceClass": "ff"
+  },
+  "4-0:1.0": {
+   "bInterfaceNumber": "00",
+   "bInterfaceClass": "09"
+  },
+  "usb1": {
+   "idVendor": "1d6b",
+   "idProduct": "0002",
+   "manufacturer": "Linux 6.8.0-147-generic xhci-hcd",
+   "product": "xHCI Host Controller",
+   "serial": "0000:00:03.0",
+   "bDeviceClass": "09"
+  },
+  "usb2": {
+   "idVendor": "1d6b",
+   "idProduct": "0003",
+   "manufacturer": "Linux 6.8.0-147-generic xhci-hcd",
+   "product": "xHCI Host Controller",
+   "serial": "0000:00:03.0",
+   "bDeviceClass": "09"
+  },
+  "usb3": {
+   "idVendor": "1d6b",
+   "idProduct": "0002",
+   "manufacturer": "Linux 6.8.0-147-generic xhci-hcd",
+   "product": "xHCI Host Controller",
+   "serial": "0000:00:04.0",
+   "bDeviceClass": "09"
+  },
+  "usb4": {
+   "idVendor": "1d6b",
+   "idProduct": "0003",
+   "manufacturer": "Linux 6.8.0-147-generic xhci-hcd",
+   "product": "xHCI Host Controller",
+   "serial": "0000:00:04.0",
+   "bDeviceClass": "09"
+  }
+ },
+ "serial": [
+  {
+   "device": "/dev/ttyUSB1",
+   "vid": 1027,
+   "pid": 24592,
+   "serial_number": "FactoryAIOT Pro",
+   "location": "3-3:1.1",
+   "interface": null,
+   "description": "JTAG Debugger"
+  },
+  {
+   "device": "/dev/ttyUSB0",
+   "vid": 1027,
+   "pid": 24592,
+   "serial_number": "FactoryAIOT Pro",
+   "location": "3-3:1.0",
+   "interface": "JTAG Debugger",
+   "description": "JTAG Debugger - JTAG Debugger"
+  },
+  {
+   "device": "/dev/ttyACM0",
+   "vid": 12346,
+   "pid": 4097,
+   "serial_number": "24:58:7C:E9:40:00",
+   "location": "3-2:1.0",
+   "interface": null,
+   "description": "USB JTAG/serial debug unit"
+  }
+ ]
+}

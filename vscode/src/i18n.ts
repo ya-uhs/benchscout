@@ -39,6 +39,11 @@ const en = {
   stateFree: "not used",
   stateNoDriver: "Windows has no driver for it",
   stateNeedsWinusb: "needs the WinUSB driver",
+  stateNeedsUdev: "needs a udev rule",
+  udevTitle: (name: string) => `${name}: Linux needs a udev rule`,
+  udevBody: (node: string) => `Your user cannot open ${node || "this USB device"}, which openFPGALoader opens through libusb. `
+    + "Install a udev rule that gives access (the tool's package often brings one, e.g. 99-openfpgaloader.rules), then unplug and plug "
+    + "the device in again, or run `sudo udevadm control --reload-rules && sudo udevadm trigger`. Then press Rescan.",
   otherDevices: "and {n} other USB devices benchscout has no data for (the agent sees them, e.g. a programmer cable)",
   driverTitle: (name: string) => `${name}: Windows needs a driver change`,
   driverBody: (none: string, winusb: string) =>
@@ -161,6 +166,11 @@ const ja: typeof en = {
   stateFree: "使っていない",
   stateNoDriver: "Windows のドライバがありません",
   stateNeedsWinusb: "WinUSB ドライバが必要",
+  stateNeedsUdev: "udev の規則が必要",
+  udevTitle: (name: string) => `${name}: Linux の udev の規則が必要です`,
+  udevBody: (node: string) => `いまのユーザーは ${node || "この USB 機器"} を開けません。openFPGALoader は libusb でそこを開きます。`
+    + "開けるようにする udev の規則を入れてください(道具のパッケージに付いていることが多い。例:99-openfpgaloader.rules)。"
+    + "入れたら機器を挿し直すか、`sudo udevadm control --reload-rules && sudo udevadm trigger` を実行し、再スキャンを押してください。",
   otherDevices: "ほかに benchscout がデータを持たない USB 機器が {n} 台(エージェントには見えています。書き込み器のケーブルなど)",
   driverTitle: (name: string) => `${name}: Windows のドライバの入れ替えが必要です`,
   driverBody: (none: string, winusb: string) =>

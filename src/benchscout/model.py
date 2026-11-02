@@ -41,6 +41,10 @@ class Device:
     # until their driver is replaced with WinUSB
     drivers: dict[int, str] = field(default_factory=dict)
     needs_winusb: list[int] = field(default_factory=list)
+    # Linux: this user cannot open the device's USB node, which a libusb tool needs (a udev rule, then replug)
+    usb_node: str | None = None
+    usb_writable: bool | None = None
+    needs_udev: bool = False
     # a USB device benchscout knows nothing about (no serial port, no data, not a hub): shown to the agent with its raw
     # clues, apart from the bench, so a programmer or probe it does not know can still be named and given a tool
     other: bool = False

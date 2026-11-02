@@ -156,7 +156,7 @@ function refresh(): void {
     const ports = bench!.ports.filter((p) => p.device_id === d.id).map((p) => p.id);
     return { id: d.id, label: d.name + (known ? ` — ${known}` : ""), selected: !!core?.selected.includes(d.id),
              watched: ports.some((p) => watched.has(p)), busy: !!busyElsewhere[d.id] || !!d.busyBy, noDriver: d.noDriver.length > 0,
-             needsWinusb: d.needsWinusb.length > 0 };
+             needsWinusb: d.needsWinusb.length > 0, needsUdev: d.needsUdev !== null };
   });
   const state: PanelState = { running: !!core?.running, agent: AGENTS[chosenAgent()]?.label ?? "", cards, devices,
     others: views.filter((d) => d.other).length,

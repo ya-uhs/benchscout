@@ -382,8 +382,15 @@ def linux_usb_devices(root: Path) -> list[dict]:
         vid = read(d, "idVendor")
         if ":" in d.name or not vid:
             continue
+        cls = read(d, "bDeviceClass")
+        bus, dev = read(d, "busnum"), read(d, "devnum")
+        # whether this user may open the device itself (what libusb tools do): its node under /dev/bus/usb
+        node = Path(f"/dev/bus/usb/{int(bus):03d}/{int(dev):03d}") if bus and dev and bus.isdigit() and dev.isdigit() else None
         out.append({"name": read(d, "product"), "vendor": read(d, "manufacturer"), "vid": int(vid, 16),
-                    "pid": int(read(d, "idProduct") or "0", 16), "serial": read(d, "serial"), "location": d.name})
+                    "pid": int(read(d, "idProduct") or "0", 16), "serial": read(d, "serial"), "location": d.name,
+                    "device_class": int(cls, 16) if cls else None,
+                    "usb_node": str(node) if node else None,
+                    "usb_writable": os.access(node, os.W_OK) if node and node.exists() else None})
     return out
 
 

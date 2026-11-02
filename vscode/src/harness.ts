@@ -153,7 +153,8 @@ export class Harness extends EventEmitter {
     if (!views.length) return;
     const lines = views.map((d) => {
       const known = d.things.map((t) => t.name || (t.status === "family" ? t.facts[0] : "")).filter(Boolean).join(", ");
-      const driver = d.noDriver.length ? this.s.stateNoDriver : d.needsWinusb.length ? this.s.stateNeedsWinusb : "";
+      const driver = d.noDriver.length ? this.s.stateNoDriver : d.needsWinusb.length ? this.s.stateNeedsWinusb
+        : d.needsUdev !== null ? this.s.stateNeedsUdev : "";
       return `• ${d.name}${known ? ` — ${known}` : ""}${driver ? ` (${driver})` : ""}${d.alert ? " ⚠" : ""}`;
     });
     const ordered = [...views].sort((a, b) => Number(b.alert) - Number(a.alert));
@@ -205,14 +206,15 @@ export class Harness extends EventEmitter {
     for (const d of deviceViews(b)) {
       const id = `driver:${d.id}`;
       const old = this.cards.find((c) => c.id === id);
-      if (!d.noDriver.length && !d.needsWinusb.length) {
+      if (!d.noDriver.length && !d.needsWinusb.length && d.needsUdev === null) {
         if (old && old.status !== "closed") this.closeRef(id, "");
         continue;
       }
-      const body = this.s.driverBody(d.noDriver.join(", "), d.needsWinusb.join(", "));
+      const body = d.needsUdev !== null ? this.s.udevBody(d.needsUdev) : this.s.driverBody(d.noDriver.join(", "), d.needsWinusb.join(", "));
       if (old && old.body === body && old.status !== "closed") continue;
       if (old) this.cards = this.cards.filter((c) => c !== old);
-      this.add({ kind: "report", title: this.s.driverTitle(d.name), body, options: [], freeText: false }, undefined, id);
+      const title = d.needsUdev !== null ? this.s.udevTitle(d.name) : this.s.driverTitle(d.name);
+      this.add({ kind: "report", title, body, options: [], freeText: false }, undefined, id);
     }
   }
 

@@ -34,6 +34,9 @@ def render(r: Recon) -> str:
         lines.append(f"■ {dev.name}{sn}")
         if dev.no_driver:
             lines.append(f"  · {NO_DRIVER.format(ifaces=', '.join(map(str, dev.no_driver)))}")
+        if dev.needs_udev:
+            lines.append("  · Linux: this user cannot open the USB device a libusb tool needs (a udev rule, then replug; "
+                         "see the target below)")
         if dev.needs_winusb:
             lines.append(f"  · Windows: interface(s) {', '.join(map(str, dev.needs_winusb))} need the WinUSB driver for the "
                          "tool that opens them through libusb (see the target below)")
@@ -71,8 +74,14 @@ def render(r: Recon) -> str:
                      "the bench, find its tool and propose it with bench_define_tool, giving this vid:pid in probes):")
         for d in others:
             lines.append(f"  - {d.name}  {_hex(d.vid)}:{_hex(d.pid)}" + (f"  SN {d.serial}" if d.serial else ""))
+    from . import fetch
+
     missing = [k for k, v in b.tools.items() if not v]
+    later = [k for k in missing if fetch.plan(k)]  # pinned: downloaded on first use, after the human's OK
     if missing:
         lines.append("")
-        lines.append("Tools not installed: " + ", ".join(missing))
+        if set(missing) - set(later):
+            lines.append("Tools not installed: " + ", ".join(k for k in missing if k not in later))
+        if later:
+            lines.append("Downloaded on first use (official release, after the human's OK): " + ", ".join(later))
     return "\n".join(lines)

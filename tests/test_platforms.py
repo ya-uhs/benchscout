@@ -13,23 +13,38 @@ FIXTURE = Path(__file__).parent.parent / "fixtures" / "bench_example.json"
 
 
 
-@pytest.mark.assumed
-@pytest.mark.skipif(__import__("sys").platform == "win32", reason="sysfs names like 1-1:1.0 cannot be made on Windows")
-def test_linux_sysfs(tmp_path):
-    def dev(name, **attrs):
-        d = tmp_path / name
-        d.mkdir()
-        for k, v in attrs.items():
-            (d / k).write_text(v + "\n")
+LINUX = json.loads((Path(__file__).parent.parent / "fixtures" / "real" / "linux_arm64_2026-11-02.json").read_text(encoding="utf-8"))
 
-    dev("1-1", idVendor="0403", idProduct="6010", serial="210319A8C7D1", manufacturer="Digilent", product="Digilent USB Device")
-    dev("1-1:1.0", bInterfaceNumber="00")
-    dev("usb1", idVendor="1d6b", idProduct="0002")
-    devs = linux_usb_devices(tmp_path)
-    assert {d["location"] for d in devs} == {"1-1", "usb1"}
-    digilent = next(d for d in devs if d["vid"] == 0x0403)
-    assert (digilent["serial"], digilent["vendor"]) == ("210319A8C7D1", "Digilent")
+
+def _sysfs(root: Path) -> Path:
+    """The recorded /sys/bus/usb/devices, rebuilt as files."""
+    for name, attrs in LINUX["sysfs"].items():
+        d = root / name.replace(":", "_colon_")  # Windows cannot name a file with ':'; the parser only looks for ':'
+        d.mkdir(parents=True)
+        for k, v in attrs.items():
+            (d / k).write_text(v + "\n", encoding="utf-8")
+    return root
+
+
+def test_linux_sysfs_as_recorded(tmp_path):
+    """Ubuntu 24.04 ARM64 VM with the real boards, 2026-11-02."""
+    devs = {d["location"]: d for d in linux_usb_devices(_sysfs(tmp_path / "sys"))}
+    assert (devs["3-2"]["vendor"], devs["3-2"]["name"], devs["3-2"]["serial"]) == ("Espressif", "USB JTAG/serial debug unit", "24:58:7C:E9:40:00")
+    assert (devs["3-3"]["vendor"], devs["3-3"]["name"], devs["3-3"]["serial"]) == ("SIPEED", "JTAG Debugger", "FactoryAIOT Pro")
+    assert {loc for loc, d in devs.items() if d["device_class"] == 0x09} == {"usb1", "usb2", "usb3", "usb4"}  # root hubs
     assert linux_usb_devices(tmp_path / "missing") == []
+
+
+def test_linux_bench_as_recorded_root_hubs_left_out_tang_nano_channels_right(tmp_path):
+    """The root hubs ("xHCI Host Controller", class 09) were listed as other USB devices: hubs are left out by class.
+    The FT2232's channel B (interface 1, /dev/ttyUSB1) is the UART into the FPGA, as on macOS."""
+    usb = [dict(d, vid=f"0x{d['vid']:04x}", pid=f"0x{d['pid']:04x}") for d in linux_usb_devices(_sysfs(tmp_path / "sys"))]
+    serial = [dict(p, vid=f"0x{p['vid']:04x}", pid=f"0x{p['pid']:04x}") for p in LINUX["serial"]]
+    b = _bench(tmp_path, usb, serial)
+    assert not any("Host Controller" in d.name for d in b.devices.values())
+    assert fabric_port(b).path == "/dev/ttyUSB1"
+    esp = next(d for d in b.devices.values() if d.vid == 0x303A)
+    assert [p.path for p in b.ports_of(esp.id) if p.kind == "serial"] == ["/dev/ttyACM0"]
 
 
 def _bench(tmp_path, usb, serial):
@@ -59,12 +74,7 @@ def test_windows_ft2232h_one_device_channel_from_serial_letter(tmp_path):
     assert any(p.kind == "jtag" for p in b.ports.values())
 
 
-@pytest.mark.assumed
-def test_linux_ft2232h_channel_from_interface_number(tmp_path):
-    ports = [{"device": f"/dev/ttyUSB{i}", "vid": "0x0403", "pid": "0x6010", "serial_number": "210319A8C7D1",
-              "location": f"1-1:1.{i}"} for i in (1, 0)]  # listed out of order on purpose
-    b = _bench(tmp_path, [], ports)
-    assert fabric_port(b).path == "/dev/ttyUSB1"
+
 
 
 def test_macos_ft2232h_channel_from_port_name(tmp_path):
@@ -179,3 +189,26 @@ def test_a_libusb_tool_behind_a_serial_driver_is_named_with_the_interface_that_n
 def test_nothing_is_said_about_drivers_off_windows(tmp_path):
     b = recon.build(FixtureIo(FIXTURE))
     assert all(not d.drivers and not d.needs_winusb and not d.no_driver for d in b.devices.values())
+
+
+def test_linux_a_libusb_tool_the_user_cannot_open_is_named_with_the_fix_not_tried(tmp_path):
+    """Ubuntu VM with the real Tang Nano, 2026-11-02: openFPGALoader came from the distribution with its udev rule, but
+    the board was plugged in before, so its /dev/bus/usb node stayed root's; the tool failed ("unable to open ftdi
+    device: -4") and the recon's JTAG read failed without saying why. Now: say what is needed, and do not try."""
+    from benchscout import report
+
+    usb = [dict(d, vid=f"0x{d['vid']:04x}", pid=f"0x{d['pid']:04x}",
+                **({"usb_writable": False, "usb_node": "/dev/bus/usb/003/002"} if d["vid"] == 0x0403 else {}))
+           for d in linux_usb_devices(_sysfs(tmp_path / "sys"))]
+    serial = [dict(p, vid=f"0x{p['vid']:04x}", pid=f"0x{p['pid']:04x}") for p in LINUX["serial"]]
+    data = json.loads(FIXTURE.read_text())
+    data.update(usb=usb, serial=serial, visa={}, listen={}, tools=["openFPGALoader"])
+    f = tmp_path / "bench.json"
+    f.write_text(json.dumps(data))
+    io = FixtureIo(f)
+    r = recon.run(io)
+    tang = next(d for d in r.bench.devices.values() if d.vid == 0x0403)
+    assert tang.needs_udev
+    assert not [c for c in io.calls if c[0] == "jtag_scan"], "not tried: it cannot open the device"
+    text = report.render(r)
+    assert "udev rule" in text and "/dev/bus/usb/003/002" in text and "udevadm trigger" in text

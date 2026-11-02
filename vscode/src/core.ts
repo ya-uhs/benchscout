@@ -13,7 +13,7 @@ import * as readline from "readline";
 export type Effect = "safe" | "disruptive" | "dangerous";
 
 export interface Evidence { source: string; detail: string }
-export interface Device { id: string; name: string; serial?: string | null; evidence: Evidence[]; no_driver?: number[]; needs_winusb?: number[]; other?: boolean }
+export interface Device { id: string; name: string; serial?: string | null; evidence: Evidence[]; no_driver?: number[]; needs_winusb?: number[]; needs_udev?: boolean; usb_node?: string | null; other?: boolean }
 export interface Port { id: string; device_id: string; kind: string; path?: string | null }
 export interface Target {
   id: string; name: string | null; kind: string; confidence: "identified" | "family" | "unknown";
@@ -217,6 +217,7 @@ export interface DeviceView {
   noDriver: number[]; // USB interfaces the OS has no driver for (Windows): nothing can open them yet
   needsWinusb: number[]; // Windows: interfaces a libusb tool opens, whose driver must be replaced with WinUSB
   other: boolean; // a USB device benchscout has no data for: the agent sees it, the device list only counts it
+  needsUdev: string | null; // Linux: the USB node this user cannot open (a libusb tool needs a udev rule), else null
 }
 
 export function deviceViews(bench: Bench): DeviceView[] {
@@ -247,6 +248,7 @@ export function deviceViews(bench: Bench): DeviceView[] {
       noDriver: d.no_driver ?? [],
       needsWinusb: d.needs_winusb ?? [],
       other: !!d.other,
+      needsUdev: d.needs_udev ? (d.usb_node ?? "") : null,
     };
   });
 }

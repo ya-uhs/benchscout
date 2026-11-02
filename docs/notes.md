@@ -178,6 +178,13 @@ benchscout がクラッシュに気づく → エージェントを起こす →
 23. **同梱していないベンダーの道具を、エージェントの提案で実機に通した**(2026-11-02、macOS、ESP32-S3)。利用者が PlatformIO でEspressif 版の OpenOCD(v0.12.0-esp32-20230419)を入れ、エージェント役が ESP-IDF の文書(「openocd -f board/esp32s3-builtin.cfg」、実行例のログに「Core was reset」)を根拠に `bench_define_tool` で提案(影響度は DISRUPTIVE)。人の確認で作業フォルダの知識に入り、承認カードには同じチップのシリアルポートへの影響も出た。実行で JTAG の TAP 2 つ(IDCODE 0x120034e5、Tensilica)を読めた。
    - 見つかったこと:人が「追加する」を押した瞬間にエージェントの呼び出しへ「追加済み」が返り、知識の書き込みと読み直しの前だったので、次の `bench_do` が「その操作は無い」と断られた。書き込みと読み直しのあとで返すように直し、同時に動く形のテスト(古い作りでは 3 回とも落ちる)を足した。前のテストは人の決定とエージェントの問い合わせを順に呼んでいたので、この競合が出なかった
 
+24. **Linux(Ubuntu 24.04 ARM64)で実機を動かした**(2026-11-02、UTM の VM に ESP32-S3 と Tang Nano 9K を USB で渡した)。テスト 189 件が通った。ESP32-S3:見張りで開いてもリセットせず、esptool 5.6.0(linux-arm64、71 MB)は初回に裏で取得して 45 秒の待ちのうちに終わり、chip-id とアプリ領域の書き込み・照合が通った。Tang Nano:ボードの配線データと照合でき、チャネル B(/dev/ttyUSB1)を FPGA の UART として安全に聞けた。分かったこと:
+   - **libusb の道具には udev の規則が要る。** ディストリビューションの openFPGALoader は規則(99-openfpgaloader.rules)を入れるが、その前から挿さっていた機器のノード(/dev/bus/usb/003/002)は root のままで、道具は開けず(「unable to open ftdi device: -4」)、偵察の JTAG の読み取りは理由を言わずに失敗していた。いまはこのユーザーがノードを開けるかを見て、開けなければ試さずに「規則を入れて挿し直すか `udevadm trigger`」と言う(レポートと受信箱)。規則が効いたあとの偵察で「Gowin GW1N(R)-9C」(IDCODE 0x0100481B、openFPGALoader の DB)と特定できた
+   - **ハブは機器クラスで外す。** Linux のルートハブは名前が「xHCI Host Controller」で、名前で見ていたので「ほかの USB 機器」に混ざった。USB の機器クラス 09 で外す
+   - クラウドイメージのカーネルには USB シリアルのドライバ(cdc_acm、ftdi_sio)が入っていない(linux-modules-extra)。普通のデスクトップのLinux では入っているので、VM の事情
+   - 初めて使うときに取る道具を「入っていない」と並べていたのを、「初回に取る」と分けて言う
+   - 記録:fixtures/real/linux_arm64_2026-11-02.json(sysfs とシリアルポートの一覧)。「想定」だった Linux の 2 件のテストをこれに置き換えた。残る「想定」は Windows x64 の 2 件(FTDI のドライバ)
+   - 反省:確かめるために VM の中で openFPGALoader を benchscout を通さず 1 回直接動かした(開けずに終わり、ボードには届いていない)。実機は製品の経路だけで触る決まりに反した
 
 ## 設計レビュー(旧 design.md §16)
 
