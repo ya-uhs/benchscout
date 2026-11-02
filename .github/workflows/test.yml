@@ -1,10 +1,39 @@
 name: test
+# Runner minutes are limited (a private repo: macOS minutes count 10x, Windows 2x). Every push to main runs one Linux
+# job with everything that needs no display. The full set (tests on three OSes, the VS Code e2e on three, the .vsix
+# for four targets) runs by hand before a release: Actions > test > Run workflow. The e2e also runs locally
+# (npm run e2e) before pushing.
 on:
   push:
+    branches: [main]
     paths-ignore: ["docs/**", "**.md"]  # words only: no need to spend runner minutes
-  pull_request:
+  workflow_dispatch:
+concurrency:  # a newer push makes an older run on the same branch pointless
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
+  quick:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --extra mcp --extra visa
+      - run: uvx ruff@0.14.3 check src tests packaging
+      - run: uv run mypy
+      - run: uv run pytest -q
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+        working-directory: vscode
+      - run: npm test
+        working-directory: vscode
+      - run: npm run package  # vsce scans our own files for secrets here
+        working-directory: vscode
+
   pytest:
+    if: github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
