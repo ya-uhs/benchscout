@@ -19,7 +19,7 @@
 // --real opens the folder with the real bench: the same product path as a user, so anything that is
 // not SAFE still waits for a human in the inbox. Do not press approval buttons for it on your own.
 
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, execSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -98,10 +98,13 @@ async function start() {
     ...(flag("--core") ? { "benchscout.corePath": resolve(flag("--core")) } : {}),
     ...(flag("--language") ? { "benchscout.language": flag("--language") } : {}),
   }, null, 1));
-  // the CLI is code.cmd on Windows, which only a shell runs; the paths are quoted for it
-  const q = (a) => (process.platform === "win32" ? `"${a}"` : a);
-  execFileSync(q(CLI), ["--user-data-dir", join(profile, "ud"), "--extensions-dir", join(profile, "ext"), "--install-extension", vsix, "--force"].map(q),
-    { stdio: "ignore", shell: process.platform === "win32" });
+  const install = ["--user-data-dir", join(profile, "ud"), "--extensions-dir", join(profile, "ext"), "--install-extension", vsix, "--force"];
+  if (process.platform === "win32") {
+    // the CLI is code.cmd, which only a shell runs: one quoted command line (Node no longer takes args with shell)
+    execSync([CLI, ...install].map((a) => `"${a}"`).join(" "), { stdio: "ignore" });
+  } else {
+    execFileSync(CLI, install, { stdio: "ignore" });
+  }
   const port = 9300 + Math.floor(Math.random() * 600);
   const env = { ...process.env };
   if (real) { delete env.BENCHSCOUT_FIXTURE; } else {
