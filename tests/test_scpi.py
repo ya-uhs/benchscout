@@ -210,7 +210,8 @@ def test_memory_the_human_has_not_confirmed_never_makes_anything_ask_less(entrie
     data = json.loads(FIXTURE.read_text(encoding="utf-8"))
     import tempfile
 
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory() as d, pytest.MonkeyPatch.context() as mp:
+        mp.setenv("BENCHSCOUT_MEMORY", str(Path(d) / "memory"))  # each example its own memory
         f = Path(d) / "bench.json"
         f.write_text(json.dumps(data), encoding="utf-8")
         br = Broker(FixtureIo(f), Path(d) / "ws" / ".benchscout")

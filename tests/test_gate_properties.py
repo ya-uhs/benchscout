@@ -12,6 +12,7 @@ except where a rule says why (the command line for SCPI, memory the human confir
 """
 
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -51,12 +52,17 @@ class Gate(RuleBasedStateMachine):
     def __init__(self):
         super().__init__()
         self.tmp = tempfile.TemporaryDirectory()
+        # each example its own memory: "always" writes there, and must not leak into the next example
+        self.memory_env = os.environ.get("BENCHSCOUT_MEMORY")
+        os.environ["BENCHSCOUT_MEMORY"] = str(Path(self.tmp.name) / "memory")
         f = Path(self.tmp.name) / "bench.json"
         f.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
         self.br = Broker(FixtureIo(f), Path(self.tmp.name) / "ws" / ".benchscout", approval_wait=0)
         self.br.scan()
         self.br.select(sorted({self.br.bench.ports[p].device_id for p in (CH340, PSU)}))
-        self.issued: dict[str, tuple[str, str, str, Effect]] = {}  # approval id -> what it was asked for
+        # approval id -> what it was asked for. Ids are random: draw from them in the order they came, never sorted,
+        # or a replayed example draws a different one (hypothesis: FlakyStrategyDefinition)
+        self.issued: dict[str, tuple[str, str, str, Effect]] = {}
         self.granted: set[str] = set()
         self.used: set[str] = set()
         # (action, port, SCPI headers or None) the human allowed for the session
@@ -64,6 +70,10 @@ class Gate(RuleBasedStateMachine):
 
     def teardown(self):
         self.br.end_session()
+        if self.memory_env is None:
+            os.environ.pop("BENCHSCOUT_MEMORY", None)
+        else:
+            os.environ["BENCHSCOUT_MEMORY"] = self.memory_env
         self.tmp.cleanup()
 
     def _impact(self, action, port, args):
@@ -103,7 +113,7 @@ class Gate(RuleBasedStateMachine):
     def agent_calls_with_an_approval_id(self, call, data):
         """Any id the agent has seen, for this call or another; or a made-up one."""
         action, port, args = call
-        aid = data.draw(st.sampled_from(sorted(self.issued) + ["000000"]))
+        aid = data.draw(st.sampled_from(list(self.issued) + ["000000"]))
         self._check(action, port, args, self.br.request(action, port, args, approval_id=aid, wait=0), approval_id=aid)
 
     @rule(data=st.data())
@@ -111,7 +121,7 @@ class Gate(RuleBasedStateMachine):
         """The usual path: the same call again, with the id it was given (once more after it was used, too)."""
         if not self.issued:
             return
-        aid = data.draw(st.sampled_from(sorted(self.issued)))
+        aid = data.draw(st.sampled_from(list(self.issued)))
         action, port, key, _ = self.issued[aid]
         args = json.loads(key)
         self._check(action, port, args, self.br.request(action, port, args, approval_id=aid, wait=0), approval_id=aid)
