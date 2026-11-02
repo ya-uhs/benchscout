@@ -1,10 +1,11 @@
-"""SCPI: only what the standard fixes is judged by name; anything else asks, and only the human loosens it.
+"""SCPI: only what the standard fixes is judged by name; anything else asks, and what the human allows covers
+the command they saw, not others.
 
-Review 2026-11-02 (design.md section 16): a list of "output" command patterns decided which SCPI writes were
-DANGEROUS, and every miss left a command one step weaker. No such list can be complete (vendors call an output
-INPut, BSWV AMP, *RCL a stored state ...). So the rules are inverted: the standard's status and identity queries
-are SAFE, every other query asks once, every other command asks each time, and only memory the human confirmed
-makes a command ask less. The property tests below throw random command lines at that.
+Review 2026-11-02 (design.md section 16 U9, U12): a list of "output" command patterns decided which SCPI writes
+were DANGEROUS on top of a default whose session grant covered every command, so each miss spread. No such list is
+complete. Now nothing outside the standard runs before the human has seen it, a grant ("for the session", "always
+on this instrument") is bound to the command header, and only an output setting the list knows asks every time.
+The property tests below throw random command lines at that.
 """
 
 import json
@@ -19,7 +20,7 @@ from benchscout import recon
 from benchscout.actions import ArgError
 from benchscout.broker import Broker
 from benchscout.io import FixtureIo
-from benchscout.policy import _SCPI_SAFE, _SCPI_STATUS_WRITES, Effect, classify, scpi_headers
+from benchscout.policy import _ENERGIZING, _SCPI_SAFE, Effect, classify, scpi_headers
 
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "bench_example.json"
 PSU = "visa:TCPIP0::192.168.1.50::INSTR"
@@ -64,6 +65,43 @@ def test_a_command_is_sent_without_waiting_for_an_answer_and_a_query_reads_one(b
     assert ("visa_write", "TCPIP0::192.168.1.50::INSTR", "DISP:BRIG 5") in io.calls
     assert br.request("scpi.query", PSU, {"command": "*IDN?"})["status"] == "done"  # SAFE: no card
     assert ("visa_query", "TCPIP0::192.168.1.50::INSTR", "*IDN?") in io.calls
+
+
+# ---- what the human allows covers the command they saw -------------------------------------------------
+
+def test_a_session_grant_covers_that_command_with_any_values_and_nothing_else(broker):
+    br, _ = broker
+    first = br.request("scpi.write", PSU, {"command": "DISP:BRIG 5"}, wait=0)
+    br.decide(first["approval_id"], True, "session")
+    assert br.request("scpi.write", PSU, {"command": "DISP:BRIG 5"}, approval_id=first["approval_id"])["status"] == "done"
+    assert br.request("scpi.write", PSU, {"command": "DISPlay:BRIGhtness 7"}, wait=0)["status"] == "done"
+    assert br.request("scpi.write", PSU, {"command": "SYST:BEEP"}, wait=0)["status"] == "approval_required"
+    assert br.request("scpi.write", PSU, {"command": "DISP:BRIG 5;SYST:BEEP"}, wait=0)["status"] == "approval_required"
+    assert br.request("scpi.query", PSU, {"command": "DISP:BRIG?"}, wait=0)["status"] == "approval_required"
+
+
+def test_always_on_this_instrument_is_remembered_as_the_humans_and_can_be_forgotten(broker, tmp_path):
+    br, _ = broker
+    res = br.request("scpi.query", PSU, {"command": "MEAS:VOLT? CH1"}, wait=0)
+    br.decide(res["approval_id"], True, "always")
+    assert br.request("scpi.query", PSU, {"command": "MEAS:VOLT? CH1"}, approval_id=res["approval_id"])["status"] == "done"
+    assert effect("MEASure:VOLTage? CH2", br.bench) == Effect.SAFE, "remembered for this instrument"
+    dev = br.bench.devices[br.bench.ports[PSU].device_id]
+    entry = next(e for e in br.memory.entries(br._key(dev)) if e.kind == "command")
+    assert entry.source == "human" and entry.status == "active" and entry.data == {"command": "MEAS:VOLT?", "effect": "safe"}
+    again = Broker(FixtureIo(FIXTURE), tmp_path / "ws" / ".benchscout")  # the next time benchscout starts
+    again.scan()
+    assert effect("MEAS:VOLT?", again.bench) == Effect.SAFE
+    br.forget(br._key(dev), entry.id)
+    assert effect("MEAS:VOLT?", br.bench) == Effect.DISRUPTIVE
+
+
+def test_an_output_setting_cannot_be_allowed_beyond_once(broker):
+    br, _ = broker
+    res = br.request("scpi.write", PSU, {"command": "VOLT 5"}, wait=0)
+    for scope in ("session", "always"):
+        with pytest.raises(ValueError):
+            br.decide(res["approval_id"], True, scope)
 
 
 # ---- memory: the agent learns, the human loosens --------------------------------------------------
@@ -129,9 +167,16 @@ def test_safe_only_when_every_unit_is_a_status_query_the_standard_fixes(cmd):
 
 @settings(max_examples=400, deadline=None)
 @given(line)
-def test_any_command_outside_the_standards_status_writes_is_dangerous(cmd):
-    if any(not h.endswith("?") and h not in _SCPI_STATUS_WRITES for ways in scpi_headers(cmd) for h in ways):
+def test_a_line_that_sets_an_output_asks_every_time(cmd):
+    if any(not h.endswith("?") and _ENERGIZING.search(h) for ways in scpi_headers(cmd) for h in ways):
         assert effect(cmd) == Effect.DANGEROUS, cmd
+
+
+@settings(max_examples=400, deadline=None)
+@given(line)
+def test_anything_outside_the_standards_status_queries_asks(cmd):
+    if any(h not in _SCPI_SAFE for ways in scpi_headers(cmd) for h in ways):
+        assert effect(cmd) >= Effect.DISRUPTIVE, cmd
 
 
 @settings(max_examples=300, deadline=None)

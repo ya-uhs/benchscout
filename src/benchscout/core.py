@@ -133,11 +133,11 @@ def claim_address(address: str) -> None:
 def parse_scope(word: str | None):
     if not word or word == "once":
         return "once"
-    if word == "session":
-        return "session"
+    if word in ("session", "always"):
+        return word
     if word.endswith("m") and word[:-1].isdigit():
         return int(word[:-1])
-    raise ValueError(f"scope must be once, session or <N>m, not {word!r}")
+    raise ValueError(f"scope must be once, session, always (SCPI) or <N>m, not {word!r}")
 
 
 def parse_shorthand(line: str) -> dict:

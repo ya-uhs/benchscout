@@ -112,17 +112,19 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
   is DISRUPTIVE. Impact propagates over the graph (`policy.py`): reprogramming an FPGA
   also disturbs the UART implemented in its fabric.
 - An action or command with no declared effect is DANGEROUS.
-- Never make something DANGEROUS by matching a list of risky patterns on top of a weaker default: the list
-  is never complete and every miss is weaker. Default cautious and loosen only what a standard fixes or the
-  human confirmed. SCPI: only the standard's status/identity queries are SAFE, other queries DISRUPTIVE,
-  every other command DANGEROUS; one message per call, printable ASCII (`tests/test_scpi.py`, design.md U9).
+- A list of risky patterns may only add caution on top of a default that is acceptable alone: lists miss
+  things. SCPI: only the standard's status/identity queries are SAFE; anything else asks, and a standing grant
+  (for the session, or "always on this instrument", which the human's channel writes to memory) covers that
+  command header only; an output setting asks every time. One message per call, printable ASCII
+  (`tests/test_scpi.py`, `tests/test_gate_properties.py`, design.md U9, U12).
 - Every proposal carries a `why:` that is the policy's actual reason
   (`test_proposal_reason_matches_policy`).
 - VISA `ASRL` resources are never sent `*IDN?`.
 - Approvals come only from the human control channel, never from the agent's channel, and live
   in the core's memory (design.md section 16 R3). DANGEROUS grants are bound to
   (action, port, arg) and single use; DISRUPTIVE grants may cover (action, port) for the session
-  or a time limit (R8). `test_core.py` covers this.
+  or a time limit (R8), for SCPI only the command headers the human saw. `test_core.py` and
+  `tests/test_gate_properties.py` cover this.
 - Recon (`bench_scan`) runs SAFE probes only.
 - An external tool is never installed up front: an action fetches it on first use from a pinned
   official release (version + SHA-256 in `[get.<tool>]`), and only after the human's OK on that

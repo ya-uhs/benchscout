@@ -111,10 +111,10 @@ def test_scpi_classification(r):
 
     for cmd in ("*IDN?", ":syst:err?", "SYSTem:ERRor:NEXT?", "*IDN?;*OPC?", "*STB?"):
         assert effect(cmd) == Effect.SAFE, cmd
-    for cmd in ("MEAS:CURR? CH1", "READ?", "VOLT?", "*CLS"):
-        assert effect(cmd) == Effect.DISRUPTIVE, cmd  # one card; the human knows what the instrument is
-    for cmd in (":TRIG:MODE SING", "OUTP CH1,ON", "*TST?", "*RST", "*IDN?;OUTP ON"):
-        assert effect(cmd) == Effect.DANGEROUS, cmd
+    for cmd in ("MEAS:CURR? CH1", "READ?", "VOLT?", "*CLS", ":TRIG:MODE SING", "DISP:BRIG 5"):
+        assert effect(cmd) == Effect.DISRUPTIVE, cmd  # asks; what the human allows covers that command only
+    for cmd in ("OUTP CH1,ON", "*TST?", "*RST", "*RCL 1", "*IDN?;OUTP ON"):
+        assert effect(cmd) == Effect.DANGEROUS, cmd  # every time: an output setting, or what the standard says
 
 
 def test_proposals(r):
@@ -345,17 +345,21 @@ def test_every_reason_has_a_code_the_panel_can_translate(tmp_path):
 
 
 
-def test_any_scpi_command_the_standard_does_not_fix_is_dangerous_whatever_the_vendor_syntax():
-    """Review 2026-11-02: a list of output commands ("OUTP", "VOLT" ...) missed "CH1:VOLT 5", then vendor syntax
-    no list can hold. So no list decides: every command outside the standard asks each time."""
+def test_an_output_setting_asks_every_time_and_any_other_command_asks_for_itself():
+    """Review 2026-11-02: a list of output commands on top of a DISRUPTIVE default missed "CH1:VOLT 5", and a
+    grant for one command covered every other. Now every command outside the standard asks, a grant covers that
+    command only, and an output setting the list knows asks every time (a missed one, like a generator's
+    BSWV, still asks and is bound to itself)."""
     from benchscout.policy import classify as cls
 
     b = recon.run(FixtureIo(FIXTURE)).bench
     psu = "visa:TCPIP0::192.168.1.50::INSTR"
     for cmd in ("OUTP CH1,ON", ":OUTPut ON", "CH1:VOLTage 5", "INST:NSEL 1;VOLT 5", ":SOUR1:VOLT 3.3", "APPL 5,0.1",
-                "C1:BSWV WVTP,SINE,AMP,5", "INP ON", "*RCL 1", "SYST:BEEP", "DISP:BRIG 5", "PROG:RUN", "INIT"):
+                "INP ON", "PROG:RUN", "*RCL 1", "*RST"):
         assert cls(b, "scpi.write", psu, {"command": cmd}).effect == Effect.DANGEROUS, cmd
-    assert cls(b, "scpi.write", psu, {"command": "MEAS:VOLT?"}).effect == Effect.DISRUPTIVE
+    for cmd in ("SYST:BEEP", "DISP:BRIG 5", "INIT", "C1:BSWV WVTP,SINE,AMP,5", "MEAS:VOLT?"):
+        imp = cls(b, "scpi.write", psu, {"command": cmd})
+        assert imp.effect == Effect.DISRUPTIVE and imp.subjects, cmd
 
 
 def test_every_serial_port_keeps_its_evidence_and_a_valid_open_mode():

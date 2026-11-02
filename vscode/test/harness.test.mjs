@@ -284,3 +284,21 @@ test("an approval that downloads a tool first says so on the card", () => {
     by: "agent", fetch: "esptool 5.6.0 from github.com (official release, SHA-256 checked, about 63 MB)" });
   assert.match(h.cards[0].body, /先にダウンロードするもの: esptool 5\.6\.0 from github\.com/);
 });
+
+test("a SCPI command's card allows that command for the session or always, and says that is all it covers", () => {
+  const core = new CoreClient("/nonexistent", tmpdir());
+  const decided = [];
+  core.decide = async (...a) => { decided.push(a); return {}; };
+  const h = new Harness(core, () => { throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 1 });
+  const ask = (id, effect, subjects) => core.emit("approvalRequested", { id, action: "scpi.write", port: "visa:TCPIP0::192.168.1.50::INSTR",
+    args: JSON.stringify({ command: "DISP:BRIG 5" }), effect, status: "pending", by: "agent",
+    impact: { reason: "x", affected_ports: [], disturbs: [], code: subjects ? "scpi_command" : "energizing", subjects } });
+  ask("a1", "disruptive", ["DISP:BRIG"]);
+  const card = h.cards.find((c) => c.id === "approval:a1");
+  assert.deepEqual(card.options.map((o) => o.id), ["once", "session", "always", "deny"]);
+  assert.match(card.body, /同じ命令\(値は問わない\)/);
+  void h.answer(card.id, { option: "always" });
+  assert.deepEqual(decided[0], ["a1", true, "always"]);
+  ask("a2", "dangerous", ["VOLT"]);  // an output setting: once, or not at all
+  assert.deepEqual(h.cards.find((c) => c.id === "approval:a2").options.map((o) => o.id), ["once", "deny"]);
+});

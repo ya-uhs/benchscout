@@ -27,6 +27,9 @@ class Impact:
     # which reason this is, so the panel can say it in the person's language: "action:<name>" for the
     # action's own reason, or a rule's name. The English `reason` stays what the agent reads.
     code: str = ""
+    # what a standing grant for this call is bound to besides (action, port): for SCPI, the command headers
+    # (every way the instrument may read them), so allowing one command never allows another. None: the action.
+    subjects: list[str] | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -37,28 +40,31 @@ class Impact:
             "disturbs": self.disturbs,
             "affected_ports": self.affected_ports,
             "code": self.code,
+            "subjects": self.subjects,
         }
 
 
 # ---- SCPI ------------------------------------------------------------------------------------
 # SCPI fixes the syntax for every instrument, but the meaning of only a few commands: IEEE 488.2's common
-# commands and SCPI-99's required SYSTem queries. Only those are judged by name here. What any other command
-# does depends on the instrument, so no list of patterns can say it is harmless (a query is meant to only
-# read, yet MEASure?/READ? start a measurement and a source-measure unit may switch its output on for it;
-# a vendor may call its output INPut, BSWV AMP or *RCL a stored state). Hence:
-#   the standard's status and identity queries         SAFE
-#   its status-register writes (*CLS, *ESE ...)        DISRUPTIVE
-#   *TST? and *CAL? (they run a self-test/calibration) DANGEROUS
-#   any other query                                    DISRUPTIVE (one card; the human knows what the instrument is)
-#   any other command                                  DANGEROUS (one card per command)
-# Loosening one command on one instrument is memory the human confirmed (bench_remember kind command).
-# _ENERGIZING only words the reason on the card; missing a vendor's syntax there changes nothing.
+# commands and SCPI-99's required SYSTem queries. What any other command does depends on the instrument, so
+# no list of patterns can say it is harmless. So nothing outside the standard runs without the human having
+# seen that very command; what the human allows is bound to it (design.md section 12, 2026-11-02):
+#   the standard's status and identity queries                  SAFE
+#   its status-register writes (*CLS, *ESE ...)                 DISRUPTIVE
+#   *TST?, *CAL? (self-test, calibration), *RST, *RCL, *SAV,
+#   *PUD (reset, recall or overwrite the whole stored state)     DANGEROUS (the standard says what they do)
+#   any other query or command                                  DISRUPTIVE: asks; "for the session" or "always on
+#                                                               this instrument" covers that command header only
+#   ... that names an output, voltage, current, source, load    DANGEROUS: each value is the human's call
+# The last row is a list, and a list misses things (a generator's BSWV AMP). It only adds caution on top of a
+# default that is acceptable alone: a missed one still asks, shows the command, and its grant covers only it.
 SCPI_PORTS = ("usbtmc", "lan-scpi")
 _SCPI_SAFE = {"*IDN?", "*OPC?", "*ESR?", "*STB?", "*ESE?", "*SRE?", "*OPT?", "*LRN?", "*PSC?", "*PRE?",
               "SYST:ERR?", "SYST:ERR:NEXT?", "SYST:ERR:COUN?", "SYST:ERR:ALL?", "SYST:VERS?"}
 _SCPI_STATUS_WRITES = {"*CLS", "*ESE", "*SRE", "*WAI", "*OPC"}
 _SCPI_PROCEDURES = {"*TST?", "*CAL?"}
-_ENERGIZING = re.compile(r"(^|:)(OUTP|VOLT|CURR|APPL|SOUR|INP|POW|AMPL|LOAD|PROG|\*RCL|\*RST)", re.I)
+_SCPI_WHOLE_STATE = {"*RST", "*RCL", "*SAV", "*PUD"}
+_ENERGIZING = re.compile(r"(^|:)(OUTP|VOLT|CURR|APPL|SOUR|INP|POW|AMPL|LOAD|PROG)", re.I)
 _NODE = re.compile(r"(\*?[A-Za-z_]+)(\d*)")
 
 
@@ -112,28 +118,36 @@ def scpi_default(header: str) -> tuple[Effect, str]:
         return Effect.SAFE, "scpi_status"
     if header in _SCPI_PROCEDURES:
         return Effect.DANGEROUS, "scpi_procedure"
+    if header in _SCPI_WHOLE_STATE:
+        return Effect.DANGEROUS, "scpi_whole_state"
     if header in _SCPI_STATUS_WRITES:
         return Effect.DISRUPTIVE, "scpi_status_write"
     if query:
         return Effect.DISRUPTIVE, "scpi_query"
-    return Effect.DANGEROUS, "energizing" if _ENERGIZING.search(header) else "scpi_command"
+    if _ENERGIZING.search(header):
+        return Effect.DANGEROUS, "energizing"
+    return Effect.DISRUPTIVE, "scpi_command"
 
 
 _SCPI_REASONS = {
     "scpi_status": "a status or identity query whose meaning the standard fixes (IEEE 488.2 / SCPI)",
     "scpi_procedure": "the standard defines it to run a self-test or calibration, which can switch outputs",
+    "scpi_whole_state": "resets or recalls the instrument's whole state, or overwrites a stored one (IEEE 488.2)",
     "scpi_status_write": "changes only the status registers (IEEE 488.2)",
     "scpi_query": "a query is meant to only read, but some act (MEASure?/READ? start a measurement; a source-measure "
                   "unit may switch its output on for it); what this instrument does is not known",
-    "scpi_command": "what this command does depends on the instrument; the standard does not fix it",
+    "scpi_command": "what this command does depends on the instrument; the standard does not fix it. Allowing it "
+                    "for the session or always covers this command only",
     "energizing": "sets an output, voltage, current or source: it may drive energy into the board",
 }
 
 
-def _scpi(port, cmd: str) -> tuple[Effect, str, str]:
-    """The strictest of every unit, read every way the instrument may read it."""
+def _scpi(port, cmd: str) -> tuple[Effect, str, str, list[str]]:
+    """The strictest of every unit, read every way the instrument may read it; and every header, which is what
+    a standing grant for this line is bound to."""
     worst = (Effect.SAFE, "", "")
-    for ways in scpi_headers(cmd):
+    units = scpi_headers(cmd)
+    for ways in units:
         for h in ways:
             known = port.commands.get(h)
             if known and not known.get("pending"):
@@ -146,7 +160,7 @@ def _scpi(port, cmd: str) -> tuple[Effect, str, str]:
                 reason = f"{_SCPI_REASONS[code]}: {h}"
             if effect > worst[0] or not worst[1]:
                 worst = (effect, reason, code)
-    return worst
+    return (*worst, sorted({h for ways in units for h in ways}))
 
 
 def _base(action: str) -> tuple[Effect, bool, str]:
@@ -161,6 +175,7 @@ def classify(bench: Bench, action: str, port_id: str, args: dict | None = None) 
     if port_id not in bench.ports:
         raise KeyError(f"unknown port {port_id}")
     port = bench.ports[port_id]
+    subjects: list[str] | None = None
     effect, disturbs_targets, reason = _base(action)
     code = f"action:{action}" if reason != "unknown action" else "unknown_action"
     arg = (args or {}).get("command")
@@ -183,7 +198,7 @@ def classify(bench: Bench, action: str, port_id: str, args: dict | None = None) 
             code = "command_unconfirmed"
     if action in ("scpi.query", "scpi.write") and arg is not None:
         # one rule for both: the command line decides, not which of the two the agent called
-        effect, reason, code = _scpi(port, arg)
+        effect, reason, code, subjects = _scpi(port, arg)
         disturbs_targets = effect > Effect.SAFE
 
     disturbed: list[str] = []
@@ -193,4 +208,4 @@ def classify(bench: Bench, action: str, port_id: str, args: dict | None = None) 
                 if x.id not in disturbed:
                     disturbed.append(x.id)
     affected = sorted({p.id for tid in disturbed for p in bench.ports_reaching(tid)} - {port_id})
-    return Impact(action, port_id, effect, reason, disturbed, affected, code)
+    return Impact(action, port_id, effect, reason, disturbed, affected, code, subjects)

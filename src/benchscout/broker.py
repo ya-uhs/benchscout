@@ -212,6 +212,8 @@ class Broker:
     def decide(self, approval_id: str, granted: bool, scope: Scope = "once") -> dict:
         from dataclasses import asdict
 
+        if scope == "always":
+            return self._allow_always(approval_id, granted)
         a = self.approvals.decide(approval_id, granted, scope)
         if a.by == "benchscout" and a.action == "serial.watch" and self.watch_offers.get(a.port) == a.id:
             if granted:  # benchscout asked for itself: nobody is waiting on the call, so run it here
@@ -219,6 +221,24 @@ class Broker:
             else:
                 self.watch_declined.add(a.port)
         return asdict(a)
+
+    def _allow_always(self, approval_id: str, granted: bool) -> dict:
+        """Control channel: "always on this instrument" for a SCPI call that asks once. The human saw the command
+        and decided, so it is remembered for this instrument as confirmed (they can forget it in the inbox), and
+        this call runs. What the standard or an output setting makes DANGEROUS cannot be allowed this way."""
+        from dataclasses import asdict
+
+        a = self.approvals.get(approval_id)
+        if a is None or not granted:
+            return self.decide(approval_id, granted, "once")
+        if a.action not in ("scpi.query", "scpi.write") or a.effect != Effect.DISRUPTIVE.name.lower():
+            raise ValueError(f"only a SCPI command that asks once can be allowed always; this is {a.action} ({a.effect.upper()})")
+        with self._lock:
+            dev = self.bench.devices[self.bench.ports[a.port].device_id]
+            for h in a.impact.get("subjects") or []:
+                self._remember_command(dev, a.port, "allowed always on this instrument, in the benchscout inbox", "",
+                                       {"command": h, "effect": "safe"}, "human", confirmed=True)
+        return asdict(self.approvals.decide(approval_id, True, "once"))
 
     # ---- memory (design.md section 6) ---------------------------------------------------------
     def _key(self, dev) -> str:
@@ -317,7 +337,8 @@ class Broker:
         self._memory_event(dev, e)
         return {"status": "pending_human" if e.status == "pending" else "remembered", "id": e.id}
 
-    def _remember_command(self, dev, ref: str, text: str, evidence: str, data: dict, source: str) -> dict:
+    def _remember_command(self, dev, ref: str, text: str, evidence: str, data: dict, source: str,
+                          confirmed: bool = False) -> dict:
         """A firmware command for one serial port, or a SCPI command (by its header) for one instrument. Whatever
         makes it run with fewer questions than benchscout would ask by itself waits for the human."""
         from .memory import Entry
@@ -351,7 +372,7 @@ class Broker:
                 self.memory.set_status(key, old.id, "superseded")
         loosens = self._loosens(self.bench.ports[port], cmd, effect)
         e = Entry(kind="command", text=text, source=source, evidence=evidence, target=port,
-                  status="pending" if loosens else "active",
+                  status="pending" if loosens and not confirmed else "active",
                   data={"command": cmd, "effect": effect, **({"eol": data["eol"]} if "eol" in data else {})})
         e = self.memory.add(key, e, self._header(dev))
         self._load_command(self.bench, dev, e)
@@ -648,7 +669,7 @@ class Broker:
             # a tool not installed yet is downloaded only with the human's OK, even for a SAFE action
             fetch = self._fetch_needed(spec)
             if not fetch and (impact.effect == Effect.SAFE or
-                              (approval_id is None and self.approvals.covered(action, port_id, impact.effect))):
+                              (approval_id is None and self.approvals.covered(action, port_id, impact.effect, impact.subjects))):
                 return self._run(impact, args)
             if approval_id is None:
                 approval_id = self.approvals.open(impact, key, fetch=fetch).id

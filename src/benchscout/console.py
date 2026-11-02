@@ -43,6 +43,8 @@ def format_human(msg: dict, broker) -> str | None:
         imp = a["impact"]
         also = f"\n   also disturbs: {', '.join(imp['affected_ports'])}" if imp.get("affected_ports") else ""
         scope = f"   approve {a['id']} session | approve {a['id']} 10m | " if a["effect"] == "disruptive" else "   "
+        if a["effect"] == "disruptive" and a["action"] in ("scpi.query", "scpi.write"):
+            scope += f"approve {a['id']} always | "
         asker = f"   benchscout asks: {a['purpose']}\n" if a.get("by") == "benchscout" else ""
         asker += f"   downloads first: {a['fetch']}\n" if a.get("fetch") else ""
         return (f"\n>>> APPROVAL NEEDED  [{a['effect'].upper()}]  {a['action']} on {a['port']}  {_args(a['args'])}\n"

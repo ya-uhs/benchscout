@@ -3,6 +3,7 @@ approval id it got hold of, nothing that is not SAFE runs unless the human allow
 
   - a DANGEROUS call runs only with a granted approval for the same action, port and arguments, once
   - a DISRUPTIVE call runs with such an approval, or a session grant the human gave for that action on that port
+    (for SCPI: for a line whose commands include every command of this call), or what the human allowed always
   - an approval is used at most once, and never for a different call
   - the agent has no way to decide (it only calls `request`); the human decides through `decide`
 
@@ -39,6 +40,10 @@ CALLS = [
     ("scpi.write", PSU, {"command": "OUTP CH1,ON"}),
     ("scpi.write", PSU, {"command": "VOLT 5"}),
     ("scpi.write", PSU, {"command": "*CLS"}),
+    ("scpi.write", PSU, {"command": "DISP:BRIG 5"}),
+    ("scpi.write", PSU, {"command": "DISP:BRIG 7"}),
+    ("scpi.write", PSU, {"command": "SYST:BEEP"}),
+    ("scpi.write", PSU, {"command": "DISP:BRIG 5;SYST:BEEP"}),
 ]
 
 
@@ -54,14 +59,18 @@ class Gate(RuleBasedStateMachine):
         self.issued: dict[str, tuple[str, str, str, Effect]] = {}  # approval id -> what it was asked for
         self.granted: set[str] = set()
         self.used: set[str] = set()
-        self.session: set[tuple[str, str]] = set()  # (action, port) the human allowed for the session
+        # (action, port, SCPI headers or None) the human allowed for the session
+        self.session: set[tuple[str, str, frozenset | None]] = set()
 
     def teardown(self):
         self.br.end_session()
         self.tmp.cleanup()
 
+    def _impact(self, action, port, args):
+        return classify(self.br.bench, action, port, A.get(action).normalize(args))
+
     def _effect(self, action, port, args) -> Effect:
-        return classify(self.br.bench, action, port, A.get(action).normalize(args)).effect
+        return self._impact(action, port, args).effect
 
     def _check(self, action, port, args, res, approval_id=None):
         key = A.canonical(A.get(action).normalize(args))
@@ -80,8 +89,10 @@ class Gate(RuleBasedStateMachine):
             assert self.issued[approval_id][:3] == (action, port, key), f"{action} {args} ran on another call's approval"
             self.used.add(approval_id)
         else:
-            assert effect == Effect.DISRUPTIVE and (action, port) in self.session, \
-                f"{action} {args} ({effect.name}) ran without the human's OK"
+            subjects = self._impact(action, port, args).subjects
+            assert effect == Effect.DISRUPTIVE and any(
+                a == action and p == port and (s is None or subjects is not None and set(subjects) <= s)
+                for a, p, s in self.session), f"{action} {args} ({effect.name}) ran without the human's OK for it"
 
     @rule(call=st.sampled_from(CALLS))
     def agent_calls(self, call):
@@ -105,23 +116,25 @@ class Gate(RuleBasedStateMachine):
         args = json.loads(key)
         self._check(action, port, args, self.br.request(action, port, args, approval_id=aid, wait=0), approval_id=aid)
 
-    @rule(data=st.data(), grant=st.booleans(), session=st.booleans())
-    def human_decides(self, data, grant, session):
+    @rule(data=st.data(), grant=st.booleans(), scope=st.sampled_from(["once", "session", "always"]))
+    def human_decides(self, data, grant, scope):
         waiting = [a.id for a in self.br.approvals.pending() if a.by == "agent"]
         if not waiting:
             return
         aid = data.draw(st.sampled_from(waiting))
-        effect = self.issued[aid][3]
-        scope = "session" if session else "once"
+        action, port, _, effect = self.issued[aid]
         try:
             self.br.decide(aid, grant, scope)
         except ValueError:
-            assert grant and session and effect == Effect.DANGEROUS, "only a DANGEROUS call cannot be allowed for the session"
+            assert grant and scope != "once", "allowing once is always possible"
+            assert effect == Effect.DANGEROUS or scope == "always" and not action.startswith("scpi."), \
+                f"{action} ({effect.name}) could not be allowed {scope}"
             return
         if grant:
             self.granted.add(aid)
-            if session:
-                self.session.add(self.issued[aid][:2])
+            if scope == "session":
+                subjects = self.br.approvals.get(aid).impact.get("subjects")
+                self.session.add((action, port, frozenset(subjects) if subjects is not None else None))
 
     @invariant()
     def the_agents_channel_cannot_decide(self):

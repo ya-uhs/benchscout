@@ -25,7 +25,7 @@ export interface Proposal { text: string; action?: string; port?: string; effect
 
 export interface Approval {
   id: string; action: string; port: string; args: string; effect: Effect; status: string;
-  impact: { reason: string; affected_ports: string[]; disturbs: string[]; code?: string };
+  impact: { reason: string; affected_ports: string[]; disturbs: string[]; code?: string; subjects?: string[] | null };
   by?: "agent" | "benchscout"; // benchscout asks itself, e.g. to watch a selected device
   fetch?: string; // a tool downloaded first (official release, pinned) if this is allowed
   subject?: string; // the device's name
@@ -99,7 +99,7 @@ export class CoreClient extends EventEmitter {
 
   scan(): Promise<any> { return this.call("scan"); }
   select(devices: string[]): Promise<any> { return this.call("select", { devices }); }
-  decide(approvalId: string, granted: boolean, scope: "once" | "session" | number = "once"): Promise<any> {
+  decide(approvalId: string, granted: boolean, scope: "once" | "session" | "always" | number = "once"): Promise<any> {
     return this.call("decide", { approval_id: approvalId, granted, scope });
   }
   memoryDecide(key: string, id: string, accept: boolean): Promise<any> {

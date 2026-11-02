@@ -20,7 +20,7 @@ from typing import Callable
 
 from .policy import Effect, Impact
 
-Scope = str | int  # "once" | "session" | minutes
+Scope = str | int  # "once" | "session" | minutes ("always" is the broker's: once, plus memory)
 
 
 @dataclass
@@ -45,6 +45,7 @@ class Grant:
     action: str
     port: str
     expires: float | None  # monotonic deadline; None = until the session ends
+    subjects: frozenset[str] | None = None  # only calls about these (SCPI headers); None = any call of the action
 
 
 class ApprovalBook:
@@ -96,20 +97,27 @@ class ApprovalBook:
         self._log("used", a)
         return "ok"
 
+    def get(self, approval_id: str) -> Approval | None:
+        with self._cond:
+            return self._items.get(approval_id)
+
     def asked_for(self, approval_id: str) -> tuple[str, str, str] | None:
         """(action, port, args) the approval was asked for, or None if there is no such approval."""
         with self._cond:
             a = self._items.get(approval_id)
             return (a.action, a.port, a.args) if a else None
 
-    def covered(self, action: str, port: str, effect: Effect) -> bool:
-        """A standing grant (R8) covers this DISRUPTIVE call."""
+    def covered(self, action: str, port: str, effect: Effect, subjects: list[str] | None = None) -> bool:
+        """A standing grant (R8) covers this DISRUPTIVE call: same action and port and, for a grant bound to
+        subjects (SCPI headers), nothing in the call it was not given for."""
         if effect != Effect.DISRUPTIVE:
             return False
         now = self._clock()
         with self._cond:
             self._grants = [g for g in self._grants if g.expires is None or g.expires > now]
-            return any(g.action == action and g.port == port for g in self._grants)
+            return any(g.action == action and g.port == port
+                       and (g.subjects is None or subjects is not None and set(subjects) <= g.subjects)
+                       for g in self._grants)
 
     # ---- human side (control channel only) --------------------------------------
     def decide(self, approval_id: str, granted: bool, scope: Scope = "once") -> Approval:
@@ -126,7 +134,8 @@ class ApprovalBook:
                 if a.effect != Effect.DISRUPTIVE.name.lower():
                     raise ValueError(f"only DISRUPTIVE actions can be granted beyond one use; this one is {a.effect.upper()}")
                 expires = None if scope == "session" else self._clock() + 60 * int(scope)
-                self._grants.append(Grant(a.action, a.port, expires))
+                subjects = a.impact.get("subjects")
+                self._grants.append(Grant(a.action, a.port, expires, frozenset(subjects) if subjects is not None else None))
             a.status, a.scope = ("granted" if granted else "denied"), scope
             self._cond.notify_all()
         self._log(a.status, a)

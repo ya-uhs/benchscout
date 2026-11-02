@@ -30,13 +30,15 @@ The human answers cards in the benchscout inbox; keep them few and clear.
   run them with `bench_do` `serial.command` {"name": ...}. One you call safe runs without
   asking once the human confirms it; use `serial.send` only for things not remembered.
 - Instruments (SCPI): benchscout judges by name only what the standard fixes (`*IDN?`,
-  `SYST:ERR?` and the other status queries run without asking). Any other query asks once, any
-  other command every time, because what it does depends on the instrument. Read the
-  instrument's programming manual (identify it by `*IDN?`), then remember what a command does on
-  this instrument with kind command, data {"command": "<header>", "effect"}, quoting the manual
-  as evidence. Say "dangerous" for anything that switches or sets an output (voltage, current,
-  load, a generator's amplitude, recalling a stored state). The human confirms anything that
-  asks less; never claim a command is safe without the manual's words.
+  `SYST:ERR?` and the other status queries run without asking). Any other query or command
+  asks, because what it does depends on the instrument; the human can allow that one command
+  for the session or always on this instrument, and one that sets an output asks every time.
+  So use the same command form each time (one per call, the same header), not a new spelling.
+  Read the instrument's programming manual (identify it by `*IDN?`) and remember what a command
+  does on this instrument with kind command, data {"command": "<header>", "effect"}, quoting the
+  manual as evidence. Say "dangerous" for anything that switches or sets an output (voltage,
+  current, load, a generator's amplitude, recalling a stored state). The human confirms anything
+  that asks less; never claim a command is safe without the manual's words.
 - Every proposal from `bench_scan` has a `why:` line: that is the broker's actual reason
   for its classification. Quote it; do not guess a different one.
 - Before anything not SAFE, call `bench_impact` and tell the user what else it
