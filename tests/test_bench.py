@@ -61,6 +61,7 @@ def test_one_usb_device_two_targets(r):
 
 def test_unknown_stays_unknown(r):
     b = r.bench
+    assert "browning out" not in " | ".join(p.text for p in r.proposals)  # nothing heard yet, nothing claimed
     ch340 = next(p for p in b.ports.values() if p.path == "/dev/cu.usbserial-10")
     (t,) = b.targets_via(ch340.id)
     assert t.name is None and t.confidence == Confidence.UNKNOWN
@@ -107,27 +108,6 @@ def test_esptool_read_is_disruptive_and_hits_jtag(r):
     imp = classify(b, "esptool.chip_id", "serial:usbmodem1101")
     assert imp.effect == Effect.DISRUPTIVE
     assert any(p.startswith("jtag:") for p in imp.affected_ports)
-
-
-def test_scpi_classification(r):
-    """Only what the standard fixes is judged by name; the rest asks (policy.py, design.md section 12 2026-11-02)."""
-    psu = next(p for p in r.bench.ports.values() if "192.168.1.50" in p.id)
-
-    def effect(cmd):
-        return classify(r.bench, "scpi.query", psu.id, {"command": cmd}).effect
-
-    for cmd in ("*IDN?", ":syst:err?", "SYSTem:ERRor:NEXT?", "*IDN?;*OPC?", "*STB?"):
-        assert effect(cmd) == Effect.SAFE, cmd
-    for cmd in ("MEAS:CURR? CH1", "READ?", "VOLT?", "*CLS", ":TRIG:MODE SING", "DISP:BRIG 5"):
-        assert effect(cmd) == Effect.DISRUPTIVE, cmd  # asks; what the human allows covers that command only
-    for cmd in ("OUTP CH1,ON", "*TST?", "*RST", "*RCL 1", "*IDN?;OUTP ON"):
-        assert effect(cmd) == Effect.DANGEROUS, cmd  # every time: an output setting, or what the standard says
-
-
-def test_proposals(r):
-    texts = " | ".join(p.text for p in r.proposals)
-    assert "usbserial-10" in texts and "usbmodem1101" in texts
-    assert "browning out" not in texts  # nothing heard yet, so nothing claimed
 
 
 def session(io, tmp_path, *ports):
@@ -254,10 +234,6 @@ def test_tang_nano_9k(tmp_path):
     assert all(" " not in pid for pid in r.bench.ports)
 
 
-def test_inventory_is_json_serializable(r):
-    json.dumps(r.to_dict(), default=str)
-
-
 def test_idcode_without_a_tool_database_stays_unknown(tmp_path):
     """Without openFPGALoader's model line there is no name: benchscout keeps no IDCODE table;
     the raw IDCODE is the clue for the agent."""
@@ -334,7 +310,6 @@ def test_crash_without_guru_meditation_is_an_alert_that_survives_a_quiet_answer(
     assert any(f.startswith("ALERT: crash: abort() at PC 0x42001c85") for f in esp.facts)
 
 
-
 def test_every_reason_has_a_code_the_panel_can_translate(tmp_path):
     """The panel says reasons in the person's language by code; the English reason stays for the agent."""
     from benchscout.policy import classify
@@ -349,24 +324,6 @@ def test_every_reason_has_a_code_the_panel_can_translate(tmp_path):
     assert classify(b, "scpi.query", scpi, {"command": "MEAS:VOLT?"}).code == "scpi_query"
     assert classify(b, "scpi.query", scpi, {"command": "*IDN?"}).code == "scpi_status"
     assert classify(b, "scpi.query", scpi, {"command": "*TST?"}).code == "scpi_procedure"
-
-
-
-def test_an_output_setting_asks_every_time_and_any_other_command_asks_for_itself():
-    """Review 2026-11-02: a list of output commands on top of a DISRUPTIVE default missed "CH1:VOLT 5", and a
-    grant for one command covered every other. Now every command outside the standard asks, a grant covers that
-    command only, and an output setting the list knows asks every time (a missed one, like a generator's
-    BSWV, still asks and is bound to itself)."""
-    from benchscout.policy import classify as cls
-
-    b = recon.run(FixtureIo(FIXTURE)).bench
-    psu = "visa:TCPIP0::192.168.1.50::INSTR"
-    for cmd in ("OUTP CH1,ON", ":OUTPut ON", "CH1:VOLTage 5", "INST:NSEL 1;VOLT 5", ":SOUR1:VOLT 3.3", "APPL 5,0.1",
-                "INP ON", "PROG:RUN", "*RCL 1", "*RST"):
-        assert cls(b, "scpi.write", psu, {"command": cmd}).effect == Effect.DANGEROUS, cmd
-    for cmd in ("SYST:BEEP", "DISP:BRIG 5", "INIT", "C1:BSWV WVTP,SINE,AMP,5", "MEAS:VOLT?"):
-        imp = cls(b, "scpi.write", psu, {"command": cmd})
-        assert imp.effect == Effect.DISRUPTIVE and imp.subjects, cmd
 
 
 def test_every_serial_port_keeps_its_evidence_and_a_valid_open_mode():

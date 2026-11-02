@@ -42,21 +42,6 @@ def test_unseen_devices_are_handled_cautiously():
     assert not [p for p in b.ports.values() if p.kind in ("jtag", "swd")], "an unknown board's channels are not taken for JTAG"
 
 
-def test_without_shipped_data_the_unseen_bench_is_no_less_strict(tmp_path, monkeypatch):
-    empty = tmp_path / "empty"
-    empty.mkdir()
-    monkeypatch.setattr(K, "SHIPPED", empty)
-    try:
-        K.load()
-        io = FixtureIo(UNSEEN)
-        b = recon.run(io).bench
-        assert not [c for c in io.calls if c[0] in ("serial_listen", "jtag_scan")]
-        assert all(classify(b, "serial.listen", p.id).effect >= Effect.DISRUPTIVE for p in b.ports.values() if p.kind == "serial")
-    finally:
-        monkeypatch.undo()
-        K.load()
-
-
 def test_a_crash_on_an_unseen_board_is_noticed_once_it_is_watched(tmp_path):
     data = json.loads(UNSEEN.read_text())
     data["streams"] = {PICO: [{"after": 0.1, "text": "MicroPython v1.24.1\n"},
@@ -87,7 +72,6 @@ def test_without_any_shipped_tools_the_agent_can_still_bring_one(tmp_path, monke
     through the same gate. (FPGA = openFPGALoader had become the only way, and such cables were not even listed.)"""
     import json
 
-    from benchscout import knowledge as K
     from benchscout import report
     from benchscout.broker import Broker
 

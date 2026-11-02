@@ -296,7 +296,7 @@ test("a SCPI command's card allows that command for the session or always, and s
   ask("a1", "disruptive", ["DISP:BRIG"]);
   const card = h.cards.find((c) => c.id === "approval:a1");
   assert.deepEqual(card.options.map((o) => o.id), ["once", "session", "always", "all", "deny"]);
-  assert.match(card.body, /同じ命令\(値は問わない\)/);
+  assert.ok(card.body.includes(strings("ja").commandCovers), "the card says the grant covers this command only");
   void h.answer(card.id, { option: "always" });
   assert.deepEqual(decided[0], ["a1", true, "always"]);
   ask("a2", "dangerous", ["VOLT"]);  // an output setting: once, or not at all
@@ -312,7 +312,7 @@ test("allow all is on DISRUPTIVE cards only, and the inbox shows it with a way t
     status: "pending", by: "agent", impact: { reason: "x", affected_ports: [], disturbs: [], code: "" } });
   ask("a1", "serial.send", "disruptive");
   ask("a2", "esptool.write_flash", "dangerous");
-  assert.ok(h.cards.find((c) => c.id === "approval:a1").options.some((o) => o.id === "all" && o.label === "このセッション中はすべて許可"));
+  assert.ok(h.cards.find((c) => c.id === "approval:a1").options.some((o) => o.id === "all"));
   assert.ok(!h.cards.find((c) => c.id === "approval:a2").options.some((o) => o.id === "all"), "what cannot be undone asks each time");
   void h.answer("approval:a1", { option: "all" });
   assert.deepEqual(decided[0], ["a1", true, "all"]);
@@ -325,12 +325,12 @@ test("a tool's first-use download is one card, updated as it goes and closed whe
   ev(0, "running");
   ev(32_000_000, "running");
   assert.equal(h.cards.length, 1);
-  assert.equal(h.cards[0].title, "esptool 5.6.0 をダウンロード中");
-  assert.match(h.cards[0].body, /^32 \/ 65 MB · 公式のリリース/);
+  assert.equal(h.cards[0].title, strings("ja").downloading("esptool 5.6.0"));
+  assert.ok(h.cards[0].body.startsWith(strings("ja").downloadBody("32", "65").slice(0, 7)), "progress in MB");
   assert.equal(h.cards[0].status, "open");
   ev(65_000_000, "done");
   assert.equal(h.cards.length, 1);
-  assert.equal(h.cards[0].title, "esptool 5.6.0 をダウンロードしました");
+  assert.equal(h.cards[0].title, strings("ja").downloaded("esptool 5.6.0"));
   assert.equal(h.cards[0].status, "closed");
 });
 
@@ -340,13 +340,11 @@ test("Windows: a device that needs a driver gets one card saying which interface
   const bench = (dev) => ({ devices: [{ id: "usb:0403:6010:x", name: "SIPEED JTAG Debugger", evidence: [], ...dev }], ports: [], targets: [], links: [] });
   core.emit("scan", bench({ no_driver: [0, 1] }), []);
   const card = () => h.cards.find((c) => c.id === "driver:usb:0403:6010:x");
-  assert.match(card().title, /SIPEED JTAG Debugger: Windows のドライバの入れ替えが必要です/);
-  assert.match(card().body, /インターフェース 0, 1 に Windows のドライバが無い/);
-  assert.match(h.cards.find((c) => c.kind === "question").body, /SIPEED JTAG Debugger \(Windows のドライバがありません\)/);
+  assert.equal(card().body, strings("ja").driverBody("0, 1", ""), "which interfaces lack a driver");
+  assert.ok(h.cards.find((c) => c.kind === "question").body.includes(`SIPEED JTAG Debugger (${strings("ja").stateNoDriver})`));
   core.emit("scan", bench({ needs_winusb: [0] }), []);  // the maker's driver came; openFPGALoader still needs WinUSB
   assert.equal(h.cards.filter((c) => c.id.startsWith("driver:")).length, 1);
-  assert.match(card().body, /openFPGALoader はインターフェース 0 を libusb で開く/);
-  assert.match(card().body, /Zadig/);
+  assert.equal(card().body, strings("ja").driverBody("", "0"), "which interface needs WinUSB, with how");
   core.emit("scan", bench({}), []);  // after Zadig and a rescan
   assert.equal(card().status, "closed");
 });
@@ -360,9 +358,8 @@ test("a tool the agent proposes is a card with the exact command, its effect and
     tool: { name: "vendortool.program", argv: ["vendortool", "--program", "{bitstream}"], effect: "dangerous", reason: "loads a bitstream" },
     probes: [{ vid: 0x03fd, pid: 0x0013, probe: "jtag" }] });
   const card = h.cards.find((c) => c.id === "tool:p1");
-  assert.equal(card.title, "エージェントが道具の使い方を追加したいと言っています: vendortool.program");
-  assert.match(card.body, /実行する命令: `vendortool --program \{bitstream\}`/);
-  assert.match(card.body, /エージェントが示した根拠: vendor guide ch\. 4/);
+  assert.ok(card.body.includes("`vendortool --program {bitstream}`"), "the exact command, as it will run");
+  assert.ok(card.body.includes("vendor guide ch. 4"), "the agent's source");
   assert.match(card.body, /03fd:0013 \(jtag\)/);
   assert.equal(card.effect, "dangerous");
   void h.answer("tool:p1", { option: "accept" });

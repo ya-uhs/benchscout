@@ -146,6 +146,13 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
   fine; anything that is not SAFE (it resets or writes something) only after the user says OK
   in chat for that action. Why: this session has a shell and can edit code, so a direct probe
   could reset or rewrite a board the user is working on, and would test a path no user takes.
+- **Add a test only for one of these**: a safety promise (the gate, approvals, the policy; property tests where
+  inputs are open-ended), something a real bench or a real OS did (record its output in `fixtures/real/` and test
+  against the recording), or a regression that was found. Do not add tests that restate the implementation (retyped
+  panel wording: compare with the `i18n.ts` string instead) or that test a parser against output you made up: such
+  tests pass while the real system behaves otherwise (the invented WMI test passed while Windows named devices by
+  their drivers). Where no recording exists yet, mark the test `@pytest.mark.assumed` and replace it once that
+  system is on the bench. Prefer one end-to-end check (`npm run e2e`) over many unit tests of the same path.
 - New behaviour is tested against `FixtureIo` first. When the real bench shows something,
   record it in `fixtures/` or a test so the suite keeps covering it without hardware.
 - Real-hardware checks happen in `../bench-session`, a workspace set up exactly as an end user

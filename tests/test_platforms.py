@@ -11,23 +11,9 @@ from benchscout.io import FixtureIo, linux_usb_devices, parse_windows_pnp
 
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "bench_example.json"
 
-PNP = json.dumps([
-    {"Name": "USB Composite Device", "Manufacturer": "Digilent", "PNPDeviceID": "USB\\VID_0403&PID_6010\\210319A8C7D1"},
-    {"Name": "USB Serial Converter A", "Manufacturer": "FTDI", "PNPDeviceID": "USB\\VID_0403&PID_6010&MI_00\\6&2A1B3C&0&0000"},
-    {"Name": "USB-SERIAL CH340 (COM4)", "Manufacturer": "wch.cn", "PNPDeviceID": "USB\\VID_1A86&PID_7523\\5&1F2E3D4C&0&2"},
-    {"Name": "HID Keyboard", "Manufacturer": "(Standard keyboards)", "PNPDeviceID": "HID\\VID_046D&PID_C31C\\7&1"},
-])
 
 
-def test_windows_pnp_parsing():
-    devs = parse_windows_pnp(PNP)
-    assert [(d["vid"], d["pid"]) for d in devs] == [(0x0403, 0x6010), (0x1A86, 0x7523)]
-    assert devs[0]["serial"] == "210319A8C7D1"
-    assert devs[1]["serial"] is None and devs[1]["location"]  # generated instance id is not a serial
-    assert parse_windows_pnp("") == [] and parse_windows_pnp("not json") == []
-    assert len(parse_windows_pnp(json.dumps(json.loads(PNP)[0]))) == 1  # a single object, not a list
-
-
+@pytest.mark.assumed
 @pytest.mark.skipif(__import__("sys").platform == "win32", reason="sysfs names like 1-1:1.0 cannot be made on Windows")
 def test_linux_sysfs(tmp_path):
     def dev(name, **attrs):
@@ -63,6 +49,7 @@ def fabric_port(b):
 DIGILENT_USB = [{"name": "Digilent USB Device", "vendor": "Digilent", "vid": "0x0403", "pid": "0x6010", "serial": "210319A8C7D1", "location": "x"}]
 
 
+@pytest.mark.assumed
 def test_windows_ft2232h_one_device_channel_from_serial_letter(tmp_path):
     # Windows: channel A is on D2XX for JTAG, so only channel B shows up as a COM port,
     # with the channel letter appended to the serial.
@@ -72,6 +59,7 @@ def test_windows_ft2232h_one_device_channel_from_serial_letter(tmp_path):
     assert any(p.kind == "jtag" for p in b.ports.values())
 
 
+@pytest.mark.assumed
 def test_linux_ft2232h_channel_from_interface_number(tmp_path):
     ports = [{"device": f"/dev/ttyUSB{i}", "vid": "0x0403", "pid": "0x6010", "serial_number": "210319A8C7D1",
               "location": f"1-1:1.{i}"} for i in (1, 0)]  # listed out of order on purpose
@@ -129,6 +117,8 @@ def test_windows_names_come_from_the_device_not_from_its_driver():
     assert (ftdi["vendor"], ftdi["name"], ftdi["serial"], ftdi["no_driver"]) == (None, "JTAG Debugger", "FactoryAIOT Pro", [0, 1])
     assert not any("Composite" in (d["name"] or "") or "Standard" in (d["vendor"] or "") for d in devs.values())
     # without the hub's strings: still no driver names
+    assert parse_windows_pnp("") == [] and parse_windows_pnp("not json") == []
+    assert len(parse_windows_pnp(json.dumps(WIN["pnp"][-1]))) == 1  # PowerShell prints one object, not a list, for one device
     plain = {d["vid"]: d for d in parse_windows_pnp(json.dumps(WIN["pnp"]))}
     assert plain[0x303A]["name"] == "USB JTAG/serial debug unit" and plain[0x303A]["vendor"] is None
 
@@ -168,6 +158,7 @@ def _tang_nano_on_windows(jtag_driver):
     return [dict(d, vid=f"0x{d['vid']:04x}", pid=f"0x{d['pid']:04x}") for d in parse_windows_pnp(json.dumps(pnp), strings)]
 
 
+@pytest.mark.assumed
 def test_a_libusb_tool_behind_a_serial_driver_is_named_with_the_interface_that_needs_winusb(tmp_path):
     from benchscout import report
 

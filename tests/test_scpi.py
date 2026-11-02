@@ -43,6 +43,27 @@ def broker(tmp_path):
     br.end_session()
 
 
+# ---- what each rule says, by example ---------------------------------------------------------------
+
+@pytest.mark.parametrize("cmd,expected", [
+    # the standard's status and identity queries: SAFE, in any spelling
+    ("*IDN?", Effect.SAFE), (":syst:err?", Effect.SAFE), ("SYSTem:ERRor:NEXT?", Effect.SAFE), ("*IDN?;*OPC?", Effect.SAFE),
+    # anything else asks; what the human allows covers that command only
+    ("MEAS:CURR? CH1", Effect.DISRUPTIVE), ("READ?", Effect.DISRUPTIVE), ("*CLS", Effect.DISRUPTIVE),
+    (":TRIG:MODE SING", Effect.DISRUPTIVE), ("DISP:BRIG 5", Effect.DISRUPTIVE), ("SYST:BEEP", Effect.DISRUPTIVE),
+    ("INIT", Effect.DISRUPTIVE), ("C1:BSWV WVTP,SINE,AMP,5", Effect.DISRUPTIVE),  # a generator's amplitude the list misses: still asks
+    # output settings, whatever the vendor syntax, and what the standard says resets or recalls everything: every time
+    ("OUTP CH1,ON", Effect.DANGEROUS), (":OUTPut ON", Effect.DANGEROUS), ("CH1:VOLTage 5", Effect.DANGEROUS),
+    ("INST:NSEL 1;VOLT 5", Effect.DANGEROUS), (":SOUR1:VOLT 3.3", Effect.DANGEROUS), ("APPL 5,0.1", Effect.DANGEROUS),
+    ("INP ON", Effect.DANGEROUS), ("PROG:RUN", Effect.DANGEROUS), ("*RST", Effect.DANGEROUS), ("*RCL 1", Effect.DANGEROUS),
+    ("*TST?", Effect.DANGEROUS), ("*IDN?;OUTP ON", Effect.DANGEROUS),
+])
+def test_what_each_rule_says(cmd, expected):
+    """Review 2026-11-02 (docs/notes.md U9, U12): only what the standard fixes is judged by name; a list of output
+    commands only adds caution on top of a default that already asks, and a grant covers the command it was for."""
+    assert effect(cmd) == expected, cmd
+
+
 # ---- the hole that started this ------------------------------------------------------------------
 
 @pytest.mark.parametrize("cmd", ["*IDN?\nOUTP ON", "*IDN?\r\nOUTP ON", "*IDN?\rOUTP ON", "*IDN?\x00OUTP ON",

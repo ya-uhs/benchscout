@@ -9,6 +9,7 @@ from benchscout import knowledge as K
 from benchscout import recon
 from benchscout.broker import Broker
 from benchscout.io import FixtureIo
+from benchscout.policy import Effect, classify
 
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "bench_example.json"
 SRC = Path(K.__file__)
@@ -110,19 +111,22 @@ channels = { 0 = "uart-fpga-fabric", 1 = "jtag-fpga" }
     assert "My FT2232H dev board" in fpga.facts[0]
 
 
-def test_without_any_shipped_data_benchscout_only_gets_stricter(tmp_path, monkeypatch):
-    """design.md section 3: deleting every shipped data file must only make benchscout stricter."""
+@pytest.mark.parametrize("bench", ["bench_example.json", "bench_unseen.json"])
+def test_without_any_shipped_data_benchscout_only_gets_stricter(tmp_path, monkeypatch, bench):
+    """design.md section 3: deleting every shipped data file must only make benchscout stricter, on the example bench
+    and on one of devices benchscout ships nothing about."""
     empty = tmp_path / "empty"
     empty.mkdir()
     shipped = K.SHIPPED
     K.SHIPPED = empty
     try:
         K.load()
-        io = FixtureIo(FIXTURE)
+        io = FixtureIo(FIXTURE.parent / bench)
         r = recon.run(io)
         serial = [p for p in r.bench.ports.values() if p.kind == "serial"]
         assert serial and all(p.may_reset_on_open for p in serial)
-        assert not any(c[0] == "serial_listen" for c in io.calls), "nothing it knows nothing about is opened"
+        assert all(classify(r.bench, "serial.listen", p.id).effect >= Effect.DISRUPTIVE for p in serial)
+        assert not any(c[0] in ("serial_listen", "jtag_scan") for c in io.calls), "nothing it knows nothing about is opened"
     finally:
         K.SHIPPED = shipped
         K.load()
