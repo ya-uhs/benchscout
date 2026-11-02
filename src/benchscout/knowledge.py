@@ -147,3 +147,12 @@ def parse_idn(idn: str) -> dict:
 
 
 load()
+
+
+def tool_names() -> list[str]:
+    """The external programs the data names: each tool action's program and each tool a USB entry says how to reach
+    a part with. No list in code: what benchscout looks for comes from the data, the user's and the agent's."""
+    names = {e["argv"][0] for e in TOOLS.values() if e.get("argv")}
+    names |= {t for u in USB_IDS.values() for t in (u.get("tools") or {})}
+    return sorted(names)
+

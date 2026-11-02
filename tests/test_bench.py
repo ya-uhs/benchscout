@@ -27,8 +27,15 @@ def target_named(b, name):
     return next(t for t in b.targets.values() if t.name == name)
 
 
-def test_non_bench_usb_is_ignored(r):
-    assert not any("Keychron" in d.name for d in r.bench.devices.values())
+def test_a_usb_device_benchscout_has_no_data_for_is_listed_apart_not_hidden(r):
+    """2026-11-02: hiding them also hid programmer cables benchscout has no data for, so the agent could not see
+    them. Now every non-hub USB device is listed with its raw clues; those it knows nothing about stay apart."""
+    from benchscout import report
+
+    kb = next(d for d in r.bench.devices.values() if "Keychron" in d.name)
+    assert kb.other and not r.bench.ports_of(kb.id)
+    text = report.render(r)
+    assert f"■ {kb.name}" not in text and "Other USB devices" in text and kb.name in text.split("Other USB devices")[1]
 
 
 def esp_target(b):
@@ -370,3 +377,10 @@ def test_every_serial_port_keeps_its_evidence_and_a_valid_open_mode():
         if p.kind == "serial":
             assert p.open_lines in ("low", "asserted"), p.id
             assert any(e.source == "serial-port" for e in p.evidence), p.id
+
+
+def test_an_instrument_found_through_visa_is_bench_hardware_even_without_data_for_its_usb_id(r):
+    """Found by the e2e (2026-11-02): the Rigol scope's USB entry was set apart as 'other' before its USBTMC port
+    came from the VISA list, and it vanished from the first question."""
+    scope = next(d for d in r.bench.devices.values() if d.vid == 0x1AB1)
+    assert not scope.other and any(p.kind == "usbtmc" for p in r.bench.ports_of(scope.id))

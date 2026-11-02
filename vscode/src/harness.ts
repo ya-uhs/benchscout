@@ -149,7 +149,7 @@ export class Harness extends EventEmitter {
 
   /** benchscout's own first question, built from the raw clues without an LLM. */
   private firstQuestion(bench: Bench): void {
-    const views = deviceViews(bench);
+    const views = deviceViews(bench).filter((d) => !d.other);  // the others are the agent's to look through
     if (!views.length) return;
     const lines = views.map((d) => {
       const known = d.things.map((t) => t.name || (t.status === "family" ? t.facts[0] : "")).filter(Boolean).join(", ");

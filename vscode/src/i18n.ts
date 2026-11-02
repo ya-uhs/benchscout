@@ -39,6 +39,7 @@ const en = {
   stateFree: "not used",
   stateNoDriver: "Windows has no driver for it",
   stateNeedsWinusb: "needs the WinUSB driver",
+  otherDevices: "and {n} other USB devices benchscout has no data for (the agent sees them, e.g. a programmer cable)",
   driverTitle: (name: string) => `${name}: Windows needs a driver change`,
   driverBody: (none: string, winusb: string) =>
     (none ? `Windows has no driver for its USB interface ${none}, so nothing can open it. For a serial port, install the maker's driver (Windows Update often does). ` : "")
@@ -158,6 +159,7 @@ const ja: typeof en = {
   stateFree: "使っていない",
   stateNoDriver: "Windows のドライバがありません",
   stateNeedsWinusb: "WinUSB ドライバが必要",
+  otherDevices: "ほかに benchscout がデータを持たない USB 機器が {n} 台(エージェントには見えています。書き込み器のケーブルなど)",
   driverTitle: (name: string) => `${name}: Windows のドライバの入れ替えが必要です`,
   driverBody: (none: string, winusb: string) =>
     (none ? `USB のインターフェース ${none} に Windows のドライバが無いので、どのプログラムも開けません。シリアルポートとして使うなら、メーカーのドライバを入れてください(多くは Windows Update が入れます)。` : "")

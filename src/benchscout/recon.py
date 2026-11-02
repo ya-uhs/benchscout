@@ -50,11 +50,13 @@ def build(io: Io) -> Bench:
     usb = io.usb_devices()  # once: on Windows it is a PowerShell query and a read through every hub
 
     for u in usb:
-        # A USB device is bench hardware if it has a serial port or its interface is described in the
-        # data (a debug probe). Keyboards, hubs, audio have neither. Its name is what it calls itself.
-        # One the OS has no driver for is shown too: someone plugged it in to use it, and must hear what it lacks.
-        if (u["vid"], u["pid"]) not in K.USB_IDS and (u["vid"], u["pid"]) not in with_serial and not u.get("no_driver"):
+        # Every USB device is listed with its raw clues (design.md section 3: benchscout enumerates; the agent
+        # identifies). One with a serial port, described in the data (a debug probe), or that the OS has no driver
+        # for is bench hardware; any other (a keyboard, a camera, or a programmer benchscout has no data for) is
+        # listed apart, so the agent still sees it. Hubs carry nothing.
+        if "hub" in (u.get("name") or "").lower():
             continue
+        other = (u["vid"], u["pid"]) not in K.USB_IDS and (u["vid"], u["pid"]) not in with_serial and not u.get("no_driver")
         did = _dev_id(u["vid"], u["pid"], u.get("serial"), u.get("location"))
         raw_usb[did] = u
         b.add_device(
@@ -67,6 +69,7 @@ def build(io: Io) -> Bench:
                 serial=u.get("serial"),
                 location=u.get("location"),
                 no_driver=list(u.get("no_driver") or []),
+                other=other,
                 drivers={int(k): v for k, v in (u.get("drivers") or {}).items()},
                 evidence=[Evidence("usb-descriptor", f"{_hex(u['vid'])}:{_hex(u['pid'])} {u.get('vendor') or ''} {u.get('name') or ''}".strip())],
             )
@@ -97,6 +100,9 @@ def build(io: Io) -> Bench:
     names = {(u["vid"], u["pid"], u.get("serial")): _descriptor_name(u.get("vendor"), u.get("name")) for u in usb}
     for res in io.visa_resources():
         _add_visa(b, res, names)
+    for dev in b.devices.values():  # one that got a port after all (a VISA instrument on USB) is bench hardware
+        if dev.other and b.ports_of(dev.id):
+            dev.other = False
     return b
 
 

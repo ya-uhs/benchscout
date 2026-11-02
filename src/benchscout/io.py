@@ -22,7 +22,6 @@ REOPENS = 2
 REAPPEAR_S = 3.0
 AFTER_REOPEN_S = 2.0
 
-TOOLS = ("esptool.py", "esptool", "openocd", "openFPGALoader", "probe-rs", "sigrok-cli")
 
 
 class Io(Protocol):
@@ -210,7 +209,9 @@ class LiveIo:
     def tools(self) -> dict[str, str | None]:
         from .fetch import find
 
-        return {t: find(t) for t in TOOLS}  # also the ones shipped with benchscout or fetched before
+        from . import knowledge as K
+
+        return {t: find(t) for t in K.tool_names()}  # also the ones shipped with benchscout or fetched before
 
     def visa_query(self, resource: str, command: str) -> str | None:
         try:
@@ -485,8 +486,10 @@ class FixtureIo:
         return list(self.data.get("visa", {}).keys())
 
     def tools(self) -> dict[str, str | None]:
+        from . import knowledge as K
+
         have = self.data.get("tools", [])
-        return {t: (f"/fixture/bin/{t}" if t in have else None) for t in TOOLS}
+        return {t: (f"/fixture/bin/{t}" if t in have else None) for t in K.tool_names()}
 
     def visa_query(self, resource: str, command: str) -> str | None:
         self.calls.append(("visa_query", resource, command))

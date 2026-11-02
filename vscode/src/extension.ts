@@ -150,7 +150,8 @@ function refresh(): void {
   if (!view) return;
   // the webview gets the plain strings; the ones that take arguments are used here, on this side
   const plain = Object.fromEntries(Object.entries(s).filter(([, v]) => typeof v !== "function")) as PanelState["strings"];
-  const devices: DeviceRow[] = (bench ? deviceViews(bench) : []).map((d) => {
+  const views = bench ? deviceViews(bench) : [];
+  const devices: DeviceRow[] = views.filter((d) => !d.other).map((d) => {
     const known = d.things.map((t) => t.name).filter(Boolean).join(", ");
     const ports = bench!.ports.filter((p) => p.device_id === d.id).map((p) => p.id);
     return { id: d.id, label: d.name + (known ? ` — ${known}` : ""), selected: !!core?.selected.includes(d.id),
@@ -158,6 +159,7 @@ function refresh(): void {
              needsWinusb: d.needsWinusb.length > 0 };
   });
   const state: PanelState = { running: !!core?.running, agent: AGENTS[chosenAgent()]?.label ?? "", cards, devices,
+    others: views.filter((d) => d.other).length,
     allowAll: !!core?.running && !!core?.allowAll, strings: plain };
   view.webview.postMessage({ type: "state", state });
 }

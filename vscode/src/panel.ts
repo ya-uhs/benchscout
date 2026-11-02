@@ -21,6 +21,7 @@ export interface PanelState {
   cards: Card[];
   devices: DeviceRow[];
   allowAll: boolean; // the human allowed every DISRUPTIVE call for this session
+  others?: number; // USB devices benchscout has no data for (the agent sees them; listed here only as a count)
   strings: { [K in keyof Strings as Strings[K] extends (...a: never[]) => unknown ? never : K]: Strings[K] };  // the plain ones
 }
 
@@ -144,6 +145,7 @@ function render() {
         h += '<div class="dev"><span class="dot ' + (d.watched ? "" : d.selected ? "sel" : "off") + '"></span><span class="dname">' + esc(d.label) +
              '</span><span class="state muted">' + esc(st) + "</span>" + btn + "</div>";
       }
+      if (state.others) h += '<div class="hint muted">' + esc(s.otherDevices.replace("{n}", String(state.others))) + "</div>";
       h += '<div class="hint muted">' + esc(s.releaseHint) + "</div>";
     }
     h += "</div>";

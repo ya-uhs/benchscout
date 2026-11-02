@@ -17,12 +17,16 @@ NO_DRIVER = ("Windows has no driver for its USB interface(s) {ifaces}, so no pro
              "Tell the user; installing a driver is theirs to do")
 
 
+def _hex(n: int | None) -> str:
+    return f"{n:04x}" if n is not None else "????"
+
+
 def render(r: Recon) -> str:
     b = r.bench
     lines: list[str] = []
     for dev in b.devices.values():
         ports = b.ports_of(dev.id)
-        if not ports and not dev.no_driver:
+        if dev.other or not ports and not dev.no_driver:
             continue
         sn = f"  SN {dev.serial}" if dev.serial else ""
         lines.append(f"■ {dev.name}{sn}")
@@ -58,6 +62,13 @@ def render(r: Recon) -> str:
             lines.append(f"  {i}. [{pr.effect.upper()}] {pr.text}{need}")
             if pr.reason:
                 lines.append(f"     why: {pr.reason}")
+    others = [d for d in b.devices.values() if d.other]
+    if others:
+        lines.append("")
+        lines.append("Other USB devices (benchscout has no data for them; if one is a programmer or probe for a part on "
+                     "the bench, find its tool and propose it with bench_define_tool, giving this vid:pid in probes):")
+        for d in others:
+            lines.append(f"  - {d.name}  {_hex(d.vid)}:{_hex(d.pid)}" + (f"  SN {d.serial}" if d.serial else ""))
     missing = [k for k, v in b.tools.items() if not v]
     if missing:
         lines.append("")

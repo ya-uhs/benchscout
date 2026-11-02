@@ -49,6 +49,10 @@ load in `bench-session/`, which must look exactly like an end user's workspace.
   captured output (`bench_identify`). Otherwise it is a guess and shown apart from the name.
 - **Cautious by default**: deleting every shipped data file must only make benchscout stricter.
   Loosen only from observation plus a human's confirmation.
+- **Shipped tools are a convenience, never the only way** (the twin of the rule above): with no shipped tool
+  definitions, a programmer benchscout has no data for is still visible and the agent can bring its vendor's tool
+  (`bench_define_tool`, the human confirms) and use it through the same gate. Which tool handles a part is the
+  agent's knowledge, not benchscout's. Every non-hub USB device is listed with its raw clues; unknown ones apart.
 - **No device knowledge in code, and none to collect in data either** (section 5): shipped data is
   limited to safety rules by kind of action. Device names, log formats and board wiring belong to
   the agent or to memory.

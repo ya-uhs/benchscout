@@ -46,7 +46,8 @@ def broker(tmp_path):
 def test_a_proposed_tool_becomes_an_action_only_when_the_human_confirms(broker):
     events = []
     broker.on_event = events.append
-    assert not any(d.vid == 0x03FD for d in broker.bench.devices.values()), "an unknown cable is not bench hardware yet"
+    before = next(d for d in broker.bench.devices.values() if d.vid == 0x03FD)
+    assert before.other and not broker.bench.ports_of(before.id), "the agent sees the cable, but it is not bench hardware yet"
     res = broker.define_tool(PROGRAM, EVIDENCE, [{"vid": "0x03fd", "pid": "0x0013", "probe": "jtag"}])
     assert res["status"] == "waiting"
     card = next(e["proposal"] for e in events if e["event"] == "tool_proposed")
@@ -59,6 +60,7 @@ def test_a_proposed_tool_becomes_an_action_only_when_the_human_confirms(broker):
     written = (broker.state / "knowledge" / "agent-tools.toml").read_text(encoding="utf-8")
     assert 'name = "vendortool.program"' in written and "confirmed by the human" in written and EVIDENCE in written
     cable = next(d for d in broker.bench.devices.values() if d.vid == 0x03FD)
+    assert not cable.other
     port = next(p for p in broker.bench.ports_of(cable.id))
     assert port.kind == "jtag", "the cable it named is now a port the action can use"
     imp = classify(broker.bench, "vendortool.program", port.id, A.get("vendortool.program").normalize({"bitstream": "top.bit"}))
