@@ -44,6 +44,7 @@ class PortWatch:
         self._stop = threading.Event()
         self._partial = ""
         self._last_alert: dict[str, float] = {}
+        self._answers: list[tuple[int, int]] = []  # byte ranges (in _total) read as answers to sent commands
         self._thread: threading.Thread | None = None
         self.alive = False
         self.vanishes = 0  # how often the port vanished while watched (a reset, an unplug)
@@ -83,16 +84,41 @@ class PortWatch:
             data = bytes(self._recent[-new:]) if new else b""
         return data.decode("utf-8", errors="replace")
 
-    def send(self, data: bytes, seconds: float) -> str:
+    def send(self, data: bytes, seconds: float, until=None) -> tuple[str, str]:
+        """Write `data`; return (what arrived until a line matched `until` or `seconds` passed, what the device had
+        printed by itself before: the recent output less what answered earlier commands)."""
+        from .codec import ended
+
         with self._cond:
             start = self._total
+            before = self._unprompted(start)
         if not self._stream:
             raise PortGone("not open")
         self._stream.write(data)
-        time.sleep(seconds)
+        end = time.monotonic() + seconds
         with self._cond:
-            new = self._total - start
-            out = bytes(self._recent[-new:]) if new else b""
+            while True:
+                new = self._total - start
+                out = bytes(self._recent[-new:]) if new else b""
+                left = end - time.monotonic()
+                if left <= 0 or ended(out, until):
+                    break
+                self._cond.wait(min(left, 0.2))
+            self._answers = (self._answers + [(start, self._total)])[-50:]
+        return out.decode("utf-8", errors="replace"), before
+
+    def _unprompted(self, upto: int, nbytes: int = 16384) -> str:
+        """The device's own output before `upto` (the last `nbytes`), without the answers to earlier commands."""
+        base = self._total - len(self._recent)
+        pos = max(base, upto - nbytes)
+        out = bytearray()
+        for a, b in sorted(self._answers):
+            if b <= pos or a >= upto:
+                continue
+            out += self._recent[pos - base:max(pos, a) - base]
+            pos = max(pos, b)
+        if pos < upto:
+            out += self._recent[pos - base:upto - base]
         return out.decode("utf-8", errors="replace")
 
     def recent(self, nbytes: int = 4000) -> str:

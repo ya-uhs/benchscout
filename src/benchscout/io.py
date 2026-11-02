@@ -38,7 +38,8 @@ class Io(Protocol):
     def visa_query_raw(self, resource: str, command: str) -> bytes | None: ...  # the answer's bytes (a block, an image)
     def visa_write(self, resource: str, command: str) -> bool: ...  # True once sent
     def serial_listen(self, path: str, seconds: float, baud: int, exclusive: bool = False, lines: str = "low",
-                      send: bytes | None = None) -> str: ...  # `send` is written once, right after opening
+                      send: bytes | None = None, until: re.Pattern | None = None) -> str: ...
+    # `send` is written once, right after opening; a whole line matching `until` ends the read early (codec.py)
     def jtag_scan(self, select: list[str]) -> list[dict]: ...  # [{idcode, manufacturer, model}]; select: the probe's args
 
 
@@ -289,8 +290,8 @@ class LiveIo:
             return False
 
     def serial_listen(self, path: str, seconds: float, baud: int = 115200, exclusive: bool = False,
-                      lines: str = "low", send: bytes | None = None) -> str:
-        """Read for `seconds` (after writing `send`, if given). If the port vanishes (a native-USB chip resets on open and
+                      lines: str = "low", send: bytes | None = None, until: re.Pattern | None = None) -> str:
+        """Read for `seconds` (after writing `send`, if given), or until a whole line matches `until`. If the port vanishes (a native-USB chip resets on open and
         re-enumerates; real bench 2026-10-31), wait for it to come back and keep reading, so
         the boot log is caught. Reopening can reset the chip again, so at most REOPENS times."""
         import serial
@@ -319,9 +320,13 @@ class LiveIo:
             s.flush()
         reopens = 0
         try:
+            from .codec import ended
+
             while time.monotonic() < end:
                 try:
                     buf += s.read(4096)
+                    if ended(bytes(buf), until):
+                        break
                     continue
                 except (serial.SerialException, OSError) as e:
                     s.close()
@@ -608,7 +613,7 @@ class FixtureIo:
         return resource in self.data.get("visa", {})
 
     def serial_listen(self, path: str, seconds: float, baud: int = 115200, exclusive: bool = False,
-                      lines: str = "low", send: bytes | None = None) -> str:
+                      lines: str = "low", send: bytes | None = None, until: re.Pattern | None = None) -> str:
         if send is not None:  # what a device answers is recorded per sent text in "replies"
             self.calls.append(("serial_send", path, send))
             return self.data.get("replies", {}).get(path, {}).get(send.decode(errors="replace"), "")

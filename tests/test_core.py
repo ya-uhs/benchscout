@@ -393,7 +393,7 @@ def test_serial_send_writes_once_and_reads_the_answer(tmp_path):
     assert res["status"] == "approval_required"  # sending can make the firmware act
     br.decide(res["approval_id"], True)
     done = br.request("serial.send", VCP, {"data": "status"}, approval_id=res["approval_id"])
-    assert done["status"] == "done" and done["result"]["preview"].endswith("ok\n")
+    assert done["status"] == "done" and done["result"]["reply"].endswith("ok")
     assert ("serial_write", VCP, b"status\n") in io.calls  # through the watch, which holds the port
     assert br.request("serial.send", VCP, {"data": "?", "eol": "", "seconds": 0.1})["status"] == "approval_required"
 

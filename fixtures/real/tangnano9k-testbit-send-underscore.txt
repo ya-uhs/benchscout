@@ -1,0 +1,3 @@
+benchscout-testbit tangnano9k v1 baud=115200
+hb 0000025d
+hb 0000025e

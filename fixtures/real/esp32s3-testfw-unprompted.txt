@@ -1,0 +1,29 @@
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0xc (RTC_SW_CPU_RST),boot:0x28 (SPI_FAST_FLASH_BOOT)
+Saved PC:0x42021b4a
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce3808,len:0x4bc
+load:0x403c9700,len:0xbd8
+load:0x403cc700,len:0x2a0c
+entry 0x403c98d0
+testfw=benchscout-esp32s3 version=1 boot=5 reset=PANIC
+hb n=1 uptime_ms=1306
+hb n=2 uptime_ms=2306
+hb n=3 uptime_ms=3306
+hb n=4 uptime_ms=4306
+hb n=5 uptime_ms=5306
+hb n=6 uptime_ms=6306
+hb n=7 uptime_ms=7306
+hb n=8 uptime_ms=8306
+hb n=9 uptime_ms=9306
+hb n=10 uptime_ms=10306
+hb n=11 uptime_ms=11306
+hb n=12 uptime_ms=12306
+hb n=13 uptime_ms=13306
+hb n=14 uptime_ms=14306
+hb n=15 uptime_ms=15306
+hb n=16 uptime_ms=16306
+hb n=17 uptime_ms=17306
+hb n=18 uptime_ms=18306

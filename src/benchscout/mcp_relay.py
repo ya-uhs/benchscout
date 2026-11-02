@@ -173,7 +173,8 @@ Actions:
         observation (what it does), config (wiring, probe nets the human told you), interpretation
         (data {"pattern": regex, "alert": text}: a line that means trouble on this device; it will be
         watched for), command (a firmware command of one serial port, e.g. read from its `help`: data
-        {"command": "status", "effect": "safe"|"disruptive"|"dangerous", "eol": "\\r\\n" if not "\\n"}; text says
+        {"command": "status", "effect": "safe"|"disruptive"|"dangerous", "eol": "\\r\\n" if not "\\n", "until": regex for
+        the line that ends its answer, e.g. the shell's prompt or "^(ok|err)", read from its output}; text says
         what it does; then run it with bench_do serial.command {"name": "status"}; or a SCPI command of one
         instrument, by its header, as its programming manual describes it: data {"command": "MEAS:CURR?", "effect":
         ...}; scpi.query/scpi.write then treat that header so on this instrument). kind "safety" (data

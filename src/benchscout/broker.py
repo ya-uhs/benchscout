@@ -489,7 +489,14 @@ class Broker:
         effect = str(data.get("effect") or "disruptive").lower()
         if not cmd or "\n" in cmd or "\r" in cmd:
             return {"status": "rejected", "message": 'a command entry needs data {"command": "<what to send>", "effect": '
-                                                     '"safe"|"disruptive"|"dangerous", "eol": "\\n" (optional)}'}
+                                                     '"safe"|"disruptive"|"dangerous", "eol": "\\n" (optional), "until": '
+                                                     '"<regex for the line that ends its answer>" (optional)}'}
+        try:
+            from .codec import until_pattern
+
+            until_pattern(data.get("until"))
+        except ValueError as err:
+            return {"status": "rejected", "message": str(err)}
         if effect not in ("safe", "disruptive", "dangerous"):
             return {"status": "rejected", "message": "effect must be safe, disruptive or dangerous"}
         kinds = ("serial", *SCPI_PORTS)
@@ -515,7 +522,7 @@ class Broker:
         loosens = self._loosens(self.bench.ports[port], cmd, effect)
         e = Entry(kind="command", text=text, source=source, evidence=evidence, target=port,
                   status="pending" if loosens and not confirmed else "active",
-                  data={"command": cmd, "effect": effect, **({"eol": data["eol"]} if "eol" in data else {})})
+                  data={"command": cmd, "effect": effect, **{k: data[k] for k in ("eol", "until") if data.get(k) is not None}})
         e = self.memory.add(key, e, self._header(dev))
         self._load_command(self.bench, dev, e)
         self._memory_event(dev, e)
@@ -553,7 +560,8 @@ class Broker:
             return
         loosens = self._loosens(port, e.data["command"], effect)
         shared = dev.serial in K.SHARED_SERIALS  # another unit may answer to this serial: never loosen safety on it
-        port.commands[key] = {"effect": effect, "eol": e.data.get("eol", "\n"), "text": e.text, "loosens": loosens,
+        port.commands[key] = {"effect": effect, "eol": e.data.get("eol", "\n"), "until": e.data.get("until"), "text": e.text,
+                              "loosens": loosens,
                               "pending": e.status == "pending" or (loosens and shared)}
 
     def forget(self, key: str, entry_id: str) -> dict:
@@ -796,7 +804,10 @@ class Broker:
         try:
             spec = A.get(action)
             args = spec.normalize(args)
-        except A.ArgError as e:
+            from .codec import until_pattern
+
+            until_pattern(args.get("until"))  # a pattern that does not compile is said now, not after an approval
+        except (A.ArgError, ValueError) as e:
             return {"status": "invalid_args", "message": str(e)}
         if not spec.implemented:
             return {"status": "not_implemented", "message": f"{action} is classified but not implemented yet"}
@@ -894,9 +905,10 @@ class Broker:
         if spec.argv:
             return self._run_tool(spec, port, args)
         w = self.watches.get(port_id)
-        if action == "serial.command":  # a remembered command is sent like text, with its own line ending
+        if action == "serial.command":  # a remembered command is sent like text, with its own line ending and end line
             c = port.commands[args["name"]]
-            action, args = "serial.send", {"data": args["name"], "eol": c.get("eol", "\n"), "seconds": args["seconds"], "baud": args["baud"]}
+            action, args = "serial.send", {"data": args["name"], "eol": c.get("eol", "\n"), "seconds": args["seconds"],
+                                           "baud": args["baud"], **({"until": c["until"]} if c.get("until") else {})}
         if w and w.alive and action in ("serial.listen", "serial.send") and args["baud"] != w.baud:
             # a different rate was asked for: reopen the watch at it (the port is SAFE to open, it was watched)
             self._unwatch(port_id)
@@ -915,13 +927,27 @@ class Broker:
             self._remember(port_id, text)
             return dict(self._save_artifact(f"{port_id}-listen-{args['baud']}.txt", text, preview=text[-2000:]),
                         watched_log=str(w.log.resolve()))
-        if action == "serial.send" and w and w.alive:
-            text = w.send((args["data"] + args["eol"]).encode(), args["seconds"])
-            R.apply_log(self.bench.targets_via(port_id), text)
+        if action == "serial.send":
+            from .codec import split, until_pattern
+
+            until = until_pattern(args.get("until"))
+            data = (args["data"] + args["eol"]).encode()
+            if w and w.alive:
+                text, before = w.send(data, args["seconds"], until)
+            else:  # opened for this call: nothing it printed before to tell its own lines by
+                text, before = self.io.serial_listen(port.path, args["seconds"], args["baud"], True, port.open_lines,
+                                                     send=data, until=until), None
+            R.apply_log(self.bench.targets_via(port_id), text)  # the answer can name the part too
             self.recon.proposals = R.propose(self.bench)
             self._remember(port_id, text)
             safe_name = "".join(c if c.isalnum() else "_" for c in args["data"])[:24]
-            return self._save_artifact(f"{port_id}-send-{safe_name}.txt", text, preview=text[-2000:])
+            saved = self._save_artifact(f"{port_id}-send-{safe_name}.txt", text, preview="")
+            saved.pop("preview")
+            parts = split(text, args["data"], before, until)
+            for k in ("reply", "unsolicited"):
+                if len(parts.get(k, "")) > 2000:
+                    parts[k] = "…" + parts[k][-2000:]
+            return {**saved, **parts}
         if action == "serial.listen":
             text = R.listen_into(self.io, port.path, self.bench.targets_via(port_id), args["seconds"],
                                  exclusive=True, baud=args["baud"], lines=port.open_lines)
@@ -933,14 +959,6 @@ class Broker:
                 return {"error": "port disappeared while listening; the device likely reset or re-enumerated",
                         "detail": detail}
             return self._save_artifact(f"{port_id}-listen-{args['baud']}.txt", text, preview=text[-2000:])
-        if action == "serial.send":
-            text = self.io.serial_listen(port.path, args["seconds"], args["baud"], True, port.open_lines,
-                                         send=(args["data"] + args["eol"]).encode())
-            R.apply_log(self.bench.targets_via(port_id), text)  # the answer can name the part too
-            self.recon.proposals = R.propose(self.bench)
-            self._remember(port_id, text)
-            safe_name = "".join(c if c.isalnum() else "_" for c in args["data"])[:24]
-            return self._save_artifact(f"{port_id}-send-{safe_name}.txt", text, preview=text[-2000:])
         if action in ("scpi.query", "scpi.write"):
             # an answer is read only when the line asks for one: a command alone has none to wait for
             asks = any(h[0].endswith("?") for h in scpi_headers(args["command"]))

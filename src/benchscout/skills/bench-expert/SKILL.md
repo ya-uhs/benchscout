@@ -25,10 +25,16 @@ The human answers cards in the benchscout inbox; keep them few and clear.
   (kind interpretation, data {"pattern", "alert"}; benchscout will watch for them). Check
   `bench_recall` and the scan for what was learned before.
 - Firmware commands (from `help`, the source, the human): remember each with kind command,
-  data {"command", "effect", "eol"} and what it does, judging the effect by what it does to
+  data {"command", "effect", "eol", "until"} and what it does, judging the effect by what it does to
   the device (a status print is safe, a reboot is disruptive, an erase is dangerous). Then
   run them with `bench_do` `serial.command` {"name": ...}. One you call safe runs without
   asking once the human confirms it; use `serial.send` only for things not remembered.
+- `until` is a regex for the line that ends an answer: the shell's prompt, or the line its
+  answers end with ("^(ok|err)", "^(OK|ERROR)$"), as you see it in the device's output. With
+  it, reading stops there instead of after `seconds`. The result splits the answer (`reply`)
+  from lines shaped like what the device printed by itself before (`unsolicited`, e.g. its
+  heartbeat or logs). That split is a guess from its own output: if an answer line landed in
+  `unsolicited`, the saved file has everything in order.
 - Instruments (SCPI): benchscout judges by name only what the standard fixes (`*IDN?`,
   `SYST:ERR?` and the other status queries run without asking). Any other query or command
   asks, because what it does depends on the instrument; the human can allow that one command

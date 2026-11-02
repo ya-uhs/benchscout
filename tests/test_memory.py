@@ -167,7 +167,7 @@ def test_a_command_remembered_as_safe_waits_for_the_human_then_runs_without_aski
     br.decide_memory(key, r["id"], True)
     done = br.request("serial.command", "serial:usbserial-10", {"name": "status"})
     assert done["status"] == "done" and done["impact"]["effect"] == "safe"
-    assert "uptime 42s" in done["result"]["preview"], "sent with the remembered line ending"
+    assert "uptime 42s" in done["result"]["reply"], "sent with the remembered line ending"
     assert done["impact"]["code"] == "command_safe"
     assert "remembered as SAFE (confirmed by the human): prints uptime" in done["impact"]["reason"]
     br.end_session()
