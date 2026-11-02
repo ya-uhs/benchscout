@@ -96,6 +96,12 @@ class ApprovalBook:
         self._log("used", a)
         return "ok"
 
+    def asked_for(self, approval_id: str) -> tuple[str, str, str] | None:
+        """(action, port, args) the approval was asked for, or None if there is no such approval."""
+        with self._cond:
+            a = self._items.get(approval_id)
+            return (a.action, a.port, a.args) if a else None
+
     def covered(self, action: str, port: str, effect: Effect) -> bool:
         """A standing grant (R8) covers this DISRUPTIVE call."""
         if effect != Effect.DISRUPTIVE:

@@ -90,6 +90,8 @@ packaging/notices.py` (THIRD_PARTY_NOTICES.txt: every shipped component's licens
 so it stays testable with plain Node. Panel wording lives in `src/i18n.ts` (en/ja); clarity first.
 
 To look at the extension in a real VS Code (no computer use needed, the user's own VS Code untouched):
+`npm run e2e` (in `vscode/`, after `npm run package`) drives that same isolated VS Code through a scripted bench
+(`fixtures/bench_e2e.json`) end to end against the checkout's core; CI runs it on every OS.
 `cd vscode && npm run ui-check -- start` installs the newest .vsix into an isolated profile, opens the
 fixture bench and the inbox; then `shot <file.png>`, `cards`, `click "<button text>"`, `stop`. After
 Python changes, rebuild the frozen core before packaging, or the .vsix carries the old one. `--real`

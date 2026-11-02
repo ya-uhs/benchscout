@@ -11,7 +11,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 const here = resolve(import.meta.dirname, "..");
 const repo = resolve(here, "..");
@@ -21,7 +21,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 if (process.env.E2E_DOWNLOAD_VSCODE) {
   const { downloadAndUnzipVSCode, resolveCliArgsFromVSCodeExecutablePath } = await import("@vscode/test-electron");
-  const exe = await downloadAndUnzipVSCode({ version: "stable", cachePath: join(here, ".vscode-test") });
+  let exe = await downloadAndUnzipVSCode({ version: "stable", cachePath: join(here, ".vscode-test") });
+  // newer VS Code on macOS names its executable Code, not Electron (which test-electron still returns)
+  if (!existsSync(exe) && existsSync(join(dirname(exe), "Code"))) exe = join(dirname(exe), "Code");
   const [cli] = resolveCliArgsFromVSCodeExecutablePath(exe);
   process.env.VSCODE_BIN = exe;
   process.env.VSCODE_CLI = cli;

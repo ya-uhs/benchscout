@@ -111,6 +111,7 @@ async function start() {
   const p = spawn(BIN, ["--user-data-dir", join(profile, "ud"), "--extensions-dir", join(profile, "ext"),
     `--remote-debugging-port=${port}`, "--disable-workspace-trust", ...(process.env.VSCODE_ARGS ?? "").split(" ").filter(Boolean), ...(flag("--locale") ? ["--locale", flag("--locale")] : []),
     "--new-window", ws], { env, detached: true, stdio: "ignore" });
+  p.on("error", (e) => { console.error(`could not start VS Code (${BIN}): ${e.message}`); process.exit(1); });
   p.unref();
   writeFileSync(STATE, JSON.stringify({ port, pid: p.pid, profile, ws, vsix, real }));
   for (let i = 0; ; i++) {

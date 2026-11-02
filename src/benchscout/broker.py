@@ -652,6 +652,15 @@ class Broker:
                 return self._run(impact, args)
             if approval_id is None:
                 approval_id = self.approvals.open(impact, key, fetch=fetch).id
+            else:
+                # an id for another call: say so now, not after waiting on a card that shows something else
+                asked = self.approvals.asked_for(approval_id)
+                if asked is None:
+                    return {"status": "unknown_approval", "approval_id": approval_id}
+                if asked != (action, port_id, key):
+                    return {"status": "approval_mismatch", "approval_id": approval_id,
+                            "message": f"{approval_id} was asked for {asked[0]} on {asked[1]} with {asked[2]}; call without "
+                                       "approval_id to ask for this one"}
 
         import time
 

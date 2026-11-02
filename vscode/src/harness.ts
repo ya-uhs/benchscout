@@ -179,7 +179,9 @@ export class Harness extends EventEmitter {
     if (a.effect === "disruptive") options.push({ id: "session", label: this.s.allowSession });
     options.push({ id: "deny", label: this.s.deny });
     this.add({
-      kind: "confirm", title: this.s.actions[a.action] ?? a.action, body: this.reason(a) + fetch,
+      // what the session option lets run later, said before the human picks it
+      kind: "confirm", title: this.s.actions[a.action] ?? a.action,
+      body: this.reason(a) + fetch + (a.effect === "disruptive" ? `\n${this.s.sessionCovers}` : ""),
       detail: `${a.port} · ${describeArgs(a.args)}${a.impact.affected_ports.length ? ` · ${this.s.alsoAffects}: ${a.impact.affected_ports.join(", ")}` : ""}`,
       effect: a.effect, options, freeText: false,
     }, (ans) => this.core.decide(a.id, ans.option !== "deny", ans.option === "session" ? "session" : "once").catch(() => undefined),
