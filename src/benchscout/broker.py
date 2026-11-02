@@ -128,7 +128,7 @@ class Broker:
                 if tid not in self.last.bench.targets:
                     continue
                 seen_texts = []
-                for kind in ("identity", "alert", "latest"):
+                for kind in ("alert", "latest"):
                     if kind in kept and kept[kind][1] not in seen_texts:
                         seen_texts.append(kept[kind][1])
                         R.apply_log([self.last.bench.targets[tid]], kept[kind][1], seen=kept[kind][0])
@@ -1026,8 +1026,6 @@ class Broker:
         for t in self.bench.targets_via(port_id):
             kept = self.observed.setdefault(t.id, {})
             kept["latest"] = stamp
-            if c["exact"]:
-                kept["identity"] = stamp
             if c["alerts"]:
                 kept["alert"] = stamp
 

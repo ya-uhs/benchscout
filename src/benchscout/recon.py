@@ -315,7 +315,6 @@ def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] 
                         info = K.parse_idn(idn)
                         t.name = f"{info['maker'].split()[0].title()} {info['model']}"
                         t.confidence = Confidence.IDENTIFIED
-                        t.facts.append(info["kind"])
                         t.evidence.append(Evidence("scpi *IDN?", idn))
                     else:
                         t.facts.append("no answer to *IDN?")
@@ -332,15 +331,14 @@ def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] 
                 r.ran.append(f"jtag.scan {port.id}")
                 for found in io.jtag_scan(port.tools["openFPGALoader"]):
                     code = found["idcode"]
-                    part = K.IDCODES.get(code & 0x0FFFFFFF)
-                    # Prefer the tool's own IDCODE database; fall back to ours.
-                    name = " ".join(x for x in (found.get("manufacturer"), found.get("model")) if x) or (part or {}).get("name")
-                    src = "openFPGALoader database" if found.get("model") else ("benchscout table" if part else "not in any table")
+                    # the tool's own IDCODE database names it; benchscout keeps no table (design.md section 5)
+                    name = " ".join(x for x in (found.get("manufacturer"), found.get("model")) if x)
+                    src = "openFPGALoader database" if found.get("model") else "not in openFPGALoader's database"
                     for t in targets:
                         if name and t.kind in ("fpga", "mcu", "unknown"):
                             t.name, t.confidence = name, Confidence.IDENTIFIED
                             if t.kind == "unknown":
-                                t.kind = (part or {}).get("kind", "fpga")
+                                t.kind = "fpga"
                         t.evidence.append(Evidence("jtag idcode", f"0x{code:08X} ({src})"))
 
     r.proposals = propose(b)
@@ -376,14 +374,6 @@ def apply_log(t_list: list[Target], text: str, seen: str | None = None) -> None:
             if not seen:
                 t.facts.append("silent for the listen window")
             continue
-        if c["exact"]:
-            t.name, t.confidence = c["exact"], Confidence.IDENTIFIED
-            t.kind = "mcu" if t.kind == "unknown" else t.kind
-            t.evidence.append(Evidence("boot-log", f"named {c['exact']} by a log pattern in the knowledge files{when}"))
-        elif c["family"] and t.confidence == Confidence.UNKNOWN:
-            t.confidence = Confidence.FAMILY
-            t.facts.append(c["family"])
-        t.facts += [f + when for f in c["facts"]]
         t.facts += [f"ALERT: {a}{when}" for a in c["alerts"]]
         t.facts += [f"{'earlier log' if seen else 'log'}: {line}" for line in c["sample"]]
 

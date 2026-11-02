@@ -163,3 +163,37 @@ def test_crashes_on_many_platforms_raise_an_alert_and_ordinary_lines_do_not():
     assert not missed, f"no alert for: {missed}"
     noisy = {line: K.classify_log(line)["alerts"] for line in CALM if K.classify_log(line)["alerts"]}
     assert not noisy, f"false alarms: {noisy}"
+
+
+def test_a_knowledge_file_cannot_name_a_part(tmp_path):
+    """Review 2026-11-02: tables from before the 2026-10-31 revision were still read (a log pattern's `exact` or
+    `family`, an `[[idcode]]` or `[[instrument]]` table). Nothing shipped used them, but an agent that can write a
+    knowledge file could have named a part without its words being checked (bench_identify). Now they are ignored:
+    names come from the device, a tool's own database, a checked quote, or the person."""
+    ws = tmp_path / "ws"
+    k = ws / ".benchscout" / "knowledge"
+    k.mkdir(parents=True)
+    (k / "names.toml").write_text('''
+[[log]]
+pattern = "sensor ok"
+exact = "STM32F407"
+family = "STM32"
+fact = "it is an STM32"
+
+[[idcode]]
+code = 0x0100481B
+name = "Some FPGA"
+
+[[instrument]]
+model = "SPD.*"
+kind = "power supply"
+''', encoding="utf-8")
+    try:
+        K.load(ws)
+        c = K.classify_log("[I] sensor ok\n")
+        assert c == {"alerts": [], "sample": ["[I] sensor ok"]}
+        r = recon.run(FixtureIo(FIXTURE))
+        assert not any(t.name == "STM32F407" or "STM32" in " ".join(t.facts) for t in r.bench.targets.values())
+        assert not any("power supply" in " ".join(t.facts) for t in r.bench.targets.values())
+    finally:
+        K.load()

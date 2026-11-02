@@ -28,9 +28,7 @@ MULTI_CHANNEL_BOARDS: list[dict] = []
 # tool -> how it opens a USB interface itself ("libusb"): on Windows that interface needs a WinUSB-class driver
 USB_ACCESS: dict[str, str] = {}
 SHARED_SERIALS: set[str] = set()
-IDCODES: dict[int, dict] = {}
 LOG_SIGNATURES: list[tuple[re.Pattern, dict]] = []
-INSTRUMENT_KINDS: list[tuple[re.Pattern, str]] = []
 TOOLS: dict[str, dict] = {}  # external-tool actions defined as data (design.md section 4)
 GETS: dict[str, dict] = {}  # executable -> pinned official downloads per platform (fetch.py)
 SOURCES: list[Path] = []  # files actually read, for `benchscout knowledge` / debugging
@@ -56,9 +54,7 @@ def load(workspace: Path | None = None) -> None:
     usb: dict[tuple[int, int], dict] = {}
     boards: list[dict] = []
     shared: set[str] = set()
-    idcodes: dict[int, dict] = {}
     logs: list[tuple[re.Pattern, dict]] = []
-    instruments: list[tuple[re.Pattern, str]] = []
     tools: dict[str, dict] = {}
     access: dict[str, str] = {}
     gets: dict[str, dict] = {}
@@ -75,8 +71,6 @@ def load(workspace: Path | None = None) -> None:
                 usb[key] = {**usb.get(key, {}), **{k: v for k, v in e.items() if k not in ("vid", "pid")}}
             for e in reversed(data.get("board", [])):  # later layers are tried first
                 boards.insert(0, _board(e))
-            for e in data.get("idcode", []):
-                idcodes[int(e["code"]) & 0x0FFFFFFF] = {"name": e["name"], "kind": e.get("kind", "fpga")}
             for e in data.get("log", []):
                 flags = (re.I if e.get("ignore_case") else 0) | (re.M if e.get("multiline") else 0)
                 logs.append((re.compile(e["pattern"], flags), e))
@@ -85,11 +79,9 @@ def load(workspace: Path | None = None) -> None:
             access.update(data.get("usb_access", {}))
             for exe, g in data.get("get", {}).items():
                 gets[exe] = g  # a later layer pins its own version
-            for e in reversed(data.get("instrument", [])):
-                instruments.insert(0, (re.compile(e["model"], re.I), e["kind"]))
-    global USB_IDS, MULTI_CHANNEL_BOARDS, SHARED_SERIALS, IDCODES, LOG_SIGNATURES, INSTRUMENT_KINDS, SOURCES, TOOLS, GETS, USB_ACCESS
+    global USB_IDS, MULTI_CHANNEL_BOARDS, SHARED_SERIALS, LOG_SIGNATURES, SOURCES, TOOLS, GETS, USB_ACCESS
     USB_IDS, MULTI_CHANNEL_BOARDS, SHARED_SERIALS = usb, boards, shared
-    IDCODES, LOG_SIGNATURES, INSTRUMENT_KINDS, SOURCES, TOOLS, GETS = idcodes, logs, instruments, sources, tools, gets
+    LOG_SIGNATURES, SOURCES, TOOLS, GETS = logs, sources, tools, gets
     USB_ACCESS = access
 
 
@@ -109,41 +101,25 @@ def _fill(template: str, m: re.Match) -> str:
     return template.format(**{k: (v or "").strip() for k, v in m.groupdict().items()})
 
 
-def _exact_name(e: dict, m: re.Match) -> str:
-    name = _fill(e["exact"], m)
-    if e.get("upper"):
-        name = name.upper()
-    for a, b in e.get("replace", []):
-        name = name.replace(a, b)
-    return name.strip(e.get("strip", "")) if e.get("strip") else name
-
-
 def classify_log(text: str) -> dict:
-    """Facts from passively observed console output. Never invents a part name: only an
-    `exact` entry (a banner that proves the part) names one."""
-    out: dict = {"exact": None, "family": None, "facts": [], "alerts": [], "sample": []}
+    """What deterministic noticing takes from console output: the alerts a log entry raises (a crash marker) and the
+    first lines. Nothing else: naming a part or reading a log's meaning is the agent's (design.md section 3), and a
+    name needs the device's own words, checked by bench_identify. A knowledge file's `exact`, `family` or `fact`
+    (from before the 2026-10-31 revision) are ignored, so a file cannot name a part without that check."""
+    alerts: set[str] = set()
     for pat, e in LOG_SIGNATURES:
         for m in pat.finditer(text):
-            if e.get("exact"):
-                out["exact"] = _exact_name(e, m)
-            if e.get("family"):
-                out["family"] = _fill(e["family"], m)
-            if e.get("fact"):
-                out["facts"].append(_fill(e["fact"], m))
             if e.get("alert"):
-                out["alerts"].append(_fill(e["alert"], m))
+                alerts.add(_fill(e["alert"], m))
     lines = [l for l in text.splitlines() if l.strip()]
-    out["sample"] = lines[:3]
-    out["facts"] = sorted(set(out["facts"]))
-    out["alerts"] = sorted(set(out["alerts"]))
-    return out
+    return {"alerts": sorted(alerts), "sample": lines[:3]}
 
 
 def parse_idn(idn: str) -> dict:
+    """IEEE 488.2 *IDN?: maker, model, serial, firmware, comma-separated. Only what the instrument says."""
     parts = [p.strip() for p in idn.split(",")]
     maker, model = (parts + ["", ""])[:2]
-    kind = next((k for pat, k in INSTRUMENT_KINDS if pat.match(model)), "instrument")
-    return {"maker": maker, "model": model, "kind": kind}
+    return {"maker": maker, "model": model}
 
 
 load()
