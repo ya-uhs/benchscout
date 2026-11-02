@@ -28,6 +28,9 @@ def render(r: Recon) -> str:
         lines.append(f"■ {dev.name}{sn}")
         if dev.no_driver:
             lines.append(f"  · {NO_DRIVER.format(ifaces=', '.join(map(str, dev.no_driver)))}")
+        if dev.needs_winusb:
+            lines.append(f"  · Windows: interface(s) {', '.join(map(str, dev.needs_winusb))} need the WinUSB driver for the "
+                         "tool that opens them through libusb (see the target below)")
         targets: dict[str, list] = {}
         for p in ports:
             for link in b.links_of(p.id):

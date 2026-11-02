@@ -66,3 +66,9 @@ linux-x64 = { url = "https://github.com/espressif/esptool/releases/download/v5.6
 linux-arm64 = { url = "https://github.com/espressif/esptool/releases/download/v5.6.0/esptool-v5.6.0-linux-aarch64.tar.gz", sha256 = "7723120429394b4d6d974d694e5cf378e00259381a7f8856c2c88492041b9f59", exe = "esptool-linux-aarch64/esptool", size_mb = 71 }
 linux-armhf = { url = "https://github.com/espressif/esptool/releases/download/v5.6.0/esptool-v5.6.0-linux-armv7.tar.gz", sha256 = "65e2f91fba2e79a75243454ded44da57532c74e242e17f9890aa7fe6cd588ee4", exe = "esptool-linux-armv7/esptool", size_mb = 62 }
 win32-x64 = { url = "https://github.com/espressif/esptool/releases/download/v5.6.0/esptool-v5.6.0-windows-amd64.zip", sha256 = "d55a96fbeb97fd4cb05bd93f201e5c8f6518b7bfcde2fc6966fd0190fd891629", exe = "esptool-windows-amd64/esptool.exe", size_mb = 65 }
+
+# How a tool opens a USB interface itself. "libusb": through libusb, which on Windows can open only an interface
+# whose driver is WinUSB (or libusbK, libusb0); with the maker's serial driver there (a COM port) it cannot, and
+# benchscout says which interface needs WinUSB (Zadig installs it). Says nothing on macOS and Linux.
+[usb_access]
+openFPGALoader = "libusb"

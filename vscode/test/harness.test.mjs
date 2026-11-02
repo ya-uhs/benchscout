@@ -333,3 +333,20 @@ test("a tool's first-use download is one card, updated as it goes and closed whe
   assert.equal(h.cards[0].title, "esptool 5.6.0 をダウンロードしました");
   assert.equal(h.cards[0].status, "closed");
 });
+
+test("Windows: a device that needs a driver gets one card saying which interface and how, closed once it is right", () => {
+  const core = new CoreClient("/nonexistent", tmpdir());
+  const h = new Harness(core, () => { throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 1 });
+  const bench = (dev) => ({ devices: [{ id: "usb:0403:6010:x", name: "SIPEED JTAG Debugger", evidence: [], ...dev }], ports: [], targets: [], links: [] });
+  core.emit("scan", bench({ no_driver: [0, 1] }), []);
+  const card = () => h.cards.find((c) => c.id === "driver:usb:0403:6010:x");
+  assert.match(card().title, /SIPEED JTAG Debugger: Windows のドライバの入れ替えが必要です/);
+  assert.match(card().body, /インターフェース 0, 1 に Windows のドライバが無い/);
+  assert.match(h.cards.find((c) => c.kind === "question").body, /SIPEED JTAG Debugger \(Windows のドライバがありません\)/);
+  core.emit("scan", bench({ needs_winusb: [0] }), []);  // the maker's driver came; openFPGALoader still needs WinUSB
+  assert.equal(h.cards.filter((c) => c.id.startsWith("driver:")).length, 1);
+  assert.match(card().body, /openFPGALoader はインターフェース 0 を libusb で開く/);
+  assert.match(card().body, /Zadig/);
+  core.emit("scan", bench({}), []);  // after Zadig and a rescan
+  assert.equal(card().status, "closed");
+});

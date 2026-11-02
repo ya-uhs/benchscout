@@ -47,8 +47,9 @@ def build(io: Io) -> Bench:
     raw_usb: dict[str, dict] = {}
     ports = io.serial_ports()
     with_serial = {(s["vid"], s["pid"]) for s in ports}
+    usb = io.usb_devices()  # once: on Windows it is a PowerShell query and a read through every hub
 
-    for u in io.usb_devices():
+    for u in usb:
         # A USB device is bench hardware if it has a serial port or its interface is described in the
         # data (a debug probe). Keyboards, hubs, audio have neither. Its name is what it calls itself.
         # One the OS has no driver for is shown too: someone plugged it in to use it, and must hear what it lacks.
@@ -66,6 +67,7 @@ def build(io: Io) -> Bench:
                 serial=u.get("serial"),
                 location=u.get("location"),
                 no_driver=list(u.get("no_driver") or []),
+                drivers={int(k): v for k, v in (u.get("drivers") or {}).items()},
                 evidence=[Evidence("usb-descriptor", f"{_hex(u['vid'])}:{_hex(u['pid'])} {u.get('vendor') or ''} {u.get('name') or ''}".strip())],
             )
         )
@@ -91,10 +93,32 @@ def build(io: Io) -> Bench:
         serials = sorted(by_dev.get(did, []), key=lambda s: (s.get("channel", 99), s["device"]))
         _apply_usb_knowledge(b, dev, info, serials, raw_usb.get(did, {"serial": dev.serial}))
 
-    names = {(u["vid"], u["pid"], u.get("serial")): _descriptor_name(u.get("vendor"), u.get("name")) for u in io.usb_devices()}
+    _libusb_interfaces(b)
+    names = {(u["vid"], u["pid"], u.get("serial")): _descriptor_name(u.get("vendor"), u.get("name")) for u in usb}
     for res in io.visa_resources():
         _add_visa(b, res, names)
     return b
+
+
+WINUSB_CLASS = {"winusb", "libusbk", "libusb0"}  # drivers libusb can open on Windows
+
+
+def _libusb_interfaces(b: Bench) -> None:
+    """Windows: a port a libusb tool opens (tools.toml usb_access) whose interface has another driver (the maker's
+    serial driver, a COM port) cannot be opened by that tool: say which interface needs WinUSB."""
+    for p in b.ports.values():
+        dev = b.devices.get(p.device_id)
+        if not dev or not dev.drivers or not p.tools:
+            continue
+        iface = p.interface or 0
+        driver = dev.drivers.get(iface)
+        if driver and driver.lower() not in WINUSB_CLASS and any(K.USB_ACCESS.get(t) == "libusb" for t in p.tools):
+            if iface not in dev.needs_winusb:
+                dev.needs_winusb.append(iface)
+            for t in b.targets_via(p.id):
+                t.facts.append(f"Windows: interface {iface} has the {driver} driver; {', '.join(sorted(p.tools))} opens it "
+                               "through libusb, which needs WinUSB there (Zadig installs it; that interface then stops "
+                               "being a COM port). Tell the user; replacing a driver is theirs to do")
 
 
 def _descriptor_name(vendor: str | None, product: str | None) -> str:

@@ -59,7 +59,7 @@ export class Harness extends EventEmitter {
   constructor(private core: CoreClient, private makeDriver: () => AgentDriver, private s: Strings,
               private opts: HarnessOptions = { language: "English", maxTurnsPerHour: 20 }) {
     super();
-    core.on("scan", (b: Bench) => { if (!this.askedFirst) { this.askedFirst = true; this.firstQuestion(b); } });
+    core.on("scan", (b: Bench) => { if (!this.askedFirst) { this.askedFirst = true; this.firstQuestion(b); } this.driverCards(b); });
     core.on("approvalRequested", (a: Approval) => this.approvalCard(a));
     core.on("approvalDecided", (a: Approval) => this.closeRef(`approval:${a.id}`, a.status));
     core.on("allowAll", () => this.changed());  // the inbox shows it, with a way to turn it off
@@ -151,7 +151,8 @@ export class Harness extends EventEmitter {
     if (!views.length) return;
     const lines = views.map((d) => {
       const known = d.things.map((t) => t.name || (t.status === "family" ? t.facts[0] : "")).filter(Boolean).join(", ");
-      return `• ${d.name}${known ? ` — ${known}` : ""}${d.noDriver.length ? ` (${this.s.stateNoDriver})` : ""}${d.alert ? " ⚠" : ""}`;
+      const driver = d.noDriver.length ? this.s.stateNoDriver : d.needsWinusb.length ? this.s.stateNeedsWinusb : "";
+      return `• ${d.name}${known ? ` — ${known}` : ""}${driver ? ` (${driver})` : ""}${d.alert ? " ⚠" : ""}`;
     });
     const ordered = [...views].sort((a, b) => Number(b.alert) - Number(a.alert));
     const options: CardOption[] = ordered.map((d, i) => ({ id: d.id, label: this.s.lookAt(d.name), primary: i === 0 }));
@@ -194,6 +195,23 @@ export class Harness extends EventEmitter {
     }, (ans) => this.core.decide(a.id, ans.option !== "deny",
       ans.option === "session" || ans.option === "always" || ans.option === "all" ? ans.option : "once").catch(() => undefined),
     `approval:${a.id}`);
+  }
+
+  /** Windows: a device that needs a driver installed or replaced gets one card saying which interface and how;
+   *  it closes by itself once a rescan finds the driver right. */
+  private driverCards(b: Bench): void {
+    for (const d of deviceViews(b)) {
+      const id = `driver:${d.id}`;
+      const old = this.cards.find((c) => c.id === id);
+      if (!d.noDriver.length && !d.needsWinusb.length) {
+        if (old && old.status !== "closed") this.closeRef(id, "");
+        continue;
+      }
+      const body = this.s.driverBody(d.noDriver.join(", "), d.needsWinusb.join(", "));
+      if (old && old.body === body && old.status !== "closed") continue;
+      if (old) this.cards = this.cards.filter((c) => c !== old);
+      this.add({ kind: "report", title: this.s.driverTitle(d.name), body, options: [], freeText: false }, undefined, id);
+    }
   }
 
   /** One card per tool download, updated in place as it goes, like VS Code's own download notices. */

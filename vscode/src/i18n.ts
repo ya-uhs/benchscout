@@ -31,6 +31,13 @@ const en = {
   stateSelected: "in use by benchscout",
   stateFree: "not used",
   stateNoDriver: "Windows has no driver for it",
+  stateNeedsWinusb: "needs the WinUSB driver",
+  driverTitle: (name: string) => `${name}: Windows needs a driver change`,
+  driverBody: (none: string, winusb: string) =>
+    (none ? `Windows has no driver for its USB interface ${none}, so nothing can open it. For a serial port, install the maker's driver (Windows Update often does). ` : "")
+    + (winusb ? `openFPGALoader reaches interface ${winusb} through libusb, which on Windows needs the WinUSB driver there. ` : "")
+    + "With Zadig (https://zadig.akeo.ie): Options › List All Devices, pick this device's interface, choose WinUSB, Replace Driver. "
+    + "An interface switched to WinUSB no longer appears as a COM port. Then press Rescan.",
   releaseHint: "Release a device to use it with your own tools (flashing, a terminal); Use takes it back.",
   inUse: "In use in another window",
   notifyShow: "Show",
@@ -136,6 +143,13 @@ const ja: typeof en = {
   stateSelected: "benchscout が使用中",
   stateFree: "使っていない",
   stateNoDriver: "Windows のドライバがありません",
+  stateNeedsWinusb: "WinUSB ドライバが必要",
+  driverTitle: (name: string) => `${name}: Windows のドライバの入れ替えが必要です`,
+  driverBody: (none: string, winusb: string) =>
+    (none ? `USB のインターフェース ${none} に Windows のドライバが無いので、どのプログラムも開けません。シリアルポートとして使うなら、メーカーのドライバを入れてください(多くは Windows Update が入れます)。` : "")
+    + (winusb ? `openFPGALoader はインターフェース ${winusb} を libusb で開くので、Windows ではそこに WinUSB ドライバが要ります。` : "")
+    + "Zadig(https://zadig.akeo.ie)で:Options › List All Devices → この機器のインターフェースを選ぶ → WinUSB → Replace Driver。"
+    + "WinUSB に替えたインターフェースは COM ポートとしては見えなくなります。終わったら再スキャンを押してください。",
   releaseHint: "自分のツール(書き込みやターミナル)で使うときは「手放す」。戻すときは「使う」。",
   inUse: "別のウィンドウで使用中",
   notifyShow: "詳しく見る",

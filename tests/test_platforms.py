@@ -154,3 +154,37 @@ def test_a_device_windows_has_no_driver_for_is_shown_with_what_it_needs(tmp_path
     text = report.render(recon.Recon(b))
     assert "■ JTAG Debugger  SN FactoryAIOT Pro" in text and "no driver for its USB interface(s) 0, 1" in text
     assert "■ Espressif USB JTAG/serial debug unit" in text
+
+
+def _tang_nano_on_windows(jtag_driver):
+    """A Tang Nano 9K on an ordinary Windows PC: Windows Update gave both FT2232 interfaces FTDI's serial driver
+    (two COM ports); someone may have put WinUSB on interface 0 for openFPGALoader (Zadig)."""
+    pnp = [{"id": "USB\\VID_0403&PID_6010\\FACTORYAIOT_PRO", "status": "OK", "service": "usbccgp", "bus": None, "parent": None},
+           {"id": "USB\\VID_0403&PID_6010&MI_00\\6&1&0&0000", "status": "OK", "service": jtag_driver, "bus": "JTAG Debugger",
+            "parent": "USB\\VID_0403&PID_6010\\FactoryAIOT_Pro"},
+           {"id": "USB\\VID_0403&PID_6010&MI_01\\6&1&0&0001", "status": "OK", "service": "FTDIBUS", "bus": "JTAG Debugger",
+            "parent": "USB\\VID_0403&PID_6010\\FactoryAIOT_Pro"}]
+    strings = [{"vid": 0x0403, "pid": 0x6010, "manufacturer": "SIPEED", "product": "JTAG Debugger", "serial": "FactoryAIOT Pro"}]
+    return [dict(d, vid=f"0x{d['vid']:04x}", pid=f"0x{d['pid']:04x}") for d in parse_windows_pnp(json.dumps(pnp), strings)]
+
+
+def test_a_libusb_tool_behind_a_serial_driver_is_named_with_the_interface_that_needs_winusb(tmp_path):
+    from benchscout import report
+
+    serial = [{"device": "COM5", "vid": "0x0403", "pid": "0x6010", "serial_number": "FactoryAIOT Pro", "channel": 1,
+               "description": "USB Serial Port (COM5)"}]
+    b = _bench(tmp_path, _tang_nano_on_windows("FTDIBUS"), serial)
+    dev = next(d for d in b.devices.values() if d.vid == 0x0403)
+    assert dev.drivers == {0: "FTDIBUS", 1: "FTDIBUS"} and dev.needs_winusb == [0]
+    jtag = next(p for p in b.ports.values() if p.kind == "jtag")
+    assert any("interface 0 has the FTDIBUS driver" in f and "WinUSB" in f for t in b.targets_via(jtag.id) for f in t.facts)
+    assert "need the WinUSB driver" in report.render(recon.Recon(b))
+
+    b2 = _bench(tmp_path, _tang_nano_on_windows("WinUSB"), serial)  # after Zadig: nothing to say
+    dev2 = next(d for d in b2.devices.values() if d.vid == 0x0403)
+    assert dev2.needs_winusb == [] and dev2.no_driver == []
+
+
+def test_nothing_is_said_about_drivers_off_windows(tmp_path):
+    b = recon.build(FixtureIo(FIXTURE))
+    assert all(not d.drivers and not d.needs_winusb and not d.no_driver for d in b.devices.values())

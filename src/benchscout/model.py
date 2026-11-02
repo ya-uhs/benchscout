@@ -37,6 +37,10 @@ class Device:
     evidence: list[Evidence] = field(default_factory=list)
     # interfaces the OS has no working driver for (Windows): nothing can open them until one is installed
     no_driver: list[int] = field(default_factory=list)
+    # Windows: each interface's driver (service name), and the interfaces a libusb tool must open but cannot
+    # until their driver is replaced with WinUSB
+    drivers: dict[int, str] = field(default_factory=dict)
+    needs_winusb: list[int] = field(default_factory=list)
 
 
 @dataclass

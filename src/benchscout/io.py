@@ -315,6 +315,7 @@ WINDOWS_PNP_QUERY = (  # UTF-8 out: Windows PowerShell would print a device's na
     "if ($all.Count) { Get-PnpDeviceProperty -InstanceId $all.InstanceId -KeyName DEVPKEY_Device_BusReportedDeviceDesc, "
     "DEVPKEY_Device_Parent -ErrorAction SilentlyContinue | ForEach-Object { $prop[\"$($_.InstanceId)|$($_.KeyName)\"] = $_.Data } }; "
     "$all | ForEach-Object { [pscustomobject]@{ id = $_.InstanceId; status = [string]$_.Status; problem = [string]$_.Problem; "
+    "service = [string]$_.Service; "
     "bus = $prop[\"$($_.InstanceId)|DEVPKEY_Device_BusReportedDeviceDesc\"]; "
     "parent = $prop[\"$($_.InstanceId)|DEVPKEY_Device_Parent\"] } } | ConvertTo-Json -Compress"
 )
@@ -356,8 +357,12 @@ def parse_windows_pnp(text: str, strings: list[dict] | None = None) -> list[dict
         bus = e.get("bus") or next((ce.get("bus") for _, ce in kids if ce.get("bus")), None)
         bad = lambda x: (x.get("status") or "OK").upper() != "OK"  # noqa: E731
         no_driver = sorted(int(cm.group(3), 16) for cm, ce in kids if bad(ce)) or ([0] if not kids and bad(e) else [])
+        # which driver each interface has (its service: usbser, FTDIBUS, WinUSB ...), for tools that need a certain kind
+        drivers = {int(cm.group(3), 16): ce["service"] for cm, ce in kids if ce.get("service") and not bad(ce)} \
+            or ({0: e["service"]} if not kids and e.get("service") and not bad(e) else {})
         out.append({"name": desc.get("product") or bus, "vendor": desc.get("manufacturer"), "vid": vid, "pid": pid,
-                    "serial": desc.get("serial") or serial, "location": None if serial else inst, "no_driver": no_driver})
+                    "serial": desc.get("serial") or serial, "location": None if serial else inst, "no_driver": no_driver,
+                    "drivers": drivers})
     return out
 
 

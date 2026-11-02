@@ -25,6 +25,8 @@ SHIPPED = Path(__file__).parent / "packs" / "bench" / "data"
 # Filled by load(); module-level so recon can use K.USB_IDS and friends.
 USB_IDS: dict[tuple[int, int], dict] = {}
 MULTI_CHANNEL_BOARDS: list[dict] = []
+# tool -> how it opens a USB interface itself ("libusb"): on Windows that interface needs a WinUSB-class driver
+USB_ACCESS: dict[str, str] = {}
 SHARED_SERIALS: set[str] = set()
 IDCODES: dict[int, dict] = {}
 LOG_SIGNATURES: list[tuple[re.Pattern, dict]] = []
@@ -58,6 +60,7 @@ def load(workspace: Path | None = None) -> None:
     logs: list[tuple[re.Pattern, dict]] = []
     instruments: list[tuple[re.Pattern, str]] = []
     tools: dict[str, dict] = {}
+    access: dict[str, str] = {}
     gets: dict[str, dict] = {}
     sources: list[Path] = []
     for d in layers(workspace):
@@ -79,13 +82,15 @@ def load(workspace: Path | None = None) -> None:
                 logs.append((re.compile(e["pattern"], flags), e))
             for e in data.get("tool", []):
                 tools[e["name"]] = e  # a later layer replaces a tool of the same name
+            access.update(data.get("usb_access", {}))
             for exe, g in data.get("get", {}).items():
                 gets[exe] = g  # a later layer pins its own version
             for e in reversed(data.get("instrument", [])):
                 instruments.insert(0, (re.compile(e["model"], re.I), e["kind"]))
-    global USB_IDS, MULTI_CHANNEL_BOARDS, SHARED_SERIALS, IDCODES, LOG_SIGNATURES, INSTRUMENT_KINDS, SOURCES, TOOLS, GETS
+    global USB_IDS, MULTI_CHANNEL_BOARDS, SHARED_SERIALS, IDCODES, LOG_SIGNATURES, INSTRUMENT_KINDS, SOURCES, TOOLS, GETS, USB_ACCESS
     USB_IDS, MULTI_CHANNEL_BOARDS, SHARED_SERIALS = usb, boards, shared
     IDCODES, LOG_SIGNATURES, INSTRUMENT_KINDS, SOURCES, TOOLS, GETS = idcodes, logs, instruments, sources, tools, gets
+    USB_ACCESS = access
 
 
 def _board(e: dict) -> dict:
