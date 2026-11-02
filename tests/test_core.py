@@ -487,3 +487,17 @@ def test_only_the_human_can_allow_all(io, tmp_path):
     with pytest.raises(ValueError):
         br.decide(danger["approval_id"], True, "all")  # not from a card for something that cannot be undone
     assert not br.approvals.allow_all
+
+
+def test_the_streams_are_utf8_even_where_a_pipe_defaults_to_another_code_page():
+    """Windows VM, 2026-11-02: `benchscout scan` piped (SSH) died printing its report (cp1252), and a reply typed in
+    Japanese reached the core's stdin as cp1252, or stopped it at a byte cp1252 lacks (0x81 in "あ")."""
+    import subprocess
+    import sys
+
+    code = ("import sys; from benchscout.cli import utf8_streams; utf8_streams(); "
+            "line = sys.stdin.readline(); print('got', line.strip(), '■')")
+    r = subprocess.run([sys.executable, "-c", code], input="あいう 回答\n".encode(), capture_output=True,
+                       env={**__import__("os").environ, "PYTHONIOENCODING": "cp1252"})
+    assert r.returncode == 0, r.stderr.decode(errors="replace")
+    assert r.stdout.decode("utf-8").strip() == "got あいう 回答 ■"

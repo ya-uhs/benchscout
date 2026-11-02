@@ -35,6 +35,8 @@ class Device:
     serial: str | None = None
     location: str | None = None
     evidence: list[Evidence] = field(default_factory=list)
+    # interfaces the OS has no working driver for (Windows): nothing can open them until one is installed
+    no_driver: list[int] = field(default_factory=list)
 
 
 @dataclass

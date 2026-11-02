@@ -109,3 +109,48 @@ def test_runtime_dir_ignores_temp_dir_variables(monkeypatch):
     for k in ("TMPDIR", "XDG_RUNTIME_DIR", "TEMP", "TMP"):
         monkeypatch.delenv(k, raising=False)
     assert agent_address(Path("/work/bench")) == with_env
+
+
+WIN = json.loads((Path(__file__).parent.parent / "fixtures" / "real" / "windows_arm64_2026-11-02.json").read_text(encoding="utf-8"))
+
+
+def _clean(s):
+    return {k: (v.split("\0")[0] or None if isinstance(v, str) else v) for k, v in s.items()}
+
+
+def test_windows_names_come_from_the_device_not_from_its_driver():
+    """Windows VM, 2026-11-02: WMI named the ESP32-S3 "(Standard USB Host Controller) USB Composite Device" (a driver's
+    name and an INF's maker) and benchscout showed that as the USB descriptor. Now: its own strings, read through
+    the hub, or the product name Windows recorded from the bus."""
+    devs = {d["vid"]: d for d in parse_windows_pnp(json.dumps(WIN["pnp"]), [_clean(s) for s in WIN["strings"]])}
+    esp, ftdi = devs[0x303A], devs[0x0403]
+    assert (esp["vendor"], esp["name"], esp["serial"], esp["no_driver"]) == ("Espressif", "USB JTAG/serial debug unit", "24:58:7C:E9:40:00", [])
+    # no driver: it answered only its serial; the product name is what Windows kept from the bus
+    assert (ftdi["vendor"], ftdi["name"], ftdi["serial"], ftdi["no_driver"]) == (None, "JTAG Debugger", "FactoryAIOT Pro", [0, 1])
+    assert not any("Composite" in (d["name"] or "") or "Standard" in (d["vendor"] or "") for d in devs.values())
+    # without the hub's strings: still no driver names
+    plain = {d["vid"]: d for d in parse_windows_pnp(json.dumps(WIN["pnp"]))}
+    assert plain[0x303A]["name"] == "USB JTAG/serial debug unit" and plain[0x303A]["vendor"] is None
+
+
+def test_a_string_descriptor_ends_at_its_first_nul():
+    from benchscout.winusb_strings import clean
+
+    raw = bytes.fromhex("300346006100630074006f0072007900410049004f0054002000500072006f000000110022003300") + bytes(10)
+    assert clean(raw) == "FactoryAIOT Pro"  # the Tang Nano FT2232's serial: bLength runs past the text
+    assert clean(b"\x04\x03A\x00") == "A" and clean(b"\x02\x03") is None and clean(b"\x04\x02A\x00") is None
+
+
+def test_a_device_windows_has_no_driver_for_is_shown_with_what_it_needs(tmp_path):
+    from benchscout import report
+
+    usb = [dict(d, vid=f"0x{d['vid']:04x}", pid=f"0x{d['pid']:04x}")
+           for d in parse_windows_pnp(json.dumps(WIN["pnp"]), [_clean(s) for s in WIN["strings"]])]
+    serial = [{"device": "COM3", "vid": "0x303a", "pid": "0x1001", "serial_number": "24:58:7C:E9:40:00",
+               "description": "USB Serial Device (COM3)"}]
+    b = _bench(tmp_path, usb, serial)
+    ftdi = next(d for d in b.devices.values() if d.vid == 0x0403)
+    assert ftdi.no_driver == [0, 1] and not b.ports_of(ftdi.id), "nothing can open it, so no port"
+    text = report.render(recon.Recon(b))
+    assert "■ JTAG Debugger  SN FactoryAIOT Pro" in text and "no driver for its USB interface(s) 0, 1" in text
+    assert "■ Espressif USB JTAG/serial debug unit" in text

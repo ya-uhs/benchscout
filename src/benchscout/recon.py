@@ -51,7 +51,8 @@ def build(io: Io) -> Bench:
     for u in io.usb_devices():
         # A USB device is bench hardware if it has a serial port or its interface is described in the
         # data (a debug probe). Keyboards, hubs, audio have neither. Its name is what it calls itself.
-        if (u["vid"], u["pid"]) not in K.USB_IDS and (u["vid"], u["pid"]) not in with_serial:
+        # One the OS has no driver for is shown too: someone plugged it in to use it, and must hear what it lacks.
+        if (u["vid"], u["pid"]) not in K.USB_IDS and (u["vid"], u["pid"]) not in with_serial and not u.get("no_driver"):
             continue
         did = _dev_id(u["vid"], u["pid"], u.get("serial"), u.get("location"))
         raw_usb[did] = u
@@ -64,6 +65,7 @@ def build(io: Io) -> Bench:
                 pid=u["pid"],
                 serial=u.get("serial"),
                 location=u.get("location"),
+                no_driver=list(u.get("no_driver") or []),
                 evidence=[Evidence("usb-descriptor", f"{_hex(u['vid'])}:{_hex(u['pid'])} {u.get('vendor') or ''} {u.get('name') or ''}".strip())],
             )
         )

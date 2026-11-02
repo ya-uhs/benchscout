@@ -13,7 +13,7 @@ import * as readline from "readline";
 export type Effect = "safe" | "disruptive" | "dangerous";
 
 export interface Evidence { source: string; detail: string }
-export interface Device { id: string; name: string; serial?: string | null; evidence: Evidence[] }
+export interface Device { id: string; name: string; serial?: string | null; evidence: Evidence[]; no_driver?: number[] }
 export interface Port { id: string; device_id: string; kind: string; path?: string | null }
 export interface Target {
   id: string; name: string | null; kind: string; confidence: "identified" | "family" | "unknown";
@@ -187,6 +187,7 @@ export interface DeviceView {
   things: { name: string; status: "identified" | "family" | "unknown"; how: string; facts: string[]; inside?: string }[];
   alert: boolean;
   busyBy?: string;
+  noDriver: number[]; // USB interfaces the OS has no driver for (Windows): nothing can open them yet
 }
 
 export function deviceViews(bench: Bench): DeviceView[] {
@@ -214,6 +215,7 @@ export function deviceViews(bench: Bench): DeviceView[] {
       things,
       alert: things.some((t) => t.facts.some((f) => f.startsWith("ALERT"))),
       busyBy: busy?.match(/\((.*)\)/)?.[1],
+      noDriver: d.no_driver ?? [],
     };
   });
 }

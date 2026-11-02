@@ -165,7 +165,17 @@ def cmd_setup(a) -> None:
     print("Start the core here with `benchscout core` (this terminal approves), then open your agent.")
 
 
+def utf8_streams() -> None:
+    """stdin/stdout/stderr in UTF-8 on every OS. Windows gives a pipe its ANSI code page (cp1252): the scan report's
+    marks could not be printed, and the extension's UTF-8 lines on the control channel (a reply typed in Japanese)
+    were misread, or stopped the core at a byte cp1252 lacks. A real console is UTF-8 already (PEP 528)."""
+    for s in (sys.stdin, sys.stdout, sys.stderr):
+        if s is not None and hasattr(s, "reconfigure") and (s.encoding or "").lower().replace("-", "") != "utf8":
+            s.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: list[str] | None = None) -> None:
+    utf8_streams()
     ap = argparse.ArgumentParser(prog="benchscout")
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("scan")

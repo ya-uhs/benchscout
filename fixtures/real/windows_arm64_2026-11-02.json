@@ -1,0 +1,126 @@
+{
+ "_comment": "Windows 11 ARM64 (UTM VM), 2026-11-02: an ESP32-S3 (native USB, inbox usbser on COM3) and a Sipeed Tang Nano 9K (FT2232, no driver installed: both interfaces CM_PROB_FAILED_INSTALL) passed through. `pnp` is what io.WINDOWS_PNP_QUERY printed (its batched property read left some fields empty); `strings` is what winusb_strings.usb_strings() read before its clean-up: the FT2232's serial descriptor runs on past its text, and a device without a driver answered only its serial (which Windows keeps).",
+ "pnp": [
+  {
+   "id": "USB\\VID_303A&PID_1001&MI_02\\6&32682550&0&0002",
+   "status": "OK",
+   "problem": "CM_PROB_NONE",
+   "bus": "USB JTAG/serial debug unit",
+   "parent": "USB\\VID_303A&PID_1001\\24:58:7C:E9:40:00"
+  },
+  {
+   "id": "USB\\VID_46F4&PID_0001\\1-0000:00:03.0-4.1",
+   "status": "OK",
+   "problem": "CM_PROB_NONE",
+   "bus": "QEMU USB HARDDRIVE",
+   "parent": "USB\\VID_0409&PID_55AA\\MSFT20314159-0000:00:03.0-4"
+  },
+  {
+   "id": "USB\\VID_0403&PID_6010&MI_00\\6&2FEB2BE7&0&0000",
+   "status": "Error",
+   "problem": "CM_PROB_FAILED_INSTALL",
+   "bus": null,
+   "parent": null
+  },
+  {
+   "id": "USB\\VID_0403&PID_6010\\FACTORYAIOT_PRO",
+   "status": "OK",
+   "problem": "CM_PROB_NONE",
+   "bus": null,
+   "parent": "USB\\ROOT_HUB30\\4&2cc4d715&0&0"
+  },
+  {
+   "id": "USB\\VID_0409&PID_55AA\\MSFT20314159-0000:00:03.0-4",
+   "status": "OK",
+   "problem": "CM_PROB_NONE",
+   "bus": null,
+   "parent": null
+  },
+  {
+   "id": "USB\\VID_0627&PID_0001\\28754-0000:00:03.0-1",
+   "status": "OK",
+   "problem": "CM_PROB_NONE",
+   "bus": "QEMU USB Tablet",
+   "parent": "USB\\ROOT_HUB30\\4&9a1dcae&0&0"
+  },
+  {
+   "id": "USB\\VID_0403&PID_6010&MI_01\\6&2FEB2BE7&0&0001",
+   "status": "Error",
+   "problem": "CM_PROB_FAILED_INSTALL",
+   "bus": "JTAG Debugger",
+   "parent": "USB\\VID_0403&PID_6010\\FactoryAIOT_Pro"
+  },
+  {
+   "id": "USB\\VID_303A&PID_1001&MI_00\\6&32682550&0&0000",
+   "status": "OK",
+   "problem": "CM_PROB_NONE",
+   "bus": "USB JTAG/serial debug unit",
+   "parent": "USB\\VID_303A&PID_1001\\24:58:7C:E9:40:00"
+  },
+  {
+   "id": "USB\\VID_0627&PID_0001\\68284-0000:00:03.0-3",
+   "status": "OK",
+   "problem": "CM_PROB_NONE",
+   "bus": "QEMU USB Keyboard",
+   "parent": "USB\\ROOT_HUB30\\4&9a1dcae&0&0"
+  },
+  {
+   "id": "USB\\VID_0627&PID_0001\\89126-0000:00:03.0-2",
+   "status": "OK",
+   "problem": "CM_PROB_NONE",
+   "bus": "QEMU USB Mouse",
+   "parent": "USB\\ROOT_HUB30\\4&9a1dcae&0&0"
+  },
+  {
+   "id": "USB\\VID_303A&PID_1001\\24:58:7C:E9:40:00",
+   "status": "OK",
+   "problem": "CM_PROB_NONE",
+   "bus": "USB JTAG/serial debug unit",
+   "parent": "USB\\ROOT_HUB30\\4&2cc4d715&0&0"
+  }
+ ],
+ "strings": [
+  {
+   "vid": 1575,
+   "pid": 1,
+   "manufacturer": null,
+   "product": null,
+   "serial": "28754-0000:00:03.0-1"
+  },
+  {
+   "vid": 1575,
+   "pid": 1,
+   "manufacturer": null,
+   "product": null,
+   "serial": "89126-0000:00:03.0-2"
+  },
+  {
+   "vid": 1575,
+   "pid": 1,
+   "manufacturer": null,
+   "product": null,
+   "serial": "68284-0000:00:03.0-3"
+  },
+  {
+   "vid": 18164,
+   "pid": 1,
+   "manufacturer": "QEMU",
+   "product": "QEMU USB HARDDRIVE",
+   "serial": "1-0000:00:03.0-4.1"
+  },
+  {
+   "vid": 1027,
+   "pid": 24592,
+   "manufacturer": null,
+   "product": null,
+   "serial": "FactoryAIOT Pro\u0000\u0011\"3DUal"
+  },
+  {
+   "vid": 12346,
+   "pid": 4097,
+   "manufacturer": "Espressif\u0000",
+   "product": "USB JTAG/serial debug unit\u0000",
+   "serial": "24:58:7C:E9:40:00"
+  }
+ ]
+}

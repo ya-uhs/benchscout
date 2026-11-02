@@ -11,15 +11,23 @@ from .recon import Recon
 _MARK = {Confidence.IDENTIFIED: "identified", Confidence.FAMILY: "family only", Confidence.UNKNOWN: "unknown"}
 
 
+NO_DRIVER = ("Windows has no driver for its USB interface(s) {ifaces}, so no program can open them yet. A serial port "
+             "needs its maker's driver (Windows Update often installs it); a tool that talks to the chip over USB "
+             "through libusb (openFPGALoader, OpenOCD, probe-rs) needs WinUSB on that interface (Zadig installs it). "
+             "Tell the user; installing a driver is theirs to do")
+
+
 def render(r: Recon) -> str:
     b = r.bench
     lines: list[str] = []
     for dev in b.devices.values():
         ports = b.ports_of(dev.id)
-        if not ports:
+        if not ports and not dev.no_driver:
             continue
         sn = f"  SN {dev.serial}" if dev.serial else ""
         lines.append(f"■ {dev.name}{sn}")
+        if dev.no_driver:
+            lines.append(f"  · {NO_DRIVER.format(ifaces=', '.join(map(str, dev.no_driver)))}")
         targets: dict[str, list] = {}
         for p in ports:
             for link in b.links_of(p.id):

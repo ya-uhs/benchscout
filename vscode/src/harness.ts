@@ -150,7 +150,7 @@ export class Harness extends EventEmitter {
     if (!views.length) return;
     const lines = views.map((d) => {
       const known = d.things.map((t) => t.name || (t.status === "family" ? t.facts[0] : "")).filter(Boolean).join(", ");
-      return `• ${d.name}${known ? ` — ${known}` : ""}${d.alert ? " ⚠" : ""}`;
+      return `• ${d.name}${known ? ` — ${known}` : ""}${d.noDriver.length ? ` (${this.s.stateNoDriver})` : ""}${d.alert ? " ⚠" : ""}`;
     });
     const ordered = [...views].sort((a, b) => Number(b.alert) - Number(a.alert));
     const options: CardOption[] = ordered.map((d, i) => ({ id: d.id, label: this.s.lookAt(d.name), primary: i === 0 }));

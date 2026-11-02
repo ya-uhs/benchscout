@@ -154,7 +154,7 @@ function refresh(): void {
     const known = d.things.map((t) => t.name).filter(Boolean).join(", ");
     const ports = bench!.ports.filter((p) => p.device_id === d.id).map((p) => p.id);
     return { id: d.id, label: d.name + (known ? ` — ${known}` : ""), selected: !!core?.selected.includes(d.id),
-             watched: ports.some((p) => watched.has(p)), busy: !!busyElsewhere[d.id] || !!d.busyBy };
+             watched: ports.some((p) => watched.has(p)), busy: !!busyElsewhere[d.id] || !!d.busyBy, noDriver: d.noDriver.length > 0 };
   });
   const state: PanelState = { running: !!core?.running, agent: AGENTS[chosenAgent()]?.label ?? "", cards, devices,
     allowAll: !!core?.running && !!core?.allowAll, strings: plain };
