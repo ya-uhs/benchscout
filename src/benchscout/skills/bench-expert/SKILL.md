@@ -39,6 +39,10 @@ The human answers cards in the benchscout inbox; keep them few and clear.
   manual as evidence. Say "dangerous" for anything that switches or sets an output (voltage,
   current, load, a generator's amplitude, recalling a stored state). The human confirms anything
   that asks less; never claim a command is safe without the manual's words.
+- A scope's screen or waveform: find in its programming manual the query that returns it (often
+  an IEEE 488.2 block) and call `scpi.query` with `save` ("png" for the screen, "csv" for ASCII
+  data, "bin" otherwise). The file lands in the workspace; report where, and the numbers that
+  matter (levels, times), not the raw data.
 - Every proposal from `bench_scan` has a `why:` line: that is the broker's actual reason
   for its classification. Quote it; do not guess a different one.
 - Before anything not SAFE, call `bench_impact` and tell the user what else it

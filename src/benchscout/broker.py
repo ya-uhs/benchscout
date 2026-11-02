@@ -912,6 +912,8 @@ class Broker:
             asks = any(h[0].endswith("?") for h in scpi_headers(args["command"]))
             if not asks:
                 return {"sent": self.io.visa_write(port.path, args["command"])}
+            if args.get("save"):
+                return self._save_capture(port, args["command"], args["save"])
             return self.io.visa_query(port.path, args["command"])
         if action == "jtag.scan":
             if not port.tools.get("openFPGALoader"):
@@ -1046,6 +1048,32 @@ class Broker:
             kept["latest"] = stamp
             if c["alerts"]:
                 kept["alert"] = stamp
+
+    def _save_capture(self, port, command: str, kind: str) -> dict:
+        """A screen capture or a waveform into the workspace (design.md section 2: "saved here" is enough; the agent
+        reports the numbers). The instrument's IEEE 488.2 block header is taken off."""
+        import time
+
+        from .io import ieee_block
+
+        if kind not in A.SAVE_KINDS:
+            return {"error": f"save must be one of {', '.join(A.SAVE_KINDS)}"}
+        raw = self.io.visa_query_raw(port.path, command)
+        if raw is None:
+            return {"error": "no answer from the instrument (check the command in its programming manual)"}
+        data = ieee_block(raw)
+        p = self.artifacts / f"{time.strftime('%Y%m%d-%H%M%S')}-{port.id.replace(':', '_')}-capture.{kind}"
+        n = 1
+        while p.exists():
+            n += 1
+            p = p.with_name(f"{p.stem}-{n}.{kind}")
+        p.write_bytes(data)
+        out: dict = {"saved_to": str(p.resolve()), "bytes": len(data), "block": raw[:1] == b"#"}
+        if kind in ("csv", "txt"):
+            out["preview"] = data[:600].decode("utf-8", errors="replace")
+        elif kind == "png" and not data.startswith(b"\x89PNG"):
+            out["warning"] = "this is not a PNG file (check the format the command asks for)"
+        return out
 
     def _save_artifact(self, name: str, content: str, preview: str) -> dict:
         # One file per capture: a second listen must not overwrite the first (an agent noticed this).

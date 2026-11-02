@@ -242,3 +242,45 @@ def test_memory_the_human_has_not_confirmed_never_makes_anything_ask_less(entrie
         for text, eff in entries:
             br.remember(dev, "command", "agent says so", data={"command": text, "effect": eff})
         assert effect(cmd, br.bench) >= before, "only the human loosens"
+
+
+# ---- a screen capture or a waveform, saved in the workspace -----------------------------------------
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 12
+SCOPE = "visa:USB0::0x1AB1::0x04CE::DS1ZA201804321::INSTR"
+
+
+def test_a_capture_is_saved_as_a_file_without_its_block_header(tmp_path):
+    """design.md section 2: a scope's screen (PNG) and waveform (CSV) are saved in the workspace; the command that
+    gives them is the instrument's (its manual), so benchscout only takes the IEEE 488.2 block apart."""
+    data = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    res = "USB0::0x1AB1::0x04CE::DS1ZA201804321::INSTR"
+    data["visa_raw"] = {res: {":DISP:DATA? ON,OFF,PNG": (b"#9%09d" % len(PNG) + PNG + b"\n").hex(),
+                              ":WAV:DATA?": (b"#9000000015" + b"0.1,0.2,0.3,0.4" + b"\n").hex()}}
+    f = tmp_path / "bench.json"
+    f.write_text(json.dumps(data), encoding="utf-8")
+    br = Broker(FixtureIo(f), tmp_path / "ws" / ".benchscout", approval_wait=0)
+    br.scan()
+    br.select([br.bench.ports[SCOPE].device_id])
+    ask = br.request("scpi.query", SCOPE, {"command": ":DISP:DATA? ON,OFF,PNG", "save": "png"})
+    assert ask["status"] == "approval_required", "a query outside the standard asks, saved or not"
+    br.decide(ask["approval_id"], True, "always")
+    shot = br.request("scpi.query", SCOPE, {"command": ":DISP:DATA? ON,OFF,PNG", "save": "png"}, approval_id=ask["approval_id"])
+    saved = Path(shot["result"]["saved_to"])
+    assert saved.read_bytes() == PNG and saved.suffix == ".png" and saved.is_relative_to(tmp_path / "ws")
+    wave = br.request("scpi.query", SCOPE, {"command": ":WAV:DATA?", "save": "csv"})
+    if wave["status"] == "approval_required":
+        br.decide(wave["approval_id"], True)
+        wave = br.request("scpi.query", SCOPE, {"command": ":WAV:DATA?", "save": "csv"}, approval_id=wave["approval_id"])
+    assert wave["result"]["preview"] == "0.1,0.2,0.3,0.4"
+    assert br.request("scpi.query", SCOPE, {"command": ":DISP:DATA? ON,OFF,PNG", "save": "gif"})["result"]["error"].startswith("save must be")
+    br.end_session()
+
+
+def test_an_ieee_block_is_taken_apart_and_anything_else_is_kept():
+    from benchscout.io import ieee_block
+
+    assert ieee_block(b"#15hello\n") == b"hello"
+    assert ieee_block(b"#0raw bytes to the end\n") == b"raw bytes to the end"
+    assert ieee_block(b"1.23E-3\n") == b"1.23E-3\n", "not a block: as it came"
+    assert ieee_block(b"#x") == b"#x" and ieee_block(b"#9123") == b"#9123"

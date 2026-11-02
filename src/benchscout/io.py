@@ -33,10 +33,24 @@ class Io(Protocol):
 
     # access: opens things; callers go through policy first
     def visa_query(self, resource: str, command: str) -> str | None: ...
+    def visa_query_raw(self, resource: str, command: str) -> bytes | None: ...  # the answer's bytes (a block, an image)
     def visa_write(self, resource: str, command: str) -> bool: ...  # True once sent
     def serial_listen(self, path: str, seconds: float, baud: int, exclusive: bool = False, lines: str = "low",
                       send: bytes | None = None) -> str: ...  # `send` is written once, right after opening
     def jtag_scan(self, select: list[str]) -> list[dict]: ...  # [{idcode, manufacturer, model}]; select: the probe's args
+
+
+def ieee_block(data: bytes) -> bytes:
+    """The data of an IEEE 488.2 definite-length block (#<n><length, n digits><bytes>), or the answer as it came if it
+    is not one. An indefinite block (#0...) runs to the end, less the newline that ends the message."""
+    if len(data) >= 2 and data[:1] == b"#" and data[1:2].isdigit():
+        n = int(data[1:2])
+        if n == 0:
+            return data[2:].rstrip(b"\n")
+        if len(data) >= 2 + n and data[2:2 + n].isdigit():
+            length = int(data[2:2 + n])
+            return data[2 + n:2 + n + length]
+    return data
 
 
 def run_tool(argv: list[str], timeout: float, cwd: str | Path | None = None) -> tuple[str, int | None]:
@@ -218,6 +232,18 @@ class LiveIo:
             inst = self._visa().open_resource(resource, timeout=1500)
             try:
                 return inst.query(command).strip()
+            finally:
+                inst.close()
+        except Exception:
+            return None
+
+    def visa_query_raw(self, resource: str, command: str) -> bytes | None:
+        """The whole answer as bytes, for a screen capture or a waveform (seconds, and megabytes, on some scopes)."""
+        try:
+            inst = self._visa().open_resource(resource, timeout=15000)
+            try:
+                inst.write(command)
+                return bytes(inst.read_raw())
             finally:
                 inst.close()
         except Exception:
@@ -497,6 +523,11 @@ class FixtureIo:
 
         have = self.data.get("tools", [])
         return {t: (f"/fixture/bin/{t}" if t in have else None) for t in K.tool_names()}
+
+    def visa_query_raw(self, resource: str, command: str) -> bytes | None:
+        self.calls.append(("visa_query_raw", resource, command))
+        v = self.data.get("visa_raw", {}).get(resource, {}).get(command)  # recorded as hex
+        return bytes.fromhex(v) if v is not None else None
 
     def visa_query(self, resource: str, command: str) -> str | None:
         self.calls.append(("visa_query", resource, command))

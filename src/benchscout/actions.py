@@ -136,6 +136,11 @@ _LISTEN = (
     Param("baud", int, "baud rate", 115200, min=50, max=12_000_000),
 )
 _COMMAND = (Param("command", str, "SCPI command line", required=True),)
+SAVE_KINDS = ("png", "bmp", "jpg", "csv", "txt", "bin")
+# a screen capture or waveform: the answer goes to a file in the workspace (an IEEE 488.2 block header is taken off).
+# Which command gives it is the instrument's (its programming manual); benchscout keeps no list of them.
+_QUERY = _COMMAND + (Param("save", str, f"save the answer to a file instead of returning it: one of {', '.join(SAVE_KINDS)} "
+                                        "(e.g. a scope's screen as png, its waveform as csv)"),)
 
 BUILTIN: dict[str, Action] = {a.name: a for a in (
     Action("serial.listen", Effect.SAFE, False, "passively reads console output",
@@ -164,7 +169,7 @@ BUILTIN: dict[str, Action] = {a.name: a for a in (
     Action("scpi.query", Effect.DISRUPTIVE, False, "a SCPI query; what it does depends on the command and the instrument",
            "send a SCPI query and read the answer (one message, printable ASCII; *IDN?, SYST:ERR? and the other "
            "status queries run without asking; another query asks, and the human may allow it for the session or "
-           "always on this instrument)", _COMMAND),
+           "always on this instrument; `save` puts a screen capture or waveform in a file)", _QUERY),
     Action("scpi.write", Effect.DANGEROUS, False, "a SCPI command; what it does depends on the instrument",
            "send a SCPI command (one message, printable ASCII); it asks the human, who may allow that command for the "
            "session or always on this instrument; one that sets an output (voltage, current, output on) asks every "
