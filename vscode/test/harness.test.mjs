@@ -377,3 +377,16 @@ test("Linux: a device a libusb tool cannot open gets one card naming the node an
   core.emit("scan", bench({}), []);  // the rule took effect
   assert.equal(card().status, "closed");
 });
+
+test("with only devices benchscout has no data for, the first question still offers them to the agent", () => {
+  // review 7 (17): the first question and the device list showed nothing, so an unknown programmer had no way in
+  const core = new CoreClient("/nonexistent", tmpdir());
+  const s = strings("en");
+  const h = new Harness(core, () => { throw new Error("not woken"); }, s, { language: "English", maxTurnsPerHour: 1 });
+  const bench = { devices: [{ id: "usb:1234:5678:x", name: "Acme Cable", evidence: [], other: true }], ports: [], targets: [], links: [] };
+  core.emit("scan", bench, [], []);
+  const q = h.cards.find((c) => c.kind === "question");
+  assert.ok(q, "a first question is asked");
+  assert.deepEqual(q.options.map((o) => o.label), [s.lookOthers(1)]);
+  assert.match(q.body, /Acme Cable/);
+});

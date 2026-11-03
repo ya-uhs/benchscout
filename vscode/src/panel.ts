@@ -26,7 +26,7 @@ export interface PanelState {
   others?: number; // USB devices benchscout has no data for (the agent sees them; listed here only as a count)
   // what is remembered about each device on the bench (design.md section 6): seen, fixed in its file, deleted here
   memory?: { device: string; name: string; key: string; file: string;
-             entries: { id: string; kind: string; text: string; source: string; time: string; status: string }[] }[];
+             entries: { id: string; kind: string; text: string; source: string; time: string; status: string; device?: string }[] }[];
   strings: { [K in keyof Strings as Strings[K] extends (...a: never[]) => unknown ? never : K]: Strings[K] };  // the plain ones
 }
 
@@ -147,6 +147,7 @@ function render() {
   if (state.allowAll) h += '<div class="allowall"><span>' + esc(s.allowAllOn) + '</span><button data-cmd="allowAllOff">' + esc(s.allowAllOff) + "</button></div>";
   h += "</div>";
   // what needs the person first: pinned, then decisions, then reports, then records (newest first within each)
+  if (state.others && !state.devices.length) h += '<div class="hint muted">' + esc(s.otherDevices.replace("{n}", String(state.others))) + "</div>";
   const rank = (c) => (c.pin ? 0 : c.kind === "confirm" || c.kind === "question" || (c.kind === "memory" && c.options.some((o) => o.primary)) ? 1 : c.kind === "report" ? 2 : 3);
   if (state.devices.length) {
     h += '<div class="devs"><div class="devhead" data-toggle="devs">' + (devsOpen ? "▾ " : "▸ ") + esc(s.devicesTitle) + " (" + state.devices.length + ")</div>";
@@ -157,6 +158,7 @@ function render() {
         h += '<div class="dev"><span class="dot ' + (d.watched ? "" : d.selected ? "sel" : "off") + '"></span><span class="dname">' + esc(d.label) +
              '</span><span class="state muted">' + esc(st) + "</span>" + btn + "</div>";
       }
+
       if (state.others) h += '<div class="hint muted">' + esc(s.otherDevices.replace("{n}", String(state.others))) + "</div>";
       h += '<div class="hint muted">' + esc(s.releaseHint) + "</div>";
     }
@@ -173,7 +175,8 @@ function render() {
           const ids = ' data-key="' + esc(g.key) + '" data-id="' + esc(e.id) + '"';
           h += '<div class="mem-entry"><span class="muted">' + esc((s.memoryKinds && s.memoryKinds[e.kind]) || e.kind) + "</span>" +
                '<span class="memtext">' + esc(e.text) + "</span>" +
-               '<span class="muted memmeta">' + esc(e.source + " · " + String(e.time || "").slice(0, 10) + (pending ? " · " + s.memoryPending : "")) + "</span>" +
+               '<span class="muted memmeta">' + esc(e.source + " · " + String(e.time || "").slice(0, 10) + (e.device ? " · " + s.memoryHere : "")
+                 + (pending ? " · " + s.memoryPending : "")) + "</span>" +
                (pending ? '<button data-memdecide="1"' + ids + ">" + esc(s.accept) + '</button><button data-memdecide="0"' + ids + ">" + esc(s.reject) + "</button>"
                         : '<button data-memforget="1"' + ids + ">" + esc(s.forget) + "</button>") + "</div>";
         }

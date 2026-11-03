@@ -55,6 +55,7 @@ class Entry:
     status: str = "active"
     data: dict = field(default_factory=dict)
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+    device: str = ""  # in the folder's memory only: whose entry it is (the device file's key)
 
 
 def device_key(vid: int | None, pid: int | None, serial: str | None) -> str:
@@ -160,13 +161,32 @@ class Memory:
         return MemoryFile(self._path(key), header)
 
     def entries(self, key: str) -> list[Entry]:
+        """What is remembered about this device: its own file, then what this folder remembers about it (wiring, probe
+        nets: true of this setup, not of the device wherever it goes; design.md section 6)."""
         with self._lock:
-            return self.device_file(key).entries
+            mine = self.device_file(key).entries
+            here = [e for e in MemoryFile(self.workspace_file).entries if e.device == key]
+            return mine + here
+
+    def in_folder(self, entry: Entry) -> bool:
+        return bool(entry.device)
 
     def add(self, key: str, entry: Entry, header: dict | None = None) -> Entry:
-        """Append; an identity or safety entry for the same target replaces the older one (kept as superseded)."""
+        """Append; an identity or safety entry for the same target replaces the older one (kept as superseded). A config
+        entry (this setup's wiring) goes to the folder's memory, not the device's."""
         if entry.kind not in KINDS:
             raise ValueError(f"kind must be one of {', '.join(KINDS)}")
+        if entry.kind == "config":
+            entry.device = key
+            with self._lock, _FileLock(self.workspace_file):
+                f = MemoryFile(self.workspace_file, {"memory": "this folder's setup (wiring, probe nets)"})
+                for old in f.entries:
+                    if old.device == key and old.kind == "config" and old.text == entry.text and old.target == entry.target \
+                            and old.data == entry.data and old.status == entry.status:
+                        return old
+                f.entries.append(entry)
+                f.save()
+                return entry
         with self._lock, _FileLock(self._path(key)):
             f = self.device_file(key, header)
             if header:
@@ -182,20 +202,24 @@ class Memory:
             return entry
 
     def set_status(self, key: str, entry_id: str, status: str) -> Entry:
-        with self._lock, _FileLock(self._path(key)):
-            f = self.device_file(key)
-            for e in f.entries:
-                if e.id == entry_id:
-                    e.status = status
-                    f.save()
-                    return e
+        for path in (self._path(key), self.workspace_file):
+            with self._lock, _FileLock(path):
+                f = MemoryFile(path)
+                for e in f.entries:
+                    if e.id == entry_id and (path != self.workspace_file or e.device == key):
+                        e.status = status
+                        f.save()
+                        return e
         raise KeyError(f"no memory entry {entry_id!r} for {key}")
 
     def delete(self, key: str, entry_id: str) -> None:
-        with self._lock, _FileLock(self._path(key)):
-            f = self.device_file(key)
-            f.entries = [e for e in f.entries if e.id != entry_id]
-            f.save()
+        for path in (self._path(key), self.workspace_file):
+            with self._lock, _FileLock(path):
+                f = MemoryFile(path)
+                if any(e.id == entry_id for e in f.entries):
+                    f.entries = [e for e in f.entries if e.id != entry_id]
+                    f.save()
+                    return
 
     def all_pending(self) -> list[tuple[str, Entry]]:
         out = []

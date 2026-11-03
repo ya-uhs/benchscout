@@ -163,8 +163,10 @@ export class Harness extends EventEmitter {
 
   /** benchscout's own first question, built from the raw clues without an LLM. */
   private firstQuestion(bench: Bench): void {
-    const views = deviceViews(bench).filter((d) => !d.other);  // the others are the agent's to look through
-    if (!views.length) return;
+    const all = deviceViews(bench);
+    const views = all.filter((d) => !d.other);  // the others are the agent's to look through
+    const others = all.filter((d) => d.other);
+    if (!views.length && !others.length) return;
     const lines = views.map((d) => {
       const known = d.things.map((t) => t.name || (t.status === "family" ? t.facts[0] : "")).filter(Boolean).join(", ");
       const driver = d.noDriver.length ? this.s.stateNoDriver : d.needsWinusb.length ? this.s.stateNeedsWinusb
@@ -174,9 +176,19 @@ export class Harness extends EventEmitter {
     const ordered = [...views].sort((a, b) => Number(b.alert) - Number(a.alert));
     const options: CardOption[] = ordered.map((d, i) => ({ id: d.id, label: this.s.lookAt(d.name), primary: i === 0 }));
     if (views.length > 1) options.push({ id: "*all", label: this.s.lookAll });
-    this.add({ kind: "question", title: this.s.firstAsk, body: `${this.s.firstQuestion}\n${lines.join("\n")}`, options, freeText: true },
+    // devices benchscout has no data for are still the agent's to identify (a programmer whose tool it can propose)
+    if (others.length) options.push({ id: "*others", label: this.s.lookOthers(others.length), primary: !views.length });
+    const body = [views.length ? `${this.s.firstQuestion}\n${lines.join("\n")}` : "",
+      others.length ? this.s.otherDevicesFound(others.map((d) => d.name).join(", ")) : ""].filter(Boolean).join("\n");
+    this.add({ kind: "question", title: this.s.firstAsk, body, options, freeText: true },
       async (a) => {
         if (a.text) return this.wake(a.text, a.text.slice(0, 60));
+        if (a.option === "*others") {
+          return this.wake("Look through the USB devices benchscout has no data for (bench_scan lists them under \"Other USB "
+            + "devices\", with their raw clues): find out what each is. If one is a programmer or debug probe for a part on "
+            + "the bench, find its maker's tool and propose it with bench_define_tool, giving its vid:pid in probes.",
+          this.s.lookOthers(others.length));
+        }
         const ids = a.option === "*all" ? views.map((d) => d.id) : [a.option!];
         await this.core.select(ids);
         const names = views.filter((d) => ids.includes(d.id)).map((d) => d.name).join(", ");

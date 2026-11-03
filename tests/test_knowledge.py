@@ -129,7 +129,7 @@ channels = { 0 = "uart-fpga-fabric", 1 = "jtag-fpga" }
     K.load()
     b = recon.build(FixtureIo(FIXTURE))
     fpga = next(t for t in b.targets.values() if t.kind == "fpga")
-    assert "My FT2232H dev board" in fpga.facts[0]
+    assert any("our schematic rev B" in e.detail for e in fpga.evidence), "the user's wiring, before the shipped one"
 
 
 @pytest.mark.parametrize("bench", ["bench_example.json", "bench_unseen.json"])

@@ -200,6 +200,9 @@ export class CoreClient extends EventEmitter {
       case "device_event":
         this.emit("deviceEvent", msg as DeviceEvent);
         return;
+      case "bench":  // the bench changed on the agent's side (its scan, a name it proved): the panel shows it now
+        this.emit("scan", msg.bench, (msg.proposals ?? []) as Proposal[], (msg.knowledge_errors ?? []) as string[]);
+        return;
       case "devices_changed":
         this.emit("devicesChanged", { added: msg.added ?? [], removed: msg.removed ?? [] } as DevicesChanged);
         return;

@@ -176,7 +176,9 @@ Actions:
     async def bench_remember(ref: str, kind: str, text: str, evidence: str = "", data: dict | None = None) -> str:
         """Remember something about a device for next time, without asking the human (they can
         edit or delete it in the panel). `ref` is a device/port/target from bench_scan. `kind`:
-        observation (what it does), config (wiring, probe nets the human told you), interpretation
+        observation (what it does), config (wiring, probe nets the human told you; kept for this folder only; data
+        {"inside": "<target id>"} when this port's far end is implemented inside that target, e.g. a UART in an FPGA's
+        fabric: then whatever disturbs that target is known to disturb this port too), interpretation
         (data {"pattern": regex, "alert": text}: a line that means trouble on this device; it will be
         watched for), command (a firmware command of one serial port, e.g. read from its `help`: data
         {"command": "status", "effect": "safe"|"disruptive"|"dangerous", "eol": "\\r\\n" if not "\\n", "until": regex for

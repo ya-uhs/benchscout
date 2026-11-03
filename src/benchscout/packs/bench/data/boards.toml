@@ -1,18 +1,18 @@
-# Boards whose multi-channel USB part is wired in a fixed way (layer 2: without it, a JTAG
-# channel could be opened as a UART). A board matches if any `match` condition holds.
+# How a multi-channel USB part is wired on boards whose USB descriptor says so (layer 2, a safety rule: without it, a
+# JTAG channel could be opened as a UART, and writing the FPGA would not be known to stop the UART inside it). It is an
+# assumption for safety, said as one; it names no board and no part (design.md section 5). A board matches if any
+# `match` condition holds.
 #   match.text_contains: substrings of the USB vendor or product string (case-insensitive)
 #   match.serial_prefix: prefixes of the USB serial number
 #   channels: channel number -> "jtag-fpga" | "uart-fpga-fabric"
+#   source: the wiring as assumed, in words (shown with the evidence)
 
 [[board]]
-board = "Digilent FPGA board"
-source = "Digilent boards wire FT2232H channel A to FPGA JTAG, channel B to FPGA UART pins"
+source = "wiring assumed for safety (USB descriptor says 'digilent', or a serial starting 2102-2104): channel A = JTAG of an FPGA, channel B = UART on the FPGA's pins"
 match = { text_contains = ["digilent"], serial_prefix = ["2102", "2103", "2104"] }
 channels = { 0 = "jtag-fpga", 1 = "uart-fpga-fabric" }
 
 [[board]]
-board = "Sipeed Tang Nano (Gowin FPGA)"
-debugger = "Sipeed BL702 debugger (FT2232H-compatible)"  # it emulates an FT2232 (0403:6010)
-source = "Sipeed Tang Nano debugger: channel A = Gowin JTAG, channel B = UART to FPGA pins"
+source = "wiring assumed for safety (USB descriptor says 'sipeed'; an FT2232-compatible debugger): channel A = JTAG of an FPGA, channel B = UART on the FPGA's pins"
 match = { text_contains = ["sipeed"] }
 channels = { 0 = "jtag-fpga", 1 = "uart-fpga-fabric" }

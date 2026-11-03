@@ -271,7 +271,8 @@ def _apply_usb_knowledge(b: Bench, dev: Device, info: dict, serials: list[dict],
             if dev.serial in K.SHARED_SERIALS:
                 dev.evidence.append(Evidence("usb-descriptor", f"serial '{dev.serial}' is shared by every unit of this model; two of these boards would be indistinguishable"))
             fpga = b.add_target(Target(f"target:{short}:fpga", None, "fpga", Confidence.UNKNOWN,
-                                       facts=[f"on a {board['board']}"], evidence=[ev]))
+                                       facts=["an FPGA on JTAG, as the shipped wiring assumes (for safety; it names nothing)"],
+                                       evidence=[ev]))
             jtag_ch = next((ch for ch, what in board["channels"].items() if what == "jtag-fpga"), 0)
             jp = b.add_port(Port(f"jtag:{short}", dev.id, "jtag", interface=jtag_ch, evidence=[ev]))
             jp.tools = _tool_args(info, dev, jp)

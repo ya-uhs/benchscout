@@ -159,13 +159,26 @@ def test_a_learned_trouble_line_is_watched_for(tmp_path):
 
 def test_memory_files_are_plain_toml_and_entries_can_be_deleted(tmp_path):
     br = session(tmp_path, fixture(tmp_path))
-    res = br.remember(CH340, "config", "CH1 of the scope is on the 3V3 rail", evidence="the human said so")
+    res = br.remember(CH340, "observation", "prints sensor ok once a second", evidence="[I] sensor ok")
     files = list((tmp_path / "memory" / "devices").glob("*.toml"))
     assert len(files) == 1
     data = tomllib.loads(files[0].read_text())
-    assert data["device"] == "QinHeng USB Serial" and data["entry"][0]["text"].startswith("CH1 of the scope")
+    assert data["device"] == "QinHeng USB Serial" and data["entry"][0]["text"].startswith("prints sensor ok")
     br.memory.delete(files[0].stem, res["id"])
     assert tomllib.loads(files[0].read_text()).get("entry", []) == []
+
+
+def test_wiring_is_remembered_for_this_folder_not_for_the_device_everywhere(tmp_path):
+    """Review 7 (12): "CH1 is on 3V3" is this setup's; it was written with the device and showed up in other projects."""
+    f = fixture(tmp_path)
+    here = Broker(FixtureIo(f), tmp_path / "here" / ".benchscout")
+    here.scan()
+    here.remember(CH340, "config", "CH1 of the scope is on the 3V3 rail", evidence="the human said so")
+    assert "3V3" in (tmp_path / "here" / ".benchscout" / "memory" / "workspace.toml").read_text()
+    elsewhere = Broker(FixtureIo(f), tmp_path / "elsewhere" / ".benchscout")
+    elsewhere.scan()
+    assert not any("3V3" in e["text"] for g in elsewhere.recall(CH340) for e in g["entries"])
+    assert any("3V3" in e["text"] for g in here.recall(CH340) for e in g["entries"]), "still known here"
 
 
 # ---- firmware commands (design.md section 4) ----------------------------------------------

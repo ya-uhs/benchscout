@@ -192,6 +192,7 @@ class Broker:
                        if e.status == "pending" and e.id not in self._pending_shown]
             changed = self._plugged(before, self.last.bench) if before else None
         self._emit({"event": "scanned", "devices": list(self.last.bench.devices)})
+        self._bench_event()
         if changed:
             self._emit(changed)
         for dev, e in waiting:
@@ -496,7 +497,15 @@ class Broker:
                 elif e.kind == "interpretation" and e.data.get("pattern"):
                     self.patterns.setdefault(dev.id, []).append(e.data)
                 else:
-                    for t in targets[:1]:
+                    inside = e.data.get("inside") if e.kind == "config" else None
+                    if inside and e.target in bench.targets and inside in bench.targets and inside != e.target:
+                        # learned wiring is structure, not only words: what disturbs the host disturbs this (review 7, 13)
+                        t = bench.targets[e.target]
+                        if t.hosted_on is None:
+                            t.hosted_on = inside
+                        elif t.hosted_on != inside:
+                            t.facts.append(f"also said to be inside {inside} ({when}); kept inside {t.hosted_on}")
+                    for t in ([bench.targets[e.target]] if e.target in bench.targets else targets[:1]):
                         t.facts.append(f"remembered: {e.text} ({when})")
 
     def _observe_open(self, port_id: str, text: str | None) -> None:
@@ -582,6 +591,12 @@ class Broker:
             if kind == "identity":
                 return {"status": "rejected", "message": "a part is named only with bench_identify, quoting the device's own "
                                                          "output (benchscout checks the quote)"}
+            inside = (data or {}).get("inside")
+            if kind == "config" and inside is not None:
+                if not target or inside not in self.bench.targets or inside == target:
+                    known = ", ".join(t for t in self.bench.targets if t != target)
+                    return {"status": "rejected", "message": "config data {\"inside\": \"<target id>\"} says the far end of this port "
+                                                             f"is implemented inside that target; give one of: {known}"}
             pattern = (data or {}).get("pattern")
             if kind == "interpretation" and pattern is not None:
                 try:
@@ -601,6 +616,8 @@ class Broker:
             e = self.memory.add(self._key(dev), e, self._header(dev))
             if kind == "interpretation":
                 self._refresh_patterns(dev)  # the running watch looks for it from now on
+            if kind == "config" and inside and self.bench.targets[target].hosted_on is None:
+                self.bench.targets[target].hosted_on = inside  # in effect now, not at the next scan
         self._memory_event(dev, e)
         return {"status": "pending_human" if e.status == "pending" else "remembered", "id": e.id}
 
@@ -829,7 +846,20 @@ class Broker:
             t.evidence.append(Evidence("agent-read", f"\"{q}\" ({where})"))
             e = self.memory.add(self._key(dev), Entry(kind="identity", text=name, source="agent", evidence=q, target=tid), self._header(dev))
         self._memory_event(dev, e)
+        self._bench_event()  # the name shows in the panel now, not at the next scan
         return {"status": "identified", "target": tid, "found_in": where}
+
+    def _bench_event(self) -> None:
+        """The bench as it is now, for the human's panel: a scan or a name from the agent's side shows at once (review 7, 18)."""
+        from dataclasses import asdict
+
+        from . import knowledge as K
+        from . import memory as M
+
+        r = self.last
+        if r is not None:
+            self._emit({"event": "bench", "bench": r.bench.to_dict(), "proposals": [asdict(p) for p in r.proposals],
+                        "knowledge_errors": list(K.PROBLEMS) + [f"{p}: {e}" for p, e in M.PROBLEMS.items()]})
 
     def read_log(self, port: str, lines: int = 200, contains: str | None = None) -> dict:
         """The end of a watched port's log (SAFE: it reads a file benchscout wrote)."""

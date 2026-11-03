@@ -300,3 +300,21 @@ def test_a_port_held_by_benchscout_cannot_be_opened_by_another_program():
         held.close()
         os.close(master)
         os.close(slave)
+
+
+def test_learned_wiring_carries_the_disturbance_like_shipped_wiring(tmp_path):
+    """Review 7 (13): "this UART is inside the FPGA" was kept as words only; writing the FPGA was not known to stop it."""
+    from benchscout.policy import classify
+
+    br = bench(tmp_path)
+    uart = br.resolve_port(CH340)
+    fpga = next(t.id for t in br.bench.targets.values() if t.kind == "fpga")
+    jtag = next(p.id for p in br.bench.ports_reaching(fpga) if p.kind == "jtag")
+    assert uart not in classify(br.bench, "fpga.program", jtag, {"bitstream": "x.bit"}).affected_ports
+    assert br.remember(uart, "config", "wired to the FPGA's fabric", data={"inside": "target:nowhere"})["status"] == "rejected"
+    assert br.remember(uart, "config", "wired to the FPGA's fabric", data={"inside": fpga})["status"] == "remembered"
+    assert uart in classify(br.bench, "fpga.program", jtag, {"bitstream": "x.bit"}).affected_ports, "now, not at the next scan"
+    br.end_session()
+    again = bench(tmp_path)  # this folder remembers it: the next session too
+    assert uart in classify(again.bench, "fpga.program", jtag, {"bitstream": "x.bit"}).affected_ports
+    again.end_session()
