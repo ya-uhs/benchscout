@@ -211,10 +211,12 @@ export class Harness extends EventEmitter {
     const command = a.effect === "disruptive" && Array.isArray(a.impact.subjects) && a.impact.subjects.length > 0;
     const options: CardOption[] = [{ id: "once", label: this.s.allowOnce, primary: true }];
     if (a.effect === "disruptive") options.push({ id: "session", label: command ? this.s.allowCommandSession : this.s.allowSession });
-    if (command) options.push({ id: "always", label: this.s.allowAlwaysHere });
+    // "always on this instrument" is what the core can keep for SCPI commands only (until the entrances are one)
+    const always = command && a.action.startsWith("scpi.");
+    if (always) options.push({ id: "always", label: this.s.allowAlwaysHere });
     if (a.effect === "disruptive" && !this.core.allowAll) options.push({ id: "all", label: this.s.allowAllSession });
     options.push({ id: "deny", label: this.s.deny });
-    const covers = a.effect !== "disruptive" ? "" : `\n${command ? this.s.commandCovers : this.s.sessionCovers}`;
+    const covers = a.effect !== "disruptive" ? "" : `\n${always ? this.s.commandCovers : command ? this.s.commandCoversSession : this.s.sessionCovers}`;
     this.add({
       // what the session option lets run later, said before the human picks it
       kind: "confirm", title: this.s.actions[a.action] ?? a.action,
