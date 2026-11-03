@@ -170,8 +170,26 @@ def _base(action: str) -> tuple[Effect, bool, str]:
     return (a.effect, a.disturbs, a.reason) if a else (Effect.DANGEROUS, True, "unknown action")
 
 
-def classify(bench: Bench, action: str, port_id: str, args: dict | None = None) -> Impact:
-    """`args` are the action's arguments; for SCPI the command line decides the effect."""
+SERIAL_OPENING = ("serial.listen", "serial.watch", "serial.send", "serial.command")  # each opens the port unless held open
+
+
+def sent_lines(text: str) -> list[str]:
+    """The lines a firmware will read from what is sent (data and its line ending together)."""
+    return [line.strip() for line in re.split(r"[\r\n]+", text) if line.strip()]
+
+
+def remembered(port, line: str) -> dict | None:
+    """The remembered command a sent line is: the same text, or the same command followed by arguments."""
+    for key, c in port.commands.items():
+        if key and (line == key or line.startswith(key + " ")):
+            return c
+    return None
+
+
+def classify(bench: Bench, action: str, port_id: str, args: dict | None = None, port_open: bool = False) -> Impact:
+    """`args` are the action's arguments; for SCPI the command line decides the effect. `port_open`: the port is held
+    open already at these settings (watched), so the call opens nothing. The effect is the strongest of the call's
+    steps: opening the port, then what is sent (design.md section 3, runtime contracts)."""
     if port_id not in bench.ports:
         raise KeyError(f"unknown port {port_id}")
     port = bench.ports[port_id]
@@ -180,12 +198,22 @@ def classify(bench: Bench, action: str, port_id: str, args: dict | None = None) 
     code = f"action:{action}" if reason != "unknown action" else "unknown_action"
     arg = (args or {}).get("command")
 
-    if action in ("serial.listen", "serial.watch") and port.may_reset_on_open:
-        effect = Effect.DISRUPTIVE
-        reason = "opening this port can reset the device (DTR/RTS into an auto-reset circuit, or a native-USB chip resetting on open)"
-        code = "reset_on_open"
-        disturbs_targets = True
+    if action in ("serial.listen", "serial.watch") and port_open:
+        effect, disturbs_targets = Effect.SAFE, False
+        reason, code = "the port is already open (watched); reading it opens nothing", "watched"
+    if action == "serial.send":
+        # what is sent decides, line by line: a command remembered as stronger than sending bytes stays so (a raw send
+        # is not a way around it), and a grant covers only the command words the human saw
+        lines = sent_lines(str((args or {}).get("data", "")) + str((args or {}).get("eol", "")))
+        subjects = sorted({line.split()[0] for line in lines}) or [""]
+        for line in lines:
+            known = remembered(port, line)
+            if known and not known.get("pending") and Effect[known["effect"].upper()] > effect:
+                effect = Effect[known["effect"].upper()]
+                reason = f"`{line}` is remembered as {known['effect'].upper()}" + (f": {known['text']}" if known.get("text") else "")
+                code = f"command_{known['effect']}"
     if action == "serial.command":
+        subjects = [str((args or {}).get("name", ""))]  # a grant for one remembered command is not one for another
         known = port.commands.get((args or {}).get("name", ""))
         if known and not known.get("pending"):
             effect = Effect[known["effect"].upper()]
@@ -200,6 +228,12 @@ def classify(bench: Bench, action: str, port_id: str, args: dict | None = None) 
         # one rule for both: the command line decides, not which of the two the agent called
         effect, reason, code, subjects = _scpi(port, arg)
         disturbs_targets = effect > Effect.SAFE
+    if action in SERIAL_OPENING and not port_open and port.may_reset_on_open and effect < Effect.DISRUPTIVE:
+        # opening is a step of the call: a command that is safe once sent is not safe to send through a port that resets
+        effect = Effect.DISRUPTIVE
+        reason = "opening this port can reset the device (DTR/RTS into an auto-reset circuit, or a native-USB chip resetting on open)"
+        code = "reset_on_open"
+        disturbs_targets = True
 
     disturbed: list[str] = []
     if disturbs_targets:

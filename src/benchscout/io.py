@@ -63,16 +63,22 @@ def run_tool(argv: list[str], timeout: float, cwd: str | Path | None = None) -> 
     inherits a pipe another thread is reading waits for that read to finish (esptool sat there until the next line
     on the control channel, Windows VM 2026-11-02). At the time limit the whole process tree is stopped: tools built
     with PyInstaller leave a child holding the output pipes, and waiting on those never ends."""
+    posix = platform.system() != "Windows"
     p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd,
-                         text=True, encoding="utf-8", errors="replace")
+                         text=True, encoding="utf-8", errors="replace", start_new_session=posix)
     try:
         out, err = p.communicate(timeout=timeout)
         return (out or "") + (err or ""), p.returncode
     except subprocess.TimeoutExpired:
         if platform.system() == "Windows":
             subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], stdin=subprocess.DEVNULL, capture_output=True)
-        else:
-            p.kill()
+        else:  # its own process group: the children it started go too (one may hold the port)
+            import signal
+
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                p.kill()
         try:
             out, err = p.communicate(timeout=5)
         except subprocess.TimeoutExpired:
@@ -115,6 +121,20 @@ class _LiveStream:
             pass
 
 
+def _exclusive(s) -> None:
+    """POSIX: TIOCEXCL on the open tty, so no other program can open it while benchscout holds it (pyserial's
+    `exclusive` is an flock, which only programs that also take it respect). Windows COM ports are exclusive anyway."""
+    if platform.system() == "Windows":
+        return
+    import fcntl
+    import termios
+
+    try:
+        fcntl.ioctl(s.fileno(), termios.TIOCEXCL)
+    except (OSError, AttributeError, ValueError):
+        pass  # (a fixture or a port without a tty: nothing to hold)
+
+
 class LiveIo:
     def serial_stream(self, path: str, baud: int = 115200, exclusive: bool = False, lines: str = "low") -> _LiveStream:
         import serial
@@ -127,6 +147,8 @@ class LiveIo:
             s.dtr = False
             s.rts = False
         s.open()
+        if exclusive:
+            _exclusive(s)
         return _LiveStream(s)
 
     def port_present(self, path: str) -> bool:
@@ -309,6 +331,8 @@ class LiveIo:
                 s.dtr = False
                 s.rts = False
             s.open()
+            if exclusive:
+                _exclusive(s)
             return s
 
         start = time.monotonic()

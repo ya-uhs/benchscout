@@ -64,6 +64,9 @@ class Port:
     # How to set DTR/RTS when opening: "low" (drop both; avoids Arduino-style DTR resets) or
     # "asserted" (leave them as the OS opened them; for chips that reset on the transition).
     open_lines: str = "low"
+    # the chip itself is this USB device (no bridge in between): if it resets, the port drops off the bus, so a port that
+    # stays put after opening shows the chip did not reset. Behind a USB-UART bridge only the MCU resets and the port stays.
+    own_usb: bool = False
     evidence: list[Evidence] = field(default_factory=list)
     # firmware commands remembered for this port (design.md section 4): name -> {effect, eol, text, pending}
     commands: dict[str, dict] = field(default_factory=dict)

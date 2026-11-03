@@ -1,0 +1,42 @@
+{
+ "_comment": "macOS 26 (Apple Silicon), 2026-11-03: pyserial's serial ports and system_profiler's USB devices, with where each is plugged in (pyserial '1-1' is system_profiler's locationID 0x01100000)",
+ "serial": [
+  {
+   "device": "/dev/cu.usbserial-101",
+   "vid": "0x0403",
+   "pid": "0x6010",
+   "serial_number": "FactoryAIOT Pro",
+   "location": "0-1"
+  },
+  {
+   "device": "/dev/cu.usbserial-100",
+   "vid": "0x0403",
+   "pid": "0x6010",
+   "serial_number": "FactoryAIOT Pro",
+   "location": "0-1"
+  },
+  {
+   "device": "/dev/cu.usbmodem1101",
+   "vid": "0x303a",
+   "pid": "0x1001",
+   "serial_number": "24:58:7C:E9:40:00",
+   "location": "1-1"
+  }
+ ],
+ "usb": [
+  {
+   "name": "USB JTAG/serial debug unit",
+   "vid": "0x303a",
+   "pid": "0x1001",
+   "serial": "24:58:7C:E9:40:00",
+   "location": "0x01100000"
+  },
+  {
+   "name": "JTAG Debugger",
+   "vid": "0x0403",
+   "pid": "0x6010",
+   "serial": "FactoryAIOT Pro",
+   "location": "0x00100000"
+  }
+ ]
+}

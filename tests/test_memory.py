@@ -108,8 +108,8 @@ def test_a_port_remembered_as_safe_to_open_that_resets_when_opened_asks_again(tm
     br.decide_memory(br._key(dev), res["id"], True)
     port = br.resolve_port(ESP)
     assert br.select([dev.id])["watching"] == [port], "remembered as safe to open: watched without asking"
-    for _ in range(100):
-        if br.bench.ports[port].may_reset_on_open:
+    for _ in range(150):  # the last step: the human is told (the port asks again before that, at once)
+        if any(e["event"] == "memory_added" and e["entry"]["data"].get("listen_safe") is False for e in events):
             break
         time.sleep(0.02)
     assert br.bench.ports[port].may_reset_on_open, "it vanished 0.3 s after opening: opening asks again, now"
@@ -127,14 +127,18 @@ def test_a_port_remembered_as_safe_to_open_that_resets_when_opened_asks_again(tm
 
 def test_two_quiet_opens_propose_listening_as_safe_pending_the_human(tmp_path):
     events = []
-    br = session(tmp_path, fixture(tmp_path), CH340, events=events)
-    for _ in range(2):
-        aid = br.request("serial.listen", CH340, {"seconds": 0.1})["approval_id"]
-        br.decide(aid, True)
-        br.request("serial.listen", CH340, {"seconds": 0.1}, approval_id=aid)
+    br = session(tmp_path, fixture(tmp_path), ESP, CH340, events=events)
+    for port in (ESP, CH340):
+        for _ in range(2):
+            aid = br.request("serial.listen", port, {"seconds": 0.1})["approval_id"]
+            br.decide(aid, True)
+            br.request("serial.listen", port, {"seconds": 0.1}, approval_id=aid)
     pending = [e for e in events if e["event"] == "memory_added" and e["entry"]["status"] == "pending"]
     assert len(pending) == 1 and pending[0]["entry"]["data"] == {"listen_safe": True, "seen": 2}
-    assert "2 times" in pending[0]["entry"]["text"]
+    assert pending[0]["entry"]["target"] == br.resolve_port(ESP) and "2 times" in pending[0]["entry"]["text"]
+    # review 7 (19): behind a USB-UART bridge the port stays whether or not the MCU reset, so staying proves nothing
+    ch340 = br.bench.devices[br.bench.ports[br.resolve_port(CH340)].device_id]
+    assert not [e for e in br.memory.entries(br._key(ch340)) if e.kind in ("observation", "safety")]
 
 
 def test_a_learned_trouble_line_is_watched_for(tmp_path):
@@ -166,38 +170,60 @@ def test_memory_files_are_plain_toml_and_entries_can_be_deleted(tmp_path):
 
 # ---- firmware commands (design.md section 4) ----------------------------------------------
 
-def _cmd_bench(tmp_path):
+def _cmd_bench(tmp_path, path="/dev/cu.usbserial-10"):
     import json as _json
     from benchscout.broker import Broker
     from benchscout.io import FixtureIo
 
     fx = Path(__file__).parent.parent / "fixtures" / "bench_example.json"
     data = _json.loads(fx.read_text())
-    data["streams"] = {"/dev/cu.usbserial-10": [{"after": 0.05, "text": "boot\n"}]}
-    data.setdefault("replies", {})["/dev/cu.usbserial-10"] = {"status\r\n": "uptime 42s\n", "status\n": "wrong eol\n"}
+    data["streams"] = {path: [{"after": 0.05, "text": "boot\n"}]}
+    data.setdefault("replies", {})[path] = {"status\r\n": "uptime 42s\n", "status\n": "wrong eol\n"}
     f = tmp_path / "bench.json"
     f.write_text(_json.dumps(data))
     br = Broker(FixtureIo(f), tmp_path / "ws" / ".benchscout")
     br.scan()
-    dev = br.bench.ports["serial:usbserial-10"].device_id
-    br.select([dev])
+    br.select([br.bench.ports[br.resolve_port(path)].device_id])
     return br
 
 
+UART = ESP  # opening may reset the chip (its own USB), on a unit with its own serial
+
+
 def test_a_command_remembered_as_safe_waits_for_the_human_then_runs_without_asking(tmp_path):
-    br = _cmd_bench(tmp_path)
-    r = br.remember("serial:usbserial-10", "command", "prints uptime", data={"command": "status", "effect": "safe", "eol": "\r\n"})
+    br = _cmd_bench(tmp_path, UART)
+    port = br.resolve_port(UART)
+    r = br.remember(port, "command", "prints uptime", data={"command": "status", "effect": "safe", "eol": "\r\n"})
     assert r["status"] == "pending_human"
-    first = br.request("serial.command", "serial:usbserial-10", {"name": "status"})
+    first = br.request("serial.command", port, {"name": "status"})
     assert first["status"] == "approval_required", "until the human confirms, it is gated like serial.send"
     assert first["impact"]["code"] == "command_unconfirmed"
-    key = br._key(br.bench.devices[br.bench.ports["serial:usbserial-10"].device_id])
+    key = br._key(br.bench.devices[br.bench.ports[port].device_id])
     br.decide_memory(key, r["id"], True)
-    done = br.request("serial.command", "serial:usbserial-10", {"name": "status"})
+    closed = br.request("serial.command", port, {"name": "status"})
+    assert closed["status"] == "approval_required" and closed["impact"]["code"] == "reset_on_open", \
+        "safe once sent, but sending it opens a port that may reset the board: the open is a step of the call"
+    br.decide(br.watch_offers[port], True)  # the human: watch it (held open from now on)
+    for _ in range(100):
+        if br._held_open(port, {}):
+            break
+        time.sleep(0.02)
+    done = br.request("serial.command", port, {"name": "status"})
     assert done["status"] == "done" and done["impact"]["effect"] == "safe"
     assert "uptime 42s" in done["result"]["reply"], "sent with the remembered line ending"
     assert done["impact"]["code"] == "command_safe"
     assert "remembered as SAFE (confirmed by the human): prints uptime" in done["impact"]["reason"]
+    br.end_session()
+
+
+def test_a_unit_without_its_own_serial_is_not_loosened_by_memory(tmp_path):
+    """Review 7 (9): memory is kept by model and serial; a board with no serial shares it with every other unit of its
+    model, so what loosens safety (a command confirmed as safe) must not carry over to whichever one is plugged in."""
+    br = _cmd_bench(tmp_path)  # the CH340: no serial number
+    port = br.resolve_port("/dev/cu.usbserial-10")
+    r = br.remember(port, "command", "prints uptime", data={"command": "status", "effect": "safe", "eol": "\r\n"})
+    br.decide_memory(br._key(br.bench.devices[br.bench.ports[port].device_id]), r["id"], True)
+    assert br.impact("serial.command", port, {"name": "status"}).effect.name != "SAFE"
     br.end_session()
 
 

@@ -129,7 +129,7 @@ class Memory:
                 if old.kind == entry.kind == "identity" and old.target == entry.target and old.status == "active":
                     old.status = "superseded"
                 if old.kind == entry.kind and old.kind not in ("identity", "observation") and old.text == entry.text \
-                        and old.status == entry.status:
+                        and old.status == entry.status and old.target == entry.target and old.data == entry.data:
                     return old  # the same thing again: keep one (observations are counted, so they repeat)
             f.entries.append(entry)
             f.save()

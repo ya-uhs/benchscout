@@ -44,6 +44,24 @@ def _dev_id(vid, pid, serial, location) -> str:
     return f"usb:{_hex(vid)}:{_hex(pid)}:{serial or location or 'noserial'}"
 
 
+def place(location) -> str | None:
+    """Where a device is plugged in, written one way for both lists: pyserial's "1-1.2" (Linux "3-3:1.0", its interface
+    after the colon) and macOS's USB locationID 0x01120000 (the same digits, one per hub level). None if unknown."""
+    if not location:
+        return None
+    loc = str(location).split()[0]
+    if loc.lower().startswith("0x"):  # macOS: what pyserial's list_ports_osx does with the same number
+        n = int(loc, 16)
+        out = [f"{n >> 24}-"]
+        while n & 0xF00000:
+            if len(out) > 1:
+                out.append(".")
+            out.append(str((n >> 20) & 0xF))
+            n <<= 4
+        return "".join(out)
+    return loc.split(":")[0]
+
+
 def build(io: Io) -> Bench:
     """Discovery only: nothing is opened here."""
     b = Bench(tools={k: v for k, v in io.tools().items()})
@@ -51,6 +69,10 @@ def build(io: Io) -> Bench:
     ports = io.serial_ports()
     with_serial = {(s["vid"], s["pid"]) for s in ports}
     usb = io.usb_devices()  # once: on Windows it is a PowerShell query and a read through every hub
+    # a serial number names one unit only if no other plugged-in unit carries it (none, or one shared by a model)
+    from collections import Counter
+
+    seen = Counter((u["vid"], u["pid"], u.get("serial")) for u in usb)
 
     for u in usb:
         # Every USB device is listed with its raw clues (design.md section 3: benchscout enumerates; the agent
@@ -61,7 +83,10 @@ def build(io: Io) -> Bench:
         if u.get("device_class") == 0x09 or "hub" in (u.get("name") or "").lower():
             continue
         other = (u["vid"], u["pid"]) not in K.USB_IDS and (u["vid"], u["pid"]) not in with_serial and not u.get("no_driver")
-        did = _dev_id(u["vid"], u["pid"], u.get("serial"), u.get("location"))
+        unique = seen[(u["vid"], u["pid"], u.get("serial"))] == 1
+        did = _dev_id(u["vid"], u["pid"], u.get("serial") if unique else None, u.get("location"))
+        if not unique and u.get("serial"):
+            did = f"{did}@{u['serial']}"  # two units with one serial: told apart by where they are plugged in
         raw_usb[did] = u
         b.add_device(
             Device(
@@ -81,21 +106,38 @@ def build(io: Io) -> Bench:
             )
         )
 
-    # Serial ports hang off USB devices; if the USB list lacks one, create the device here.
+    # Serial ports hang off USB devices. A port goes to the one USB device with its ids and serial number; among
+    # several such units, to the one plugged in where the port is; never by guess (design.md section 3: a port of one
+    # board must not be usable by choosing another). A port that cannot be placed is a device of its own.
     by_dev: dict[str, list[dict]] = {}
+    unplaced: set[str] = set()
     usb_serials = {(d.vid, d.pid, d.serial) for d in b.devices.values()}
     for s in ports:
         s = _with_channel(s, usb_serials)
-        did = _dev_id(s["vid"], s["pid"], s.get("serial_number"), None)
-        if did not in b.devices:
-            match = [d for d in b.devices.values() if (d.vid, d.pid) == (s["vid"], s["pid"]) and d.serial == s.get("serial_number")]
-            if match:
-                did = match[0].id
-            else:
-                name = s.get("description") or f"USB {_hex(s['vid'])}:{_hex(s['pid'])}"
+        same = [d for d in b.devices.values() if (d.vid, d.pid) == (s["vid"], s["pid"]) and d.serial == s.get("serial_number")]
+        if len(same) > 1:
+            here = [d for d in same if place(d.location) and place(d.location) == place(s.get("location"))]
+            unplaced |= {d.id for d in same}
+            same = here
+        if len(same) == 1:
+            did = same[0].id
+        else:
+            ambiguous = seen[(s["vid"], s["pid"], s.get("serial_number"))] > 1
+            did = _dev_id(s["vid"], s["pid"], None if ambiguous else s.get("serial_number"), None)
+            if ambiguous or did in b.devices:
+                did = f"usb:{_hex(s['vid'])}:{_hex(s['pid'])}:port:{s['device']}"
+            if did not in b.devices:
+                name = next((d.name for d in b.devices.values() if (d.vid, d.pid) == (s["vid"], s["pid"])), None) \
+                    or s.get("description") or f"USB {_hex(s['vid'])}:{_hex(s['pid'])}"
                 b.add_device(Device(did, name, "usb", s["vid"], s["pid"], s.get("serial_number"),
-                                    evidence=[Evidence("serial-port", f"{_hex(s['vid'])}:{_hex(s['pid'])} {s.get('description') or ''}".strip())]))
+                                    evidence=[Evidence("serial-port", f"{_hex(s['vid'])}:{_hex(s['pid'])} {s.get('description') or ''}".strip())]
+                                    + ([Evidence("serial-port", "several identical USB devices are plugged in and this port could not "
+                                                                "be told to belong to one of them: listed as a device of its own")]
+                                       if ambiguous else [])))
         by_dev.setdefault(did, []).append(s)
+    for d in unplaced - set(by_dev):  # identical units whose ports went elsewhere: their ports stand for them
+        if not any(s for s in by_dev.get(d, [])):
+            del b.devices[d]
 
     for did, dev in list(b.devices.items()):
         info = K.USB_IDS.get((dev.vid, dev.pid), {"role": "unknown"}) if dev.vid is not None and dev.pid is not None else {"role": "unknown"}
@@ -214,6 +256,7 @@ def _apply_usb_knowledge(b: Bench, dev: Device, info: dict, serials: list[dict],
         for s in serials:
             p = _serial_port(b, dev, s, may_reset=info.get("may_reset_on_open", False))
             p.open_lines = info.get("open_lines", "low")
+            p.own_usb = True
             b.link(p.id, t.id, "uart", Evidence("usb-descriptor", "CDC-ACM of the chip"))
         if info.get("jtag"):
             p = b.add_port(Port(f"jtag:{short}", dev.id, "jtag", evidence=[Evidence("usb-descriptor", "built-in USB-JTAG interface")]))
@@ -293,13 +336,16 @@ def _add_visa(b: Bench, res: str, names: dict | None = None) -> None:
 
 
 def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] | None = None,
-        keep: set[str] | frozenset[str] = frozenset(), heard: dict[str, dict] | None = None) -> Recon:
+        keep: set[str] | frozenset[str] = frozenset(), heard: dict[str, dict] | None = None,
+        prepare: Callable[[Bench], None] | None = None) -> Recon:
     """`busy(device_id)` names another benchscout window holding that device; its ports are
     left alone (docs/notes.md review S1/S2). Devices in `keep` are not probed either (the session is using them,
     or only newly plugged devices are being looked at): what their probes got before (`heard`) is shown again."""
     import time
 
     b = build(io)
+    if prepare:  # memory first: a port learned to reset when opened is not opened by a probe (design.md section 3)
+        prepare(b)
     r = Recon(b)
 
     for port in list(b.ports.values()):
@@ -315,7 +361,7 @@ def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] 
         if port.device_id in keep:
             if heard and port.id in heard:
                 r.heard[port.id] = heard[port.id]
-                _fold(b, targets, heard[port.id], earlier=True)
+                _fold(b, targets, heard[port.id], earlier=True, port=port)
             continue
 
         got: dict | None = None
@@ -341,25 +387,32 @@ def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] 
         if got is not None:
             got["time"] = time.strftime("%Y-%m-%d %H:%M")
             r.heard[port.id] = got
-            _fold(b, targets, got)
+            _fold(b, targets, got, port=port)
 
     r.proposals = propose(b)
     return r
 
 
-def _fold(b: Bench, targets: list[Target], got: dict, earlier: bool = False) -> None:
+def _fold(b: Bench, targets: list[Target], got: dict, earlier: bool = False, port: Port | None = None) -> None:
     """What a probe got, into the targets it reaches. `earlier`: from a scan before this one (the device was left
     alone this time); a log is then labelled with when it was heard, as output kept from before is."""
     result = got.get("result")
     if got["probe"] == "idn":
+        info = K.parse_idn(result) if result else None
         for t in targets:
-            if result:
-                info = K.parse_idn(result)
-                t.name = f"{info['maker'].split()[0].title()} {info['model']}"
+            if info and (info["maker"] or info["model"]):
+                t.name = " ".join(x for x in ((info["maker"].split() or [""])[0].title(), info["model"]) if x)
                 t.confidence = Confidence.IDENTIFIED
-                t.evidence.append(Evidence("scpi *IDN?", result))
+                t.evidence.append(Evidence("scpi *IDN?", str(result)))
+            elif result:
+                t.evidence.append(Evidence("scpi *IDN?", str(result)))  # an answer that names nothing
             else:
                 t.facts.append("no answer to *IDN?")
+        if info and info["serial"] and port is not None:
+            dev = b.devices[port.device_id]
+            if dev.transport == "lan" and not dev.serial:
+                # a LAN instrument has no USB serial: the unit is what it says it is (maker, model, serial), not its address
+                dev.serial = " ".join(x for x in (info["maker"], info["model"], info["serial"]) if x)
     elif got["probe"] == "listen":
         _fold_listen(targets, result, got.get("error"), got["time"] if earlier else None)
     elif got["probe"] == "jtag":

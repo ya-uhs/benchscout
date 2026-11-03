@@ -144,8 +144,8 @@ def classify_log(text: str) -> dict:
 def parse_idn(idn: str) -> dict:
     """IEEE 488.2 *IDN?: maker, model, serial, firmware, comma-separated. Only what the instrument says."""
     parts = [p.strip() for p in idn.split(",")]
-    maker, model = (parts + ["", ""])[:2]
-    return {"maker": maker, "model": model}
+    maker, model, serial = (parts + ["", "", ""])[:3]
+    return {"maker": maker, "model": model, "serial": serial}
 
 
 load()

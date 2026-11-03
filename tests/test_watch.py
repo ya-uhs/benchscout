@@ -4,6 +4,7 @@ import json
 import time
 from pathlib import Path
 
+from benchscout import watch as watch_mod
 from benchscout.broker import Broker
 from benchscout.io import FixtureIo
 
@@ -57,7 +58,8 @@ def test_safe_port_is_watched_on_selection_and_a_crash_is_noticed_once(tmp_path)
     br.end_session()
 
 
-def test_vanish_and_return_are_events_and_reading_goes_on(tmp_path):
+def test_vanish_and_return_are_events_and_reading_goes_on(tmp_path, monkeypatch):
+    monkeypatch.setattr(watch_mod, "OPEN_RESET_S", 0.05)  # a reset well after opening, not one the open caused
     io, br, events = bench(tmp_path, {VCP: [{"after": 0.05, "text": "before\n"}, {"after": 0.1, "vanish": 0.3},
                                             {"after": 0.6, "text": "after reset\n"}]})
     select(br, VCP)
@@ -160,15 +162,16 @@ def test_an_offered_watch_that_did_not_reset_the_device_is_remembered_as_an_obse
     seen = _all_events(br)
     timers = []
     monkeypatch.setattr(threading, "Timer", lambda t, f: timers.append(f) or type("T", (), {"start": lambda s: None})())
-    select(br, CH340)
+    esp = "/dev/cu.usbmodem1101"  # the chip's own USB: if opening reset it, the port would drop off
+    select(br, esp)
     a = next(e["approval"] for e in seen if e["event"] == "approval_requested")
     br.decide(a["id"], True)
     wait_for(seen, lambda e: e.get("event") == "device_event" and e["kind"] == "watching")
     assert timers, "benchscout checks after a moment whether opening reset the device"
     timers[0]()
-    dev = br.bench.devices[br.bench.ports["serial:usbserial-10"].device_id]
+    dev = br.bench.devices[br.bench.ports[br.resolve_port(esp)].device_id]
     obs = [e for e in br.memory.entries(br._key(dev)) if e.kind == "observation"]
-    assert obs and "did not vanish" in obs[0].text
+    assert obs and "own USB port stayed" in obs[0].text
     br.end_session()
 
 
@@ -190,7 +193,8 @@ def test_a_port_lost_while_the_computer_slept_is_put_down_to_the_sleep(tmp_path)
     br.end_session()
 
 
-def test_a_port_lost_while_awake_has_no_cause(tmp_path):
+def test_a_port_lost_while_awake_has_no_cause(tmp_path, monkeypatch):
+    monkeypatch.setattr(watch_mod, "OPEN_RESET_S", 0.05)  # a reset well after opening, not one the open caused
     io, br, events = bench(tmp_path, {VCP: [{"after": 0.1, "vanish": 0.3}, {"after": 0.6, "text": "boot\n"}]})
     select(br, VCP)
     back = wait_for(events, lambda e: e["kind"] == "returned", timeout=4)[0]

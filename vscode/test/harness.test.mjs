@@ -260,7 +260,7 @@ test("benchscout's own safety proposal is said in the person's language; the age
   core.emit("memoryAdded", { key: "k", device_name: "ESP32", entry: entry({}) });
   core.emit("memoryAdded", { key: "k", device_name: "ESP32", entry: entry({ id: "e2", source: "agent", text: "no auto-reset circuit" }) });
   const [own, agent] = h.cards;
-  assert.match(own.body, /serial:usbmodem1101 を開いても機器はリセットされませんでした\(2 回\)/);
+  assert.equal(own.body, strings("ja").listenSafeAsk("serial:usbmodem1101", 2), "benchscout's own words, in the person's language");
   assert.equal(agent.body, "no auto-reset circuit");
 });
 

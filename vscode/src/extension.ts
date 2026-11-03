@@ -74,8 +74,10 @@ function which(exe: string): string | undefined {
 }
 
 function coreCommand(ctx: vscode.ExtensionContext): string {
-  const set = vscode.workspace.getConfiguration("benchscout").get<string>("corePath");
-  if (set) return set;
+  // which program runs is the person's choice, never a folder's: only their own (machine/user) setting counts
+  const set = vscode.workspace.getConfiguration("benchscout").inspect<string>("corePath");
+  const own = set?.globalValue;
+  if (own) return own;
   // the frozen core shipped inside a platform .vsix (packaging/build_core.py)
   const exe = process.platform === "win32" ? "benchscout.exe" : "benchscout";
   const bundled = path.join(ctx.extensionPath, "bin", "benchscout", exe);

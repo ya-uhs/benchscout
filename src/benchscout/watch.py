@@ -26,13 +26,19 @@ COOLDOWN_S = 30.0  # the same alert on the same port is reported at most this of
 # Linux; real bench 2026-11-01: a lid closed overnight made both boards' ports vanish and return at every
 # dark wake while their counters never reset). A port that vanishes around then is put down to that.
 SLEEP_GAP_S = 20.0
+OPEN_RESET_S = 3.0  # dropping off this soon after an open means the open reset (or re-enumerated) the device
 SLEEP_WINDOW_S = 120.0
 
 
 class PortWatch:
     def __init__(self, io, port_id: str, path: str, log_dir: Path, on_event: Callable[[dict], None],
-                 baud: int = 115200, lines: str = "low", patterns: list[dict] | None = None):
+                 baud: int = 115200, lines: str = "low", patterns: list[dict] | None = None, device_id: str = "",
+                 may_reopen: Callable[["PortWatch"], tuple[bool, str]] | None = None):
         self.io, self.port_id, self.path = io, port_id, path
+        self.device_id = device_id  # the unit it was opened for: a port that comes back may be another's
+        # asked before opening again (design.md section 3: the broker decides every open, on the state at that moment)
+        self.may_reopen = may_reopen
+        self.reset_after_open = False  # it dropped off right after the last (re)open: opening it resets the device
         self.baud, self.lines = baud, lines
         self.log = Path(log_dir) / (port_id.replace(":", "_") + ".log")
         self.log.parent.mkdir(parents=True, exist_ok=True)
@@ -53,10 +59,21 @@ class PortWatch:
         self._drift = self._wall() - self._mono()
         self._slept_until = 0.0  # monotonic time until which vanishing is put down to the host sleeping
         # lines this device is known to print when something is wrong, learned into memory (design.md 6)
+
+        self.set_patterns(patterns)
+
+    def set_patterns(self, patterns: list[dict] | None) -> None:
+        """The lines this device is known to print when something is wrong (memory): replaced while it runs. A pattern
+        that does not compile is skipped, not a reason to stop watching."""
         import re as _re
 
-        self.patterns = [(_re.compile(p["pattern"]), p.get("alert", "remembered pattern")) for p in (patterns or [])
-                         if p.get("pattern")]
+        out = []
+        for p in patterns or []:
+            try:
+                out.append((_re.compile(p["pattern"]), p.get("alert", "remembered pattern")))
+            except (_re.error, KeyError, TypeError):
+                continue
+        self.patterns = out
 
     # ---- lifecycle ------------------------------------------------------------------
     def start(self) -> None:
@@ -147,9 +164,11 @@ class PortWatch:
                 self._check_sleep()
                 stream.close()
                 self.vanishes += 1
+                self.reset_after_open = time.monotonic() - self.opened_at < OPEN_RESET_S
                 self._event("vanished", str(e))
-                if not self._reopen():
-                    self._event("gone", f"did not come back within {REAPPEAR_S:.0f} s")
+                ok, why = self._reopen()
+                if not ok:
+                    self._event("gone", why)
                     self.alive = False
                     return
                 self._event("returned", "the port came back; reading again")
@@ -157,18 +176,23 @@ class PortWatch:
             if chunk:
                 self._take(chunk)
 
-    def _reopen(self) -> bool:
+    def _reopen(self) -> tuple[bool, str]:
         deadline = time.monotonic() + REAPPEAR_S
         while time.monotonic() < deadline and not self._stop.is_set():
             time.sleep(0.1)
             if not self.io.port_present(self.path):
                 continue
+            if self.may_reopen:
+                allowed, why = self.may_reopen(self)
+                if not allowed:
+                    return False, why
             try:
                 self._stream = self.io.serial_stream(self.path, self.baud, True, self.lines)
-                return True
+                self.opened_at = time.monotonic()
+                return True, ""
             except Exception:
                 continue
-        return False
+        return False, f"did not come back within {REAPPEAR_S:.0f} s"
 
     def _take(self, chunk: bytes) -> None:
         with self._cond:

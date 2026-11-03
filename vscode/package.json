@@ -64,7 +64,8 @@
         "benchscout.corePath": {
           "type": "string",
           "default": "",
-          "description": "Path to the benchscout executable. Empty: the one bundled with the extension, else `benchscout` on PATH."
+          "scope": "machine",
+          "description": "Path to the benchscout executable (your own settings only: a folder's settings cannot choose a program to run). Empty: the one bundled with the extension, else `benchscout` on PATH."
         },
         "benchscout.agent": {
           "type": "string",
@@ -141,6 +142,7 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
+      "restrictedConfigurations": ["benchscout.corePath"],
       "description": "In a folder you have not trusted, benchscout does not read the folder's own .benchscout/knowledge files: a project from elsewhere could declare its actions safe."
     }
   }

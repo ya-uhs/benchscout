@@ -24,6 +24,7 @@ from .io import Io, run_tool
 from .locks import DeviceLocks
 from .policy import SCPI_PORTS, Effect, Impact, classify, scpi_default, scpi_headers
 
+LINE_ENDINGS = ("\n", "\r\n", "\r", "")
 OPEN_RESET_S = 3.0  # a port that vanishes this soon after being opened was reset (or re-enumerated) by the open
 RECENT_FOR_QUOTES = 2 * 1024 * 1024  # how much recent output a quote is checked against
 
@@ -105,6 +106,7 @@ class Broker:
         self.watches: dict = {}  # port id -> PortWatch (selected devices' ports held open)
         self.watch_offers: dict[str, str] = {}  # port id -> approval id: benchscout asked the human to watch it
         self.watch_declined: set[str] = set()  # ports the human said not to watch, this session
+        self.watch_approved: set[str] = set()  # ports the human allowed to be watched although opening may reset them
         self._pending_shown: set[str] = set()  # memory entries waiting for the human that the panel was given
         from .memory import Memory
 
@@ -131,11 +133,24 @@ class Broker:
         """Look at the bench again. A device in the session is never probed again (its watch and the agent's
         actions are using it; what its probes got before is kept). `only_new`: probe only devices that were not
         there at the last scan (a plug noticed by the core; design.md section 17)."""
+        from . import knowledge as K
+
         with self._lock:
+            K.load(self.state.parent if self.workspace_knowledge else None)  # a fixed knowledge file counts at the next scan
             busy = self.locks.holder if self.locks else None
             before = self.last.bench if self.last else None
             keep = set(before.devices) if only_new and before else self.selected & set(before.devices if before else ())
-            self.last = R.run(self.io, busy=busy, keep=keep, heard=self.last.heard if self.last else None)
+            keys: dict[str, str] = {}
+
+            def prepare(bench) -> None:
+                self._apply_memory(bench)
+                keys.update({d.id: self._key(d) for d in bench.devices.values()})
+
+            self.last = R.run(self.io, busy=busy, keep=keep, heard=self.last.heard if self.last else None, prepare=prepare)
+            # a unit known only once it answered (a LAN instrument's *IDN?): its memory, now that it is known
+            later = {d for d, dev in self.last.bench.devices.items() if self._key(dev) != keys.get(d)}
+            if later:
+                self._apply_memory(self.last.bench, only=later)
             for tid, kept in self.observed.items():
                 if tid not in self.last.bench.targets:
                     continue
@@ -144,7 +159,6 @@ class Broker:
                     if kind in kept and kept[kind][1] not in seen_texts:
                         seen_texts.append(kept[kind][1])
                         R.apply_log([self.last.bench.targets[tid]], kept[kind][1], seen=kept[kind][0])
-            self._apply_memory(self.last.bench)
             self.last.proposals = R.propose(self.last.bench)
             (self.state / "inventory.json").write_text(json.dumps(self.last.to_dict(), indent=2, default=str), encoding="utf-8")
             # what still waits for the human (from an earlier session) is shown again, for connected devices only
@@ -206,7 +220,14 @@ class Broker:
 
     def impact(self, action: str, port: str, args: dict | None = None) -> Impact:
         with self._lock:
-            return classify(self.bench, action, self.resolve_port(port), A.get(action).normalize(args))
+            pid = self.resolve_port(port)
+            args = A.get(action).normalize(args)
+            return classify(self.bench, action, pid, args, port_open=self._held_open(pid, args))
+
+    def _held_open(self, port_id: str, args: dict) -> bool:
+        """The port is open already at these settings (watched at this baud): the call opens nothing."""
+        w = self.watches.get(port_id)
+        return bool(w and w.alive and args.get("baud", w.baud) == w.baud)
 
     # ---- session (human, control channel) --------------------------------------
     def select(self, device_ids: list[str]) -> dict:
@@ -395,20 +416,34 @@ class Broker:
 
         return device_key(dev.vid, dev.pid, dev.serial)
 
+    @staticmethod
+    def _one_unit(bench, dev) -> bool:
+        """Memory is kept by model and serial number. It is about this very unit only if the serial is the unit's own: it
+        has one, the model does not share one serial across units, and no other unit plugged in carries it. Memory that
+        loosens safety applies only then (design.md section 3, runtime contracts; notes.md review 7: a second board
+        without a serial took on the first's 'safe to open')."""
+        from . import knowledge as K
+
+        if not dev.serial or dev.serial in K.SHARED_SERIALS:
+            return False
+        return sum(1 for d in bench.devices.values() if (d.vid, d.pid, d.serial) == (dev.vid, dev.pid, dev.serial)) == 1
+
     def _header(self, dev) -> dict:
         from . import knowledge as K
 
         return {"device": dev.name, "vid": f"{dev.vid or 0:04x}", "pid": f"{dev.pid or 0:04x}", "serial": dev.serial or "",
                 "shared_serial": dev.serial in K.SHARED_SERIALS}
 
-    def _apply_memory(self, bench) -> None:
-        """What was learned before shows up in the first read, without an LLM."""
-        from . import knowledge as K
+    def _apply_memory(self, bench, only: set[str] | None = None) -> None:
+        """What was learned before shows up in the first read, without an LLM. `only`: these devices (the rest is done)."""
         from .model import Confidence, Evidence
 
-        self.patterns: dict[str, list[dict]] = {}
+        if only is None:
+            self.patterns: dict[str, list[dict]] = {}
         for dev in bench.devices.values():
-            shared = dev.serial in K.SHARED_SERIALS
+            if only is not None and dev.id not in only:
+                continue
+            shared = not self._one_unit(bench, dev)
             targets = [t for p in bench.ports_of(dev.id) for t in bench.targets_via(p.id)]
             for e in self.memory.entries(self._key(dev)):
                 if e.status != "active" and not (e.kind == "command" and e.status == "pending"):
@@ -424,7 +459,7 @@ class Broker:
                         bench.ports[e.target].may_reset_on_open = True  # seen to reset when opened: stricter, at once
                         continue
                     if shared:
-                        continue  # another unit of this model may answer to the same serial: never loosen safety on it
+                        continue  # memory of this model and serial may be another unit's: never loosen safety on it
                     if e.target in bench.ports and e.data.get("listen_safe"):
                         bench.ports[e.target].may_reset_on_open = False
                 elif e.kind == "command" and e.data.get("command"):
@@ -457,19 +492,23 @@ class Broker:
         if text is None or VANISHED_MARK in text:
             return
         dev = self.bench.devices[port.device_id]
+        if not port.own_usb or not self._one_unit(self.bench, dev):
+            # behind a bridge the port stays whether the MCU reset or not: its staying proves nothing (review 7, 19)
+            return
         key = self._key(dev)
         self.memory.add(key, Entry(kind="observation", source="benchscout", target=port_id,
-                                   text=f"opened {port.path} and it did not vanish (no re-enumeration seen)",
+                                   text=f"opened {port.path} and the chip's own USB port stayed (did not drop off and come back)",
                                    time=time.strftime("%Y-%m-%dT%H:%M:%S")), self._header(dev))
         entries = self.memory.entries(key)
         # what counts is what was seen since the device last said otherwise (it reset when opened)
         since = max((e.time for e in entries if e.kind == "safety" and e.target == port_id and e.data.get("listen_safe") is False),
                     default="")
-        seen = sum(1 for e in entries if e.kind == "observation" and e.target == port_id and "did not vanish" in e.text
-                   and e.time > since)
+        seen = sum(1 for e in entries if e.kind == "observation" and e.target == port_id and e.time > since
+                   and ("did not vanish" in e.text or "own USB port stayed" in e.text))
         if seen >= 2 and not any(e.kind == "safety" and e.target == port_id and e.status in ("pending", "active", "rejected") for e in entries):
             e = self.memory.add(key, Entry(kind="safety", source="benchscout", target=port_id, status="pending",
-                                           text=f"Listening to {port.path} did not reset {dev.name} ({seen} times). Treat listening as SAFE?",
+                                           text=f"Opening {port.path} left the chip's own USB port in place ({seen} times): it did not "
+                                                f"reset, as this chip shows a reset by dropping off. Treat listening as SAFE?",
                                            data={"listen_safe": True, "seen": seen}), self._header(dev))
             self._memory_event(dev, e)
 
@@ -514,6 +553,15 @@ class Broker:
             dev, target = self._resolve_ref(ref)
             if kind == "command":
                 return self._remember_command(dev, ref, text, evidence, data or {}, source)
+            if kind == "identity":
+                return {"status": "rejected", "message": "a part is named only with bench_identify, quoting the device's own "
+                                                         "output (benchscout checks the quote)"}
+            pattern = (data or {}).get("pattern")
+            if kind == "interpretation" and pattern is not None:
+                try:
+                    re.compile(str(pattern))  # checked now: a bad one would stop the next watch from starting
+                except re.error as err:
+                    return {"status": "rejected", "message": f"pattern is not a regular expression: {err}"}
             if kind == "safety":
                 allowed = {"listen_safe"}
                 if not data or set(data) - allowed:
@@ -525,8 +573,19 @@ class Broker:
             e = Entry(kind=kind, text=text, source=source, evidence=evidence, target=target or "",
                       status="pending" if kind == "safety" else "active", data=data or {})
             e = self.memory.add(self._key(dev), e, self._header(dev))
+            if kind == "interpretation":
+                self._refresh_patterns(dev)  # the running watch looks for it from now on
         self._memory_event(dev, e)
         return {"status": "pending_human" if e.status == "pending" else "remembered", "id": e.id}
+
+    def _refresh_patterns(self, dev) -> None:
+        """The lines learned to mean trouble on this device, given to its running watches."""
+        pats = [e.data for e in self.memory.entries(self._key(dev))
+                if e.kind == "interpretation" and e.status == "active" and e.data.get("pattern")]
+        self.patterns = dict(getattr(self, "patterns", {}), **{dev.id: pats})
+        for w in list(self.watches.values()):
+            if w.device_id == dev.id:
+                w.set_patterns(pats)
 
     def _remember_command(self, dev, ref: str, text: str, evidence: str, data: dict, source: str,
                           confirmed: bool = False) -> dict:
@@ -548,6 +607,9 @@ class Broker:
             return {"status": "rejected", "message": str(err)}
         if effect not in ("safe", "disruptive", "dangerous"):
             return {"status": "rejected", "message": "effect must be safe, disruptive or dangerous"}
+        if "eol" in data and data["eol"] not in LINE_ENDINGS:
+            # a line ending that carries more ("\nerase\n") would send a second command the human never saw
+            return {"status": "rejected", "message": "eol must be one of \"\\n\", \"\\r\\n\", \"\\r\" or \"\" (nothing)"}
         kinds = ("serial", *SCPI_PORTS)
         port = next((p.id for p in self.bench.ports_of(dev.id) if p.id == ref or p.path == ref), None)
         if not port:
@@ -563,14 +625,11 @@ class Broker:
             if len(units) != 1:
                 return {"status": "rejected", "message": "remember one SCPI command (one header) per entry, without ';'"}
         key = self._key(dev)
-        same = self._command_key(self.bench.ports[port], cmd)
-        for old in self.memory.entries(key):  # the same command again: the newer entry replaces the older
-            if (old.kind == "command" and old.target == port and old.status in ("active", "pending")
-                    and self._command_key(self.bench.ports[port], old.data.get("command", "")) == same):
-                self.memory.set_status(key, old.id, "superseded")
-        loosens = self._loosens(self.bench.ports[port], cmd, effect)
-        e = Entry(kind="command", text=text, source=source, evidence=evidence, target=port,
-                  status="pending" if loosens and not confirmed else "active",
+        loosens = self._loosens(self.bench.ports[port], cmd, effect, self._in_force(key, self.bench.ports[port], cmd))
+        status = "pending" if loosens and not confirmed else "active"
+        if status == "active":  # the same command again: the newer entry replaces the older (a weaker one only once confirmed)
+            self._supersede_command(key, self.bench.ports[port], cmd)
+        e = Entry(kind="command", text=text, source=source, evidence=evidence, target=port, status=status,
                   data={"command": cmd, "effect": effect, **{k: data[k] for k in ("eol", "until") if data.get(k) is not None}})
         e = self.memory.add(key, e, self._header(dev))
         self._load_command(self.bench, dev, e)
@@ -590,15 +649,43 @@ class Broker:
         return cmd
 
     @staticmethod
-    def _loosens(port, cmd: str, effect: str) -> bool:
-        """Would this entry make the command ask less than benchscout does by itself?"""
+    def _loosens(port, cmd: str, effect: str, in_force: Effect | None = None) -> bool:
+        """Would this entry make the command ask less than it does now: than benchscout by itself, or than a stronger
+        entry already in force (DANGEROUS remembered, then DISRUPTIVE: that is loosening too)?"""
         if port.kind in SCPI_PORTS:
             key = Broker._command_key(port, cmd)
-            return not key or Effect[effect.upper()] < scpi_default(key)[0]
-        return effect == "safe"  # a firmware command is otherwise like sending bytes (DISRUPTIVE)
+            if not key:
+                return True
+            floor = scpi_default(key)[0]
+        else:
+            floor = Effect.DISRUPTIVE  # a firmware command is otherwise like sending bytes
+        return Effect[effect.upper()] < max(floor, in_force or floor)
+
+    def _in_force(self, key: str, port, cmd: str) -> Effect | None:
+        """The strongest effect remembered (and in force) for this command on this port."""
+        same = self._command_key(port, cmd)
+        effects = [Effect[e.data.get("effect", "disruptive").upper()] for e in self.memory.entries(key)
+                   if e.kind == "command" and e.target == port.id and e.status == "active"
+                   and self._command_key(port, e.data.get("command", "")) == same]
+        return max(effects) if effects else None
+
+    def _reload_command(self, key: str, port, cmd: str) -> None:
+        """This command on this port, as memory has it now (entries in the order they were written)."""
+        same = self._command_key(port, cmd)
+        port.commands.pop(same, None)
+        dev = self.bench.devices[port.device_id]
+        for e in self.memory.entries(key):
+            if e.kind == "command" and e.target == port.id and self._command_key(port, e.data.get("command", "")) == same:
+                self._load_command(self.bench, dev, e)
+
+    def _supersede_command(self, key: str, port, cmd: str, keep: str = "") -> None:
+        same = self._command_key(port, cmd)
+        for old in self.memory.entries(key):
+            if (old.kind == "command" and old.target == port.id and old.status in ("active", "pending") and old.id != keep
+                    and self._command_key(port, old.data.get("command", "")) == same):
+                self.memory.set_status(key, old.id, "superseded")
 
     def _load_command(self, bench, dev, e) -> None:
-        from . import knowledge as K
 
         port = bench.ports.get(e.target)
         if not port or e.status not in ("active", "pending"):
@@ -608,7 +695,10 @@ class Broker:
         if not key:
             return
         loosens = self._loosens(port, e.data["command"], effect)
-        shared = dev.serial in K.SHARED_SERIALS  # another unit may answer to this serial: never loosen safety on it
+        shared = not self._one_unit(bench, dev)  # the memory may be another unit's: never loosen safety on it
+        held = port.commands.get(key)
+        if e.status == "pending" and held and not held.get("pending"):
+            return  # waiting for the human: what is in force stays in force meanwhile
         port.commands[key] = {"effect": effect, "eol": e.data.get("eol", "\n"), "until": e.data.get("until"), "text": e.text,
                               "loosens": loosens,
                               "pending": e.status == "pending" or (loosens and shared)}
@@ -622,9 +712,13 @@ class Broker:
             if e and self.last and e.target in self.last.bench.ports:
                 port = self.last.bench.ports[e.target]
                 if e.kind == "command":
-                    port.commands.pop(self._command_key(port, e.data.get("command", "")), None)
+                    self._reload_command(key, port, e.data.get("command", ""))
                 if e.kind == "safety" and e.data.get("listen_safe"):
                     port.may_reset_on_open = True  # back to asking before opening
+            if e and e.kind == "interpretation" and self.last:
+                for dev in self.last.bench.devices.values():
+                    if self._key(dev) == key:
+                        self._refresh_patterns(dev)
         return {"deleted": entry_id}
 
     def recall(self, ref: str | None = None) -> list[dict]:
@@ -656,13 +750,15 @@ class Broker:
 
         e = self.memory.set_status(key, entry_id, "active" if accept else "rejected")
         if accept and e.kind == "safety" and self.last and e.target in self.last.bench.ports and e.data.get("listen_safe"):
-            self.last.bench.ports[e.target].may_reset_on_open = False
+            port = self.last.bench.ports[e.target]
+            if self._one_unit(self.last.bench, self.last.bench.devices[port.device_id]):  # as it is applied after a restart
+                port.may_reset_on_open = False
         if e.kind == "command" and self.last and e.target in self.last.bench.ports:
             port = self.last.bench.ports[e.target]
             if accept:
-                self._load_command(self.last.bench, self.last.bench.devices[port.device_id], e)
-            else:
-                port.commands.pop(self._command_key(port, e.data.get("command", "")), None)
+                self._supersede_command(key, port, e.data.get("command", ""), keep=e.id)
+            # what is in force for this command, from memory again: a rejected weaker entry leaves the stronger one
+            self._reload_command(key, port, e.data.get("command", ""))
         self._emit({"event": "memory_decided", "key": key, "entry": asdict(e)})
         return asdict(e)
 
@@ -737,7 +833,8 @@ class Broker:
         for kind, (when, text) in self.observed.get(target_id, {}).items():
             texts.append((f"output seen {when}", text))
         for ev in self.bench.targets[target_id].evidence:
-            texts.append((ev.source, ev.detail))
+            if ev.source not in ("learned", "board-knowledge"):  # only what devices and tools printed, never what was written
+                texts.append((ev.source, ev.detail))
         return next((where for where, text in texts if quote in text), None)
 
     # ---- watching (design.md section 17) -------------------------------------------------
@@ -815,7 +912,8 @@ class Broker:
 
         port = self.bench.ports[port_id]
         w = PortWatch(self.io, port_id, port.path, self.state / "logs", self._device_event, baud, port.open_lines,
-                      patterns=getattr(self, "patterns", {}).get(port.device_id, []))
+                      patterns=getattr(self, "patterns", {}).get(port.device_id, []), device_id=port.device_id,
+                      may_reopen=self._may_reopen)
         try:
             w.start()
         except Exception as e:  # busy elsewhere, gone: a fact, not a crash
@@ -823,6 +921,22 @@ class Broker:
             return False
         self.watches[port_id] = w
         return True
+
+    def _may_reopen(self, w) -> tuple[bool, str]:
+        """Asked by a watch before it opens its port again (design.md section 3: the broker decides every open). Read
+        without the broker's lock: the session may be stopping the watch while it asks."""
+        last = self.last
+        port = last.bench.ports.get(w.port_id) if last else None
+        if port is None or port.device_id != w.device_id:
+            return False, "its port now belongs to another device, or is gone"
+        if w.device_id not in self.selected:
+            return False, "the device is no longer in the session"
+        if port.may_reset_on_open:
+            if w.port_id not in self.watch_approved:
+                return False, "opening it may reset the device, so benchscout asks before opening it again"
+            if w.reset_after_open:
+                return False, "it dropped off right after it was opened: opening it resets the device, so benchscout asks again"
+        return True, ""
 
     def _unwatch(self, port_id: str) -> None:
         w = self.watches.pop(port_id, None)
@@ -841,9 +955,12 @@ class Broker:
                     ev["through_benchscout"] = recent
         self._emit(ev)
         w = self.watches.get(ev["port"])
-        if ev["kind"] == "vanished" and ev.get("cause") != "host_sleep" and w and w.vanishes == 1 \
-                and time.monotonic() - w.opened_at < OPEN_RESET_S:
+        if ev["kind"] == "vanished" and ev.get("cause") != "host_sleep" and w and w.reset_after_open:
             self._reset_on_open(ev["port"], f"it vanished {time.monotonic() - w.opened_at:.1f} s after it was opened")
+        if ev["kind"] == "gone" and w and "asks" in ev.get("what", "") and w.device_id in self.selected:
+            self.watches.pop(ev["port"], None)
+            self.watch_offers.pop(ev["port"], None)
+            self._offer_watch(ev["port"])  # benchscout asks the human again, as it did the first time
 
     def end_session(self) -> None:
         for pid in list(self.watches):
@@ -868,7 +985,6 @@ class Broker:
             until_pattern(args.get("until"))  # a pattern that does not compile is said now, not after an approval
         except (A.ArgError, ValueError) as e:
             return {"status": "invalid_args", "message": str(e)}
-        key = A.canonical(args)
         with self._lock:
             try:
                 port_id = self.resolve_port(port)
@@ -885,15 +1001,17 @@ class Broker:
                 return {"status": "invalid_args",
                         "message": f"{args['name']!r} is not a remembered command of {port_id} (remembered: {known}). "
                                    "Remember it first with bench_remember (kind command), or send it with serial.send"}
+            if action == "serial.command":
+                # what will actually be sent, resolved now: the approval binds to it, and that is what runs (a definition
+                # changed while the human decides does not ride on their OK)
+                c = self.bench.ports[port_id].commands[args["name"]]
+                args = dict(args, sends={"data": args["name"], "eol": c.get("eol", "\n"), "effect": c["effect"],
+                                         **({"until": c["until"]} if c.get("until") else {})})
+            key = A.canonical(args)
             try:
-                impact = classify(self.bench, action, port_id, args)
+                impact = classify(self.bench, action, port_id, args, port_open=self._held_open(port_id, args))
             except A.ArgError as e:  # a SCPI line that is not one plain message
                 return {"status": "invalid_args", "message": str(e)}
-            w = self.watches.get(port_id)
-            if w and w.alive and action in ("serial.listen", "serial.watch"):
-                # the port is already open: listening opens nothing, so it cannot reset anything
-                impact = Impact(action, port_id, Effect.SAFE, "the port is already open (watched); reading it opens nothing",
-                                code="watched")
             # a tool not installed yet is downloaded only with the human's OK, even for a SAFE action
             fetch = self._fetch_needed(spec)
             if not fetch and (impact.effect == Effect.SAFE or
@@ -940,7 +1058,7 @@ class Broker:
             refused = self._outside_session(port_id)  # the device may have left the session meanwhile
             if refused:
                 return refused
-            used = self.approvals.consume(approval_id, action, port_id, key)
+            used = self.approvals.consume(approval_id, action, port_id, key, impact.effect.name.lower())
             if used != "ok":
                 return {"status": used, "approval_id": approval_id}
             # say so, or the agent reports a long call as "ran without approval" (real bench, S5)
@@ -958,6 +1076,8 @@ class Broker:
 
     def _run(self, impact: Impact, args: dict, allowed: str) -> dict:
         port = self.bench.ports.get(impact.port_id)
+        if impact.action == "serial.watch" and impact.effect != Effect.SAFE:
+            self.watch_approved.add(impact.port_id)  # the human accepted that opening it may reset the device
         self.done.append({"at": time.time(), "time": time.strftime("%H:%M:%S"), "action": impact.action, "port": impact.port_id,
                           "device": port.device_id if port else None, "args": A.canonical(args), "allowed": allowed})
         return {"status": "done", "impact": impact.to_dict(), "result": self._execute(impact.action, impact.port_id, args)}
@@ -974,9 +1094,9 @@ class Broker:
         if spec.argv:
             return self._run_tool(spec, port, args)
         w = self.watches.get(port_id)
-        if action == "serial.command":  # a remembered command is sent like text, with its own line ending and end line
-            c = port.commands[args["name"]]
-            action, args = "serial.send", {"data": args["name"], "eol": c.get("eol", "\n"), "seconds": args["seconds"],
+        if action == "serial.command":  # sent like text: what was resolved (and approved) when it was asked for
+            c = args["sends"]
+            action, args = "serial.send", {"data": c["data"], "eol": c["eol"], "seconds": args["seconds"],
                                            "baud": args["baud"], **({"until": c["until"]} if c.get("until") else {})}
         if w and w.alive and action in ("serial.listen", "serial.send") and args["baud"] != w.baud:
             # a different rate was asked for: reopen the watch at it (the port is SAFE to open, it was watched)

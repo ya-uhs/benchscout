@@ -86,15 +86,17 @@ class ApprovalBook:
                     return "pending"
                 self._cond.wait(min(left, 1.0))
 
-    def consume(self, approval_id: str, action: str, port: str, args: str) -> str:
-        """Use a granted approval for exactly this call. Returns "ok" or why not."""
+    def consume(self, approval_id: str, action: str, port: str, args: str, effect: str | None = None) -> str:
+        """Use a granted approval for exactly this call: the same action, port and resolved arguments, judged as it was
+        when the human decided (`effect`: what it is judged now; a memory changed meanwhile asks again). Returns "ok"
+        or why not."""
         with self._cond:
             a = self._items.get(approval_id)
             if a is None:
                 return "unknown_approval"
             if a.status != "granted":
                 return a.status
-            if (a.action, a.port, a.args) != (action, port, args):
+            if (a.action, a.port, a.args) != (action, port, args) or effect is not None and effect != a.effect:
                 return "approval_mismatch"
             a.status = "used"
         self._log("used", a)
