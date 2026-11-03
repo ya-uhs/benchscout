@@ -177,6 +177,11 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
   `fixtures/` or a test (e.g. ESP32 native USB resets on open; Tang Nano serials are shared).
 - For identification, prefer the external tool's own database (openFPGALoader, USB ID lists)
   over our tables, and say in the evidence which one decided.
+- **One home per concept** (design.md section 12, docs/notes.md review 9): protocols (how sent text becomes commands,
+  defaults, how a device says what it is, their operations) live in `src/benchscout/protocols/`; probing tools,
+  wiring (`inside`), line rules and access needs are data or one form each. The gate, recon and memory use only those
+  types and never name a protocol, an action, a tool or an OS; `tests/test_structure.py` watches where such names
+  appear. Before adding a branch for a new case, find the concept's home; if it has none, give it one.
 - Knowledge (design.md section 5): names and models come from devices and tools, or from the
   agent (with a quoted device output); interpretation is the agent's; what was learned goes to
   memory. Shipped data in `src/benchscout/packs/bench/data/` is only for safety rules by kind of

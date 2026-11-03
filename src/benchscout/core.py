@@ -142,7 +142,7 @@ def parse_scope(word: str | None):
         return word
     if word.endswith("m") and word[:-1].isdigit():
         return int(word[:-1])
-    raise ValueError(f"scope must be once, session, all, always (SCPI) or <N>m, not {word!r}")
+    raise ValueError(f"scope must be once, session, all, always (a command) or <N>m, not {word!r}")
 
 
 def parse_shorthand(line: str) -> dict:

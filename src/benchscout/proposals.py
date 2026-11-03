@@ -19,9 +19,10 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from .model import PORT_KINDS, PROBE_KINDS
+
 NAME = re.compile(r"^[a-z0-9][a-z0-9_-]*\.[a-z0-9][a-z0-9_.-]*$")
 FIXED = {"{port.path}", "{device.serial}", "{port.select*}"}
-PORT_KINDS = ("serial", "jtag", "swd", "usbtmc", "lan-scpi")
 ARG_TYPES = ("str", "int", "float", "bool", "file", "flash_map")
 FILE = "agent-tools.toml"
 
@@ -93,9 +94,9 @@ def check(tool: dict, probes: list[dict] | None, evidence: str, existing: dict[s
             vid, pid = int(str(pr["vid"]), 0), int(str(pr["pid"]), 0)
         except (KeyError, TypeError, ValueError):
             raise ProposalError("probes: [{vid: \"0x1234\", pid: \"0x5678\", probe: \"jtag\" | \"swd\"}]") from None
-        if not (0 < vid <= 0xFFFF and 0 < pid <= 0xFFFF) or pr.get("probe", "jtag") not in ("jtag", "swd"):
+        if not (0 < vid <= 0xFFFF and 0 < pid <= 0xFFFF) or pr.get("probe", PROBE_KINDS[0]) not in PROBE_KINDS:
             raise ProposalError("probes: vid and pid are 16-bit USB ids; probe is jtag or swd")
-        out_probes.append({"vid": vid, "pid": pid, "probe": pr.get("probe", "jtag")})
+        out_probes.append({"vid": vid, "pid": pid, "probe": pr.get("probe", PROBE_KINDS[0])})
     return clean, out_probes
 
 

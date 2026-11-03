@@ -40,6 +40,11 @@ class Protocol:
 
     # the SAFE call recon makes to hear what a device is (an action and its arguments), and making it
     probe_action: tuple[str, dict] | None = None
+    # the action that holds a port open and reads it continuously (None: this protocol's ports are not watched)
+    watch_action: str | None = None
+
+    def enumerate(self, io, bench, names: dict) -> None:
+        """Add the devices and ports this protocol is reached through, that the USB and serial lists do not show."""
 
     def probe(self, io, port, seconds: float) -> dict | None:
         """{"probe": "output", "result" | "error"} (what it printed) or {"probe": "identity", "result", "maker", "model",

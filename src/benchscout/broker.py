@@ -25,6 +25,7 @@ from .locks import DeviceLocks
 from . import protocols
 from .policy import Effect, Impact, classify
 
+DEFAULT_BAUD = 115200  # what a watch opens a port at when no rate was learned for it
 LINE_ENDINGS = ("\n", "\r\n", "\r", "")
 OPEN_RESET_S = 3.0  # a port that vanishes this soon after being opened was reset (or re-enumerated) by the open
 RECENT_FOR_QUOTES = 2 * 1024 * 1024  # how much recent output a quote is checked against
@@ -185,7 +186,8 @@ class Broker:
                 for kind in ("alert", "latest"):
                     if kind in kept and kept[kind][1] not in seen_texts:
                         seen_texts.append(kept[kind][1])
-                        R.apply_log([self.last.bench.targets[tid]], kept[kind][1], seen=kept[kind][0])
+                        R.apply_log([self.last.bench.targets[tid]], kept[kind][1], seen=kept[kind][0],
+                                    learned=self._learned_lines(self.last.bench, tid))
             self.last.proposals = R.propose(self.last.bench)
             (self.state / "inventory.json").write_text(json.dumps(self.last.to_dict(), indent=2, default=str), encoding="utf-8")
             # what still waits for the human (from an earlier session) is shown again, for connected devices only
@@ -359,7 +361,7 @@ class Broker:
             if a0 is not None and a0.by != "agent":
                 raise ValueError("allow all is for the agent's requests; benchscout's own offers are answered one by one")
         a = self.approvals.decide(approval_id, granted, scope)
-        if a.by == "benchscout" and a.action == "serial.watch" and self.watch_offers.get(a.port) == a.id:
+        if a.by == "benchscout" and self.watch_offers.get(a.port) == a.id:
             if granted:  # benchscout asked for itself: nobody is waiting on the call, so run it here
                 threading.Thread(target=self._start_offered_watch, args=(a.id, a.port), daemon=True).start()
             else:
@@ -466,8 +468,6 @@ class Broker:
         """What was learned before shows up in the first read, without an LLM. `only`: these devices (the rest is done)."""
         from .model import Confidence, Evidence
 
-        if only is None:
-            self.patterns: dict[str, list[dict]] = {}
         for dev in bench.devices.values():
             if only is not None and dev.id not in only:
                 continue
@@ -496,8 +496,12 @@ class Broker:
                         t.facts.append(f"command `{e.data['command']}` on {e.target}: {e.text} "
                                        f"({e.data.get('effect', 'disruptive')}{', waiting for the human' if e.status == 'pending' else ''})")
                 elif e.kind == "interpretation" and e.data.get("pattern"):
-                    self.patterns.setdefault(dev.id, []).append(e.data)
+                    dev.line_rules.append(e.data)
                 else:
+                    baud = e.data.get("baud") if e.kind == "config" else None
+                    if isinstance(baud, int) and not isinstance(baud, bool) and 50 <= baud <= 12_000_000:
+                        for p in [bench.ports[e.target]] if e.target in bench.ports else bench.ports_reaching(e.target):
+                            p.baud = baud  # the rate the agent found it talks at: watched at it from now on
                     inside = e.data.get("inside") if e.kind == "config" else None
                     if inside and e.target in bench.targets and inside in bench.targets and inside != e.target:
                         # learned wiring is structure, not only words: what disturbs the host disturbs this (review 7, 13)
@@ -622,11 +626,17 @@ class Broker:
         self._memory_event(dev, e)
         return {"status": "pending_human" if e.status == "pending" else "remembered", "id": e.id}
 
+    @staticmethod
+    def _learned_lines(bench, target_id: str) -> list[dict]:
+        ports = bench.ports_reaching(target_id)
+        return bench.devices[ports[0].device_id].line_rules if ports else []
+
     def _refresh_patterns(self, dev) -> None:
         """The lines learned to mean trouble on this device, given to its running watches."""
         pats = [e.data for e in self.memory.entries(self._key(dev))
                 if e.kind == "interpretation" and e.status == "active" and e.data.get("pattern")]
-        self.patterns = dict(getattr(self, "patterns", {}), **{dev.id: pats})
+        if dev.id in self.bench.devices:
+            self.bench.devices[dev.id].line_rules = list(pats)
         for w in list(self.watches.values()):
             if w.device_id == dev.id:
                 w.set_patterns(pats)
@@ -891,7 +901,9 @@ class Broker:
         pid = self.resolve_port(port)
         log = self.state / "logs" / (pid.replace(":", "_") + ".log")
         if not log.exists():
-            return {"status": "no_log", "message": f"{pid} has not been watched in this folder yet; use serial.watch"}
+            watch = self._watch_action(self.bench.ports[pid])
+            return {"status": "no_log", "message": f"{pid} has not been watched in this folder yet"
+                                                   + (f"; use {watch}" if watch else "")}
         text = _tail(log, RECENT_FOR_QUOTES).splitlines()
         if contains:
             text = [l for l in text if contains in l]
@@ -926,15 +938,23 @@ class Broker:
         started = []
         for d in self.selected:
             for p in self.bench.ports_of(d):
-                if not (p.kind == "serial" and p.path and p.id not in self.watches):
+                watch = self._watch_action(p)
+                if not (watch and p.path and p.id not in self.watches):
                     continue
-                if classify(self.bench, "serial.watch", p.id).effect == Effect.SAFE:
-                    if self._watch(p.id, 115200):
+                if classify(self.bench, watch, p.id).effect == Effect.SAFE:
+                    if self._watch(p.id, p.baud or DEFAULT_BAUD):
                         started.append(p.id)
                         self._watching_event(p.id)  # the human sees which ports are watched
                 else:
                     self._offer_watch(p.id)
         return started
+
+    @staticmethod
+    def _watch_action(port) -> str | None:
+        from . import protocols
+
+        proto = protocols.for_port(port)
+        return proto.watch_action if proto else None
 
     def _watching_event(self, port_id: str) -> None:
         w = self.watches[port_id]
@@ -948,15 +968,20 @@ class Broker:
         offered = self.watch_offers.get(port_id)
         if offered and any(a.id == offered for a in self.approvals.pending()):
             return
-        args = A.get("serial.watch").normalize({"baud": 115200})
-        impact = classify(self.bench, "serial.watch", port_id, args)
+        watch = self._watch_action(self.bench.ports[port_id])
+        if not watch:
+            return
+        args = A.get(watch).normalize({"baud": self.bench.ports[port_id].baud or DEFAULT_BAUD})
+        impact = classify(self.bench, watch, port_id, args)
         dev = self.bench.devices[self.bench.ports[port_id].device_id]
         a = self.approvals.open(impact, A.canonical(args), by="benchscout", subject=dev.name,
                                 purpose="Hold the port open so benchscout sees everything it prints and notices crashes and resets.")
         self.watch_offers[port_id] = a.id
 
     def _start_offered_watch(self, approval_id: str, port_id: str) -> None:
-        r = self.request("serial.watch", port_id, {"baud": 115200}, approval_id=approval_id, wait=0)
+        r = self.request(self._watch_action(self.bench.ports[port_id]) or "", port_id,
+                         {"baud": self.bench.ports[port_id].baud or DEFAULT_BAUD},
+                         approval_id=approval_id, wait=0)
         w = self.watches.get(port_id)
         if r.get("status") != "done" or not w:
             return  # _watch already said why (unwatchable), or the device left the session
@@ -974,7 +999,7 @@ class Broker:
         out = {}
         for d in sorted(self.selected):
             for p in self.bench.ports_of(d):
-                if p.kind != "serial" or not p.path:
+                if not self._watch_action(p) or not p.path:
                     continue
                 w = self.watches.get(p.id)
                 if w and w.alive:
@@ -993,7 +1018,7 @@ class Broker:
 
         port = self.bench.ports[port_id]
         w = PortWatch(self.io, port_id, port.path, self.state / "logs", self._device_event, baud, port.open_lines,
-                      patterns=getattr(self, "patterns", {}).get(port.device_id, []), device_id=port.device_id,
+                      patterns=self.bench.devices[port.device_id].line_rules, device_id=port.device_id,
                       may_reopen=self._may_reopen)
         try:
             w.start()
@@ -1194,7 +1219,7 @@ class Broker:
 
     def _run(self, impact: Impact, args: dict, allowed: str) -> dict:
         port = self.bench.ports.get(impact.port_id)
-        if impact.action == "serial.watch" and impact.effect != Effect.SAFE:
+        if port is not None and impact.action == self._watch_action(port) and impact.effect != Effect.SAFE:
             self.watch_approved.add(impact.port_id)  # the human accepted that opening it may reset the device
         self.done.append({"at": time.time(), "time": time.strftime("%H:%M:%S"), "action": impact.action, "port": impact.port_id,
                           "device": port.device_id if port else None, "args": A.canonical(args), "allowed": allowed})
@@ -1207,72 +1232,18 @@ class Broker:
                 if d["device"] == device and (within is None or now - d["at"] <= within)]
 
     def _execute(self, action: str, port_id: str, args: dict):
+        """Run what was judged and allowed. The gate does not know how: a tool defined as data runs as data says, and
+        every other operation is its protocol's (protocols/), found by name."""
+        from . import protocols
+
         port = self.bench.ports[port_id]
         spec = A.get(action)
         if spec.argv:
             return self._run_tool(spec, port, args)
-        w = self.watches.get(port_id)
-        if w and w.alive and action in ("serial.listen", "serial.send") and args["baud"] != w.baud:
-            # a different rate was asked for: reopen the watch at it (the port is SAFE to open, it was watched)
-            self._unwatch(port_id)
-            w = self.watches.get(port_id) if self._watch(port_id, args["baud"]) else None
-        if action == "serial.watch":
-            if w and w.alive:
-                return {"watching": port_id, "log": str(w.log.resolve()), "already": True}
-            self._unwatch(port_id)
-            if not self._watch(port_id, args["baud"]):
-                return {"error": "could not open the port to watch it"}
-            return {"watching": port_id, "log": str(self.watches[port_id].log.resolve())}
-        if action == "serial.listen" and w and w.alive:
-            text = w.read_window(args["seconds"])
-            R.apply_log(self.bench.targets_via(port_id), text)
-            self.recon.proposals = R.propose(self.bench)
-            self._remember(port_id, text)
-            return dict(self._save_artifact(f"{port_id}-listen-{args['baud']}.txt", text, preview=text[-2000:]),
-                        watched_log=str(w.log.resolve()))
-        if action == "serial.send":
-            from .codec import split, until_pattern
-
-            until = until_pattern(args.get("until"))
-            data = (args["data"] + (args["eol"] if args.get("eol") is not None else "\n")).encode()
-            if w and w.alive:
-                text, before = w.send(data, args["seconds"], until)
-            else:  # opened for this call: nothing it printed before to tell its own lines by
-                text, before = self.io.serial_listen(port.path, args["seconds"], args["baud"], True, port.open_lines,
-                                                     send=data, until=until), None
-            R.apply_log(self.bench.targets_via(port_id), text)  # the answer can name the part too
-            self.recon.proposals = R.propose(self.bench)
-            self._remember(port_id, text)
-            safe_name = "".join(c if c.isalnum() else "_" for c in args["data"])[:24]
-            saved = self._save_artifact(f"{port_id}-send-{safe_name}.txt", text, preview="")
-            saved.pop("preview")
-            parts = split(text, args["data"], before, until)
-            for k in ("reply", "unsolicited"):
-                if len(parts.get(k, "")) > 2000:
-                    parts[k] = "…" + parts[k][-2000:]
-            return {**saved, **parts}
-        if action == "serial.listen":
-            text = R.listen_into(self.io, port.path, self.bench.targets_via(port_id), args["seconds"],
-                                 exclusive=True, baud=args["baud"], lines=port.open_lines)
-            self.recon.proposals = R.propose(self.bench)  # what we heard may change the next steps
-            self._remember(port_id, text)
-            self._observe_open(port_id, text)
-            if text is None:
-                detail = next((f for t in self.bench.targets_via(port_id) for f in reversed(t.facts) if "port disappeared" in f), "")
-                return {"error": "port disappeared while listening; the device likely reset or re-enumerated",
-                        "detail": detail}
-            return self._save_artifact(f"{port_id}-listen-{args['baud']}.txt", text, preview=text[-2000:])
-        if action in ("scpi.query", "scpi.write"):
-            # an answer is read only when the line asks for one: a command alone has none to wait for
-            from .protocols.scpi import scpi_headers
-
-            asks = any(h[0].endswith("?") for h in scpi_headers(args["command"]))
-            if not asks:
-                return {"sent": self.io.visa_write(port.path, args["command"])}
-            if args.get("save"):
-                return self._save_capture(port, args["command"], args["save"])
-            return self.io.visa_query(port.path, args["command"])
-        return {"error": f"{action} is classified but not implemented in this prototype"}
+        op = protocols.OPERATIONS.get(action)
+        if op is None:
+            return {"error": f"{action} is classified but nothing runs it"}
+        return op(self, port, args)
 
     # ---- external tools defined as data (design.md section 4) ------------------------------
     def _download(self, exe: str) -> "_Download":
@@ -1402,48 +1373,28 @@ class Broker:
         from . import knowledge as K
 
         stamp = (time.strftime("%H:%M:%S"), text)
-        c = K.classify_log(text)
+        c = K.classify_log(text, self.bench.devices[self.bench.ports[port_id].device_id].line_rules)
         for t in self.bench.targets_via(port_id):
             kept = self.observed.setdefault(t.id, {})
             kept["latest"] = stamp
             if c["alerts"]:
                 kept["alert"] = stamp
 
-    def _save_capture(self, port, command: str, kind: str) -> dict:
-        """A screen capture or a waveform into the workspace (design.md section 2: "saved here" is enough; the agent
-        reports the numbers). The instrument's IEEE 488.2 block header is taken off."""
+    def new_artifact(self, stem: str, ext: str) -> Path:
+        """A new file in the workspace's artifacts, never one written before (a second listen must not overwrite the
+        first: an agent noticed). One way for every kind of output (text, a capture, a tool's run)."""
         import time
 
-        from .io import ieee_block
-
-        if kind not in A.SAVE_KINDS:
-            return {"error": f"save must be one of {', '.join(A.SAVE_KINDS)}"}
-        raw = self.io.visa_query_raw(port.path, command)
-        if raw is None:
-            return {"error": "no answer from the instrument (check the command in its programming manual)"}
-        data = ieee_block(raw)
-        p = self.artifacts / f"{time.strftime('%Y%m%d-%H%M%S')}-{port.id.replace(':', '_')}-capture.{kind}"
-        n = 1
-        while p.exists():
-            n += 1
-            p = p.with_name(f"{p.stem}-{n}.{kind}")
-        p.write_bytes(data)
-        out: dict = {"saved_to": str(p.resolve()), "bytes": len(data), "block": raw[:1] == b"#"}
-        if kind in ("csv", "txt"):
-            out["preview"] = data[:600].decode("utf-8", errors="replace")
-        elif kind == "png" and not data.startswith(b"\x89PNG"):
-            out["warning"] = "this is not a PNG file (check the format the command asks for)"
-        return out
-
-    def _save_artifact(self, name: str, content: str, preview: str) -> dict:
-        # One file per capture: a second listen must not overwrite the first (an agent noticed this).
-        import time
-
-        stem, _, ext = name.replace(":", "_").rpartition(".")
+        stem = stem.replace(":", "_")
         p = self.artifacts / f"{time.strftime('%Y%m%d-%H%M%S')}-{stem}.{ext}"
         n = 1
         while p.exists():
             n += 1
             p = self.artifacts / f"{time.strftime('%Y%m%d-%H%M%S')}-{stem}-{n}.{ext}"
+        return p
+
+    def _save_artifact(self, name: str, content: str, preview: str) -> dict:
+        stem, _, ext = name.rpartition(".")
+        p = self.new_artifact(stem, ext)
         p.write_text(content, encoding="utf-8")
         return {"saved_to": str(p.resolve()), "preview": preview}

@@ -1,0 +1,74 @@
+"""Where concrete names may appear (design.md section 12, docs/notes.md review 9).
+
+The same idea had been built again and again, per protocol, tool or OS: SCPI and firmware commands had two rule
+mechanisms, the safety gate carried every operation as an `if action ==` branch, recon named the one JTAG tool. A test
+that watched words (no device or vendor names) let all of it through. This one watches *where* things are named: each
+kind of concrete name has a home, and the gate, recon and memory reach it only through that home's type.
+"""
+
+import ast
+import io
+import re
+import tokenize
+from pathlib import Path
+
+SRC = Path(__file__).parent.parent / "src" / "benchscout"
+EXT = Path(__file__).parent.parent / "vscode" / "src"
+
+HOMES = {
+    "a protocol (SCPI, *IDN?, IEEE 488.2)": (r"\bscpi\b|SCPI|\bIDN\b|ieee",
+                                             {"protocols/scpi.py", "protocols/__init__.py", "actions.py", "mcp_relay.py",
+                                              "model.py"}),
+    "an action's name": (r"\b(serial|scpi|jtag)\.[a-z_]+\b",
+                         {"actions.py", "protocols/lines.py", "protocols/scpi.py", "mcp_relay.py"}),
+    "an external tool": (r"openFPGALoader|esptool|openocd|probe-rs", {"mcp_relay.py"}),
+    "an operating system": (r"\bWindows\b|\bLinux\b|Darwin|win32|platform\.system",
+                            {"io.py", "winusb_strings.py", "runtime.py", "cli.py", "fetch.py", "locks.py", "memory.py",
+                             "knowledge.py", "report.py"}),
+    "a branch on a port's kind": (r"\.kind\s*(==|!=|in)\s*[(\"]",
+                                  {"protocols/lines.py", "protocols/scpi.py", "protocols/__init__.py", "recon.py"}),
+}
+
+
+def _code(path: Path) -> list[tuple[int, str]]:
+    """The tokens of a module that are code: comments and docstrings left out (they may cite anything)."""
+    src = path.read_text(encoding="utf-8")
+    docs: set[int] = set()
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.body:
+            first = node.body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+                docs |= set(range(first.lineno, (first.end_lineno or first.lineno) + 1))
+    toks = tokenize.generate_tokens(io.StringIO(src).readline)
+    return [(t.start[0], t.string) for t in toks if t.type != tokenize.COMMENT and t.start[0] not in docs]
+
+
+def test_concrete_names_appear_only_in_their_home():
+    misplaced = []
+    for path in sorted(SRC.rglob("*.py")):
+        rel = path.relative_to(SRC).as_posix()
+        code = _code(path)
+        text = "\n".join(s for _, s in code)
+        for what, (pattern, homes) in HOMES.items():
+            if rel in homes:
+                continue
+            lines = sorted({ln for ln, s in code if re.search(pattern, s)})
+            if what == "a branch on a port's kind":  # (spans tokens: look at the joined code)
+                lines = [1] if re.search(pattern, text) else []
+            if lines:
+                misplaced.append(f"{rel}: {what} at line(s) {lines}")
+    assert not misplaced, "\n".join(misplaced)
+
+
+def test_the_extension_names_no_action_protocol_or_tool_outside_its_wording():
+    """The panel's words (i18n.ts) may name actions to say them in the person's language; nothing else in the extension
+    decides by an action's, a protocol's or a tool's name."""
+    pattern = r"\b(serial|scpi|jtag)\.[a-z_]+\b|openFPGALoader|esptool|openocd"
+    found = []
+    for path in sorted(EXT.rglob("*.ts")):
+        if path.name == "i18n.ts":
+            continue
+        code = re.sub(r"//[^\n]*|/\*.*?\*/", "", path.read_text(encoding="utf-8"), flags=re.S)
+        if re.search(pattern, code):
+            found.append(path.relative_to(EXT).as_posix())
+    assert not found, found

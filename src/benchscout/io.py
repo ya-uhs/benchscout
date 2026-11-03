@@ -43,19 +43,6 @@ class Io(Protocol):
     def run_probe(self, argv: list[str], timeout: float) -> str | None: ...  # a probe tool's output (tools.toml `probe`)
 
 
-def ieee_block(data: bytes) -> bytes:
-    """The data of an IEEE 488.2 definite-length block (#<n><length, n digits><bytes>), or the answer as it came if it
-    is not one. An indefinite block (#0...) runs to the end, less the newline that ends the message."""
-    if len(data) >= 2 and data[:1] == b"#" and data[1:2].isdigit():
-        n = int(data[1:2])
-        if n == 0:
-            return data[2:].rstrip(b"\n")
-        if len(data) >= 2 + n and data[2:2 + n].isdigit():
-            length = int(data[2:2 + n])
-            return data[2 + n:2 + n + length]
-    return data
-
-
 def run_tool(argv: list[str], timeout: float, cwd: str | Path | None = None) -> tuple[str, int | None]:
     """Run an external program and return (stdout + stderr, exit code; None if it was stopped at `timeout`).
 

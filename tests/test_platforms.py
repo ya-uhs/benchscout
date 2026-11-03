@@ -150,7 +150,7 @@ def test_a_device_windows_has_no_driver_for_is_shown_with_what_it_needs(tmp_path
                "description": "USB Serial Device (COM3)"}]
     b = _bench(tmp_path, usb, serial)
     ftdi = next(d for d in b.devices.values() if d.vid == 0x0403)
-    assert ftdi.no_driver == [0, 1] and not b.ports_of(ftdi.id), "nothing can open it, so no port"
+    assert ftdi.access == [{"need": "driver", "interfaces": [0, 1]}] and not b.ports_of(ftdi.id), "nothing can open it, so no port"
     text = report.render(recon.Recon(b))
     assert "■ JTAG Debugger  SN FactoryAIOT Pro" in text and "no driver for its USB interface(s) 0, 1" in text
     assert "■ Espressif USB JTAG/serial debug unit" in text
@@ -176,19 +176,18 @@ def test_a_libusb_tool_behind_a_serial_driver_is_named_with_the_interface_that_n
                "description": "USB Serial Port (COM5)"}]
     b = _bench(tmp_path, _tang_nano_on_windows("FTDIBUS"), serial)
     dev = next(d for d in b.devices.values() if d.vid == 0x0403)
-    assert dev.drivers == {0: "FTDIBUS", 1: "FTDIBUS"} and dev.needs_winusb == [0]
-    jtag = next(p for p in b.ports.values() if p.kind == "jtag")
-    assert any("interface 0 has the FTDIBUS driver" in f and "WinUSB" in f for t in b.targets_via(jtag.id) for f in t.facts)
-    assert "need the WinUSB driver" in report.render(recon.Recon(b))
+    assert dev.drivers == {0: "FTDIBUS", 1: "FTDIBUS"} and [(a["need"], a["interfaces"]) for a in dev.access] == [("winusb", [0])]
+    text = report.render(recon.Recon(b))  # said once, in one form for every OS (model.Device.access)
+    assert "interface(s) 0 have the FTDIBUS driver" in text and "WinUSB" in text
 
     b2 = _bench(tmp_path, _tang_nano_on_windows("WinUSB"), serial)  # after Zadig: nothing to say
     dev2 = next(d for d in b2.devices.values() if d.vid == 0x0403)
-    assert dev2.needs_winusb == [] and dev2.no_driver == []
+    assert dev2.access == []
 
 
 def test_nothing_is_said_about_drivers_off_windows(tmp_path):
     b = recon.build(FixtureIo(FIXTURE))
-    assert all(not d.drivers and not d.needs_winusb and not d.no_driver for d in b.devices.values())
+    assert all(not d.drivers and not d.access for d in b.devices.values())
 
 
 def test_linux_a_libusb_tool_the_user_cannot_open_is_named_with_the_fix_not_tried(tmp_path):
@@ -208,7 +207,7 @@ def test_linux_a_libusb_tool_the_user_cannot_open_is_named_with_the_fix_not_trie
     io = FixtureIo(f)
     r = recon.run(io)
     tang = next(d for d in r.bench.devices.values() if d.vid == 0x0403)
-    assert tang.needs_udev
+    assert [a["need"] for a in tang.access] == ["udev"]
     assert not [c for c in io.calls if c[0] == "probe"], "not tried: it cannot open the device"
     text = report.render(r)
     assert "udev rule" in text and "/dev/bus/usb/003/002" in text and "udevadm trigger" in text

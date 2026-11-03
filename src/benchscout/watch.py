@@ -63,17 +63,9 @@ class PortWatch:
         self.set_patterns(patterns)
 
     def set_patterns(self, patterns: list[dict] | None) -> None:
-        """The lines this device is known to print when something is wrong (memory): replaced while it runs. A pattern
-        that does not compile is skipped, not a reason to stop watching."""
-        import re as _re
-
-        out = []
-        for p in patterns or []:
-            try:
-                out.append((_re.compile(p["pattern"]), p.get("alert", "remembered pattern")))
-            except (_re.error, KeyError, TypeError):
-                continue
-        self.patterns = out
+        """The lines this device is known to print when something is wrong (memory), replaced while it runs; checked
+        with the shipped and user rules as one list of line rules (knowledge.alerts)."""
+        self.patterns = list(patterns or [])
 
     # ---- lifecycle ------------------------------------------------------------------
     def start(self) -> None:
@@ -211,7 +203,7 @@ class PortWatch:
         text = self._partial + chunk.decode("utf-8", errors="replace")
         *lines, self._partial = text.split("\n")
         for line in lines:
-            alerts = K.classify_log(line)["alerts"] + [a for rx, a in self.patterns if rx.search(line)]
+            alerts = K.alerts(line, self.patterns)
             for a in alerts:
                 now = time.monotonic()
                 if now - self._last_alert.get(a, -COOLDOWN_S) >= COOLDOWN_S:

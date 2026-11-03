@@ -7,7 +7,12 @@ from .base import Protocol, judge, judge_rule, outside
 from .lines import LINES
 from .scpi import SCPI
 
+from . import lines as _lines
+from . import scpi as _scpi
+
 PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (LINES, SCPI)}
+# every operation a protocol carries, by action name: the gate runs them without knowing what they do
+OPERATIONS = {**_lines.OPERATIONS, **_scpi.OPERATIONS}
 
 
 def get(name: str) -> Protocol | None:
@@ -19,4 +24,4 @@ def for_port(port) -> Protocol | None:
     return next((p for p in PROTOCOLS.values() if port.kind in p.port_kinds), None)
 
 
-__all__ = ["PROTOCOLS", "Protocol", "for_port", "get", "judge", "judge_rule", "outside"]
+__all__ = ["OPERATIONS", "PROTOCOLS", "Protocol", "for_port", "get", "judge", "judge_rule", "outside"]

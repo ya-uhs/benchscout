@@ -101,8 +101,10 @@ class _Layers:
         for e in reversed(data.get("board", [])):  # later layers are tried first
             self.boards.insert(0, _board(e))
         for e in data.get("log", []):
-            flags = (re.I if e.get("ignore_case") else 0) | (re.M if e.get("multiline") else 0)
-            self.logs.append((re.compile(e["pattern"], flags), e))
+            rule = line_rule(e)
+            if rule is None:
+                raise ValueError(f"log entry without a valid pattern: {e!r}")
+            self.logs.append(rule)
         for e in data.get("tool", []):
             from_data(e)  # an action that cannot be built is a broken file, not a broken action later
             self.tools[e["name"]] = e  # a later layer replaces a tool of the same name
@@ -129,18 +131,38 @@ def _fill(template: str, m: re.Match) -> str:
     return template.format(**{k: (v or "").strip() for k, v in m.groupdict().items()})
 
 
-def classify_log(text: str) -> dict:
+def line_rule(e: dict) -> tuple[re.Pattern, dict] | None:
+    """One line rule, whoever wrote it (shipped crash markers, a user's file, what the agent learned for a device):
+    {pattern, alert (may use the pattern's named groups as {name}), ignore_case, multiline}. None if it does not
+    compile: a bad rule is skipped, not a reason to stop watching."""
+    try:
+        flags = (re.I if e.get("ignore_case") else 0) | (re.M if e.get("multiline") else 0)
+        return re.compile(e["pattern"], flags), e
+    except (re.error, KeyError, TypeError):
+        return None
+
+
+def alerts(text: str, learned: list[dict] | None = None) -> list[str]:
+    """The alerts lines in `text` raise, by the shipped and user rules plus what was learned for this device."""
+    # a learned line with no words of its own says only that it was remembered; a file's rule without an alert is not one
+    rules = LOG_SIGNATURES + [r for r in (line_rule(dict(e, alert=e.get("alert") or "remembered pattern"))
+                                         for e in learned or []) if r]
+    found: set[str] = set()
+    for pat, e in rules:
+        if not e.get("alert"):
+            continue
+        for m in pat.finditer(text):
+            found.add(_fill(e["alert"], m))
+    return sorted(found)
+
+
+def classify_log(text: str, learned: list[dict] | None = None) -> dict:
     """What deterministic noticing takes from console output: the alerts a log entry raises (a crash marker) and the
     first lines. Nothing else: naming a part or reading a log's meaning is the agent's (design.md section 3), and a
     name needs the device's own words, checked by bench_identify. A knowledge file's `exact`, `family` or `fact`
     (from before the 2026-10-31 revision) are ignored, so a file cannot name a part without that check."""
-    alerts: set[str] = set()
-    for pat, e in LOG_SIGNATURES:
-        for m in pat.finditer(text):
-            if e.get("alert"):
-                alerts.add(_fill(e["alert"], m))
     lines = [l for l in text.splitlines() if l.strip()]
-    return {"alerts": sorted(alerts), "sample": lines[:3]}
+    return {"alerts": alerts(text, learned), "sample": lines[:3]}
 
 
 

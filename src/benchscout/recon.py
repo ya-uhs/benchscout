@@ -10,7 +10,7 @@ from typing import Callable
 
 from . import knowledge as K
 from .io import VANISHED_MARK, Io
-from .model import Bench, Confidence, Device, Evidence, Port, Target
+from .model import Bench, Confidence, Device, Evidence, Port, Target, device_id, hex4
 from .policy import Effect, Impact, classify
 
 
@@ -37,12 +37,7 @@ class Recon:
         return {"bench": self.bench.to_dict(), "proposals": [asdict(p) for p in self.proposals], "ran": self.ran}
 
 
-def _hex(n: int | None) -> str:
-    return f"{n:04x}" if n is not None else "????"
-
-
-def _dev_id(vid, pid, serial, location) -> str:
-    return f"usb:{_hex(vid)}:{_hex(pid)}:{serial or location or 'noserial'}"
+_hex, _dev_id = hex4, device_id
 
 
 def place(location) -> str | None:
@@ -98,7 +93,7 @@ def build(io: Io) -> Bench:
                 pid=u["pid"],
                 serial=u.get("serial"),
                 location=u.get("location"),
-                no_driver=list(u.get("no_driver") or []),
+                access=[{"need": "driver", "interfaces": list(u["no_driver"])}] if u.get("no_driver") else [],
                 other=other,
                 drivers={int(k): v for k, v in (u.get("drivers") or {}).items()},
                 usb_node=u.get("usb_node"),
@@ -147,44 +142,48 @@ def build(io: Io) -> Bench:
 
     _libusb_interfaces(b)
     names = {(u["vid"], u["pid"], u.get("serial")): _descriptor_name(u.get("vendor"), u.get("name")) for u in usb}
-    for res in io.visa_resources():
-        _add_visa(b, res, names)
+    from . import protocols
+
+    for proto in protocols.PROTOCOLS.values():  # devices reached only through a protocol (an instrument on VISA)
+        proto.enumerate(io, b, names)
     for dev in b.devices.values():  # one that got a port after all (a VISA instrument on USB) is bench hardware
         if dev.other and b.ports_of(dev.id):
             dev.other = False
     return b
 
 
-WINUSB_CLASS = {"winusb", "libusbk", "libusb0"}  # drivers libusb can open on Windows
+WINUSB_CLASS = {"winusb", "libusbk", "libusb0"}  # drivers libusb can open (the OS's own names for them)
+
+
+def _needs(dev: Device, need: str, tools: list[str], interface: int | None = None, node: str | None = None) -> None:
+    """Record why a tool cannot open this device yet (one record per need, interfaces and tools gathered)."""
+    item = next((a for a in dev.access if a["need"] == need), None)
+    if item is None:
+        item = {"need": need, "interfaces": [], "tools": []}
+        dev.access.append(item)
+    if interface is not None and interface not in item["interfaces"]:
+        item["interfaces"].append(interface)
+    item["tools"] = sorted(set(item["tools"]) | set(tools))
+    if node:
+        item["node"] = node
 
 
 def _libusb_interfaces(b: Bench) -> None:
-    """A port a libusb tool opens (tools.toml usb_access) that this user cannot reach: on Linux the device's USB node
-    is not theirs to open (a udev rule is missing or not applied yet); on Windows the interface has another driver
-    (the maker's serial driver, a COM port). Say what is needed."""
+    """A port a libusb tool opens (tools.toml usb_access) that this user cannot reach yet: on Linux the device's USB
+    node is not theirs to open (a udev rule is missing or not applied yet); on Windows the interface has another
+    driver (the maker's serial driver, a COM port). Recorded as what is needed (`access`); report.access_text says it."""
     for p in b.ports.values():
         dev = b.devices.get(p.device_id)
-        if not dev or not p.tools:
+        if not dev or not p.tools or not any(K.USB_ACCESS.get(t) == "libusb" for t in p.tools):
             continue
-        if dev.usb_writable is False and any(K.USB_ACCESS.get(t) == "libusb" for t in p.tools):
-            dev.needs_udev = True  # Linux: the node is not this user's to open
-            for t in b.targets_via(p.id):
-                t.facts.append(f"Linux: this user cannot open {dev.usb_node or 'the USB device'}, which {', '.join(sorted(p.tools))} "
-                               "opens through libusb. It needs a udev rule giving access (the tool's package often installs one, "
-                               "e.g. 99-openfpgaloader.rules); a rule takes effect when the device is plugged in again, or after "
-                               "`sudo udevadm control --reload-rules && sudo udevadm trigger`. Tell the user; that is theirs to do")
+        if dev.usb_writable is False:
+            _needs(dev, "udev", tools=sorted(p.tools), node=dev.usb_node)
             continue
-        if not dev.drivers:  # what follows is Windows: which driver each interface has
-            continue
-        iface = p.interface or 0
-        driver = dev.drivers.get(iface)
-        if driver and driver.lower() not in WINUSB_CLASS and any(K.USB_ACCESS.get(t) == "libusb" for t in p.tools):
-            if iface not in dev.needs_winusb:
-                dev.needs_winusb.append(iface)
-            for t in b.targets_via(p.id):
-                t.facts.append(f"Windows: interface {iface} has the {driver} driver; {', '.join(sorted(p.tools))} opens it "
-                               "through libusb, which needs WinUSB there (Zadig installs it; that interface then stops "
-                               "being a COM port). Tell the user; replacing a driver is theirs to do")
+        driver = dev.drivers.get(p.interface or 0)
+        if driver and driver.lower() not in WINUSB_CLASS:
+            _needs(dev, "winusb", tools=sorted(p.tools), interface=p.interface or 0)
+            item = next(a for a in dev.access if a["need"] == "winusb")
+            item["drivers"] = sorted(set(item.get("drivers", [])) | {driver})
 
 
 def _descriptor_name(vendor: str | None, product: str | None) -> str:
@@ -320,34 +319,6 @@ def _apply_usb_knowledge(b: Bench, dev: Device, info: dict, serials: list[dict],
             b.link(p.id, t.id, "uart")
 
 
-_VISA_USB = re.compile(r"USB\d*::(0x[0-9A-Fa-f]+)::(0x[0-9A-Fa-f]+)::([^:]+)::")
-_VISA_TCP = re.compile(r"TCPIP\d*::([^:]+)::")
-
-
-def _add_visa(b: Bench, res: str, names: dict | None = None) -> None:
-    if res.upper().startswith("ASRL"):
-        # VISA also lists serial ports. Sending *IDN? there would write bytes into an
-        # unknown UART, so serial ports are only handled by the serial path.
-        return
-    if m := _VISA_USB.match(res):
-        vid, pid, sn = int(m.group(1), 16), int(m.group(2), 16), m.group(3)
-        did = _dev_id(vid, pid, sn, None)
-        if did not in b.devices:
-            b.add_device(Device(did, (names or {}).get((vid, pid, sn)) or f"USBTMC instrument {_hex(vid)}:{_hex(pid)}", "usb", vid, pid, sn))
-        kind = "usbtmc"
-    elif m := _VISA_TCP.match(res):
-        did = f"lan:{m.group(1)}"
-        b.add_device(Device(did, m.group(1), "lan", evidence=[Evidence("visa", res)]))
-        kind = "lan-scpi"
-    else:
-        did = f"visa:{res}"
-        b.add_device(Device(did, res, "usb"))
-        kind = "usbtmc"
-    p = b.add_port(Port(f"visa:{res}", did, kind, path=res, evidence=[Evidence("visa", res)]))
-    t = b.add_target(Target(f"target:{res}", None, "instrument", Confidence.UNKNOWN))
-    b.link(p.id, t.id, "scpi")
-
-
 def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] | None = None,
         keep: set[str] | frozenset[str] = frozenset(), heard: dict[str, list[dict]] | None = None,
         prepare: Callable[[Bench], None] | None = None) -> Recon:
@@ -401,7 +372,8 @@ def _probe(io: Io, b: Bench, port: Port, seconds: float, ran: list[str]) -> list
                 out.append(got)
     dev = b.devices[port.device_id]
     for spec in A.all_actions().values():
-        if not spec.probe or spec.port_kinds and port.kind not in spec.port_kinds or dev.needs_udev or dev.needs_winusb:
+        if not spec.probe or spec.port_kinds and port.kind not in spec.port_kinds \
+                or any(a["need"] == "driver" or spec.argv[0] in a.get("tools", []) for a in dev.access):
             continue
         exe = b.tools.get(spec.argv[0])
         argv = _probe_argv(spec, port, dev, exe)
@@ -471,7 +443,8 @@ def _fold(b: Bench, targets: list[Target], got: dict, earlier: bool = False, por
                 # a LAN instrument has no USB serial: the unit is what it says it is (maker, model, serial), not its address
                 dev.serial = " ".join(x for x in (got.get("maker"), got.get("model"), got.get("serial")) if x)
     elif got["probe"] == "output":
-        _fold_listen(targets, result, got.get("error"), got["time"] if earlier else None)
+        _fold_listen(targets, result, got.get("error"), got["time"] if earlier else None,
+                     learned=b.devices[port.device_id].line_rules if port is not None else None)
     elif got["probe"] == "chain":
         chain = list(result or [])
         for i, found in enumerate(chain):
@@ -507,7 +480,8 @@ def listen_into(io: Io, path: str, targets: list[Target], seconds: float, exclus
     return text
 
 
-def _fold_listen(targets: list[Target], text: str | None, error: str | None, seen: str | None = None) -> None:
+def _fold_listen(targets: list[Target], text: str | None, error: str | None, seen: str | None = None,
+                 learned: list[dict] | None = None) -> None:
     when = f" (seen {seen})" if seen else ""
     if text is None:
         for t in targets:
@@ -518,13 +492,13 @@ def _fold_listen(targets: list[Target], text: str | None, error: str | None, see
             fact = f"the port vanished while listening (the device reset or re-enumerated) and came back; kept listening{when}"
             if fact not in t.facts:
                 t.facts.append(fact)
-    apply_log(targets, "\n".join(l for l in text.splitlines() if VANISHED_MARK not in l), seen=seen)
+    apply_log(targets, "\n".join(l for l in text.splitlines() if VANISHED_MARK not in l), seen=seen, learned=learned)
 
 
-def apply_log(t_list: list[Target], text: str, seen: str | None = None) -> None:
+def apply_log(t_list: list[Target], text: str, seen: str | None = None, learned: list[dict] | None = None) -> None:
     """Fold console output into the targets. `seen` marks output heard earlier (before this
     scan): it still proves what the part is, but its lines are labelled with when."""
-    c = K.classify_log(text)
+    c = K.classify_log(text, learned)
     when = f" (seen {seen})" if seen else ""
     for t in t_list:
         if not text.strip():
@@ -555,13 +529,17 @@ def _from_impact(text: str, imp: Impact, needs: str | None = None) -> Proposal:
 def propose(b: Bench) -> list[Proposal]:
     """Only the generic next steps a cautious bench needs before any LLM is involved. What to do
     about a particular device (read its chip id, capture a rail) is the agent's call (design.md 3)."""
+    from . import protocols
+
     out: list[Proposal] = []
     for port in b.ports.values():
         for t in b.targets_via(port.id):
-            if port.kind == "serial" and t.confidence != Confidence.IDENTIFIED and port.may_reset_on_open \
-                    and not any(f.startswith("log:") for f in t.facts):
-                imp = classify(b, "serial.listen", port.id)
-                out.append(_from_impact(f"Listen on {port.path} to see what is behind {b.devices[port.device_id].name}", imp))
+            proto = protocols.for_port(port)
+            if proto and proto.probe_action and port.path and t.confidence != Confidence.IDENTIFIED \
+                    and port.may_reset_on_open and not any(f.startswith("log:") for f in t.facts):
+                action, args = proto.probe_action  # what recon would have done, had opening this port been safe
+                imp = classify(b, action, port.id, args)
+                out.append(_from_impact(f"{action} {port.path} to see what is behind {b.devices[port.device_id].name}", imp))
             if t.confidence == Confidence.UNKNOWN:
                 for spec in _probe_tools_missing(b, port):  # a probe that would name it, not installed (yet)
                     from . import fetch

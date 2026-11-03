@@ -414,3 +414,15 @@ def test_always_on_this_device_works_for_a_firmware_command_as_for_an_instrument
         br.decide(asked["approval_id"], True, "always")
         assert br.impact(action, port, args).effect == Effect.SAFE, (action, "remembered as the human's, for this device")
     br.end_session()
+
+
+def test_a_port_is_watched_at_the_rate_learned_for_it(tmp_path):
+    """Review 9 (9): a watch always opened at 115200; the rate the agent found is now the one used."""
+    br = bench(tmp_path)
+    port = br.resolve_port(VCP)
+    br.remember(port, "config", "talks at 9600 (its boot log is readable only there)", data={"baud": 9600})
+    br.scan()
+    br.io.bauds.clear()
+    br.select([br.bench.ports[port].device_id])
+    assert br.watches[port].baud == 9600 and 9600 in br.io.bauds
+    br.end_session()

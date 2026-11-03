@@ -279,7 +279,7 @@ def test_a_capture_is_saved_as_a_file_without_its_block_header(tmp_path):
 
 
 def test_an_ieee_block_is_taken_apart_and_anything_else_is_kept():
-    from benchscout.io import ieee_block
+    from benchscout.protocols.scpi import ieee_block
 
     assert ieee_block(b"#15hello\n") == b"hello"
     assert ieee_block(b"#0raw bytes to the end\n") == b"raw bytes to the end"

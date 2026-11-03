@@ -6,6 +6,7 @@ import re
 
 from ..actions import ArgError
 from ..policy_types import Effect
+from ..model import Confidence, Device, Evidence, Port, Target, device_id, hex4
 from .base import Judged, Protocol, Values
 
 # ---- SCPI ------------------------------------------------------------------------------------
@@ -145,6 +146,10 @@ class Scpi(Protocol):
         answer = io.visa_query(port.path, "*IDN?")
         return dict(parse_idn(answer) if answer else {}, probe="identity", result=answer, source="scpi *IDN?")
 
+    def enumerate(self, io, bench, names: dict) -> None:
+        for res in io.visa_resources():
+            _add_visa(bench, res, names)
+
     def key(self, command: str) -> str:
         try:
             units = scpi_headers(command)
@@ -154,3 +159,82 @@ class Scpi(Protocol):
 
 
 SCPI = Scpi()
+
+
+def ieee_block(data: bytes) -> bytes:
+    """The data of an IEEE 488.2 definite-length block (#<n><length, n digits><bytes>), or the answer as it came if it
+    is not one. An indefinite block (#0...) runs to the end, less the newline that ends the message."""
+    if len(data) >= 2 and data[:1] == b"#" and data[1:2].isdigit():
+        n = int(data[1:2])
+        if n == 0:
+            return data[2:].rstrip(b"\n")
+        if len(data) >= 2 + n and data[2:2 + n].isdigit():
+            length = int(data[2:2 + n])
+            return data[2 + n:2 + n + length]
+    return data
+
+
+# ---- how instruments are found: VISA resources (the USB and serial lists do not show a LAN instrument) -----------
+
+_VISA_USB = re.compile(r"USB\d*::(0x[0-9A-Fa-f]+)::(0x[0-9A-Fa-f]+)::([^:]+)::")
+_VISA_TCP = re.compile(r"TCPIP\d*::([^:]+)::")
+
+
+def _add_visa(b, res: str, names: dict | None = None) -> None:
+    if res.upper().startswith("ASRL"):
+        # VISA also lists serial ports. Sending *IDN? there would write bytes into an
+        # unknown UART, so serial ports are only handled by the serial path.
+        return
+    if m := _VISA_USB.match(res):
+        vid, pid, sn = int(m.group(1), 16), int(m.group(2), 16), m.group(3)
+        did = device_id(vid, pid, sn, None)
+        if did not in b.devices:
+            b.add_device(Device(did, (names or {}).get((vid, pid, sn)) or f"USBTMC instrument {hex4(vid)}:{hex4(pid)}", "usb", vid, pid, sn))
+        kind = "usbtmc"
+    elif m := _VISA_TCP.match(res):
+        did = f"lan:{m.group(1)}"
+        b.add_device(Device(did, m.group(1), "lan", evidence=[Evidence("visa", res)]))
+        kind = "lan-scpi"
+    else:
+        did = f"visa:{res}"
+        b.add_device(Device(did, res, "usb"))
+        kind = "usbtmc"
+    p = b.add_port(Port(f"visa:{res}", did, kind, path=res, evidence=[Evidence("visa", res)]))
+    t = b.add_target(Target(f"target:{res}", None, "instrument", Confidence.UNKNOWN))
+    b.link(p.id, t.id, "scpi")
+
+
+
+# ---- operations (the gate finds them by name; `ctx` is the broker) -------------------------------------------------
+
+def op_message(ctx, port, args: dict):
+    """A query or a command, by what the line is: an answer is read only when it asks for one."""
+    if not any(h[0].endswith("?") for h in scpi_headers(args["command"])):
+        return {"sent": ctx.io.visa_write(port.path, args["command"])}
+    if args.get("save"):
+        return _save_capture(ctx, port, args["command"], args["save"])
+    return ctx.io.visa_query(port.path, args["command"])
+
+
+def _save_capture(ctx, port, command: str, kind: str) -> dict:
+    """A screen capture or a waveform into the workspace (design.md section 2: "saved here" is enough; the agent
+    reports the numbers), without its IEEE 488.2 block header."""
+    from .. import actions as A
+
+    if kind not in A.SAVE_KINDS:
+        return {"error": f"save must be one of {', '.join(A.SAVE_KINDS)}"}
+    raw = ctx.io.visa_query_raw(port.path, command)
+    if raw is None:
+        return {"error": "no answer from the instrument (check the command in its programming manual)"}
+    data = ieee_block(raw)
+    p = ctx.new_artifact(f"{port.id}-capture", kind)
+    p.write_bytes(data)
+    out: dict = {"saved_to": str(p.resolve()), "bytes": len(data), "block": raw[:1] == b"#"}
+    if kind in ("csv", "txt"):
+        out["preview"] = data[:600].decode("utf-8", errors="replace")
+    elif kind == "png" and not data.startswith(b"\x89PNG"):
+        out["warning"] = "this is not a PNG file (check the format the command asks for)"
+    return out
+
+
+OPERATIONS = {"scpi.query": op_message, "scpi.write": op_message}

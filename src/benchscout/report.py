@@ -13,10 +13,25 @@ _MARK = {Confidence.IDENTIFIED: "identified", Confidence.FAMILY: "family only", 
 
 NO_DRIVER = ("Windows has no driver for its USB interface(s) {ifaces}, so no program can open them yet. A serial port "
              "needs its maker's driver (Windows Update often installs it); a tool that talks to the chip over USB "
-             "through libusb (openFPGALoader, OpenOCD, probe-rs) needs WinUSB on that interface (Zadig installs it). "
+             "through libusb needs WinUSB on that interface (Zadig installs it). "
              "Windows may refuse Zadig's self-signed driver on Arm PCs or where Code Integrity is enforced; then the "
              "vendor's own programmer (with the maker's driver) is the way: propose it with bench_define_tool. "
              "Tell the user; installing a driver is theirs to do")
+
+
+def access_text(a: dict) -> str:
+    ifaces = ", ".join(map(str, a.get("interfaces") or []))
+    tools = ", ".join(a.get("tools") or [])
+    if a["need"] == "driver":
+        return NO_DRIVER.format(ifaces=ifaces)
+    if a["need"] == "udev":
+        return (f"Linux: this user cannot open {a.get('node') or 'the USB device'}, which {tools} opens through libusb. It "
+                "needs a udev rule giving access (the tool's package often installs one); a rule takes effect when the device "
+                "is plugged in again, or after `sudo udevadm control --reload-rules && sudo udevadm trigger`. Tell the user; "
+                "that is theirs to do")
+    return (f"Windows: interface(s) {ifaces} have the {', '.join(a.get('drivers') or ['maker'])} driver; {tools} opens them "
+            "through libusb, which needs WinUSB there (Zadig installs it; that interface then stops being a COM port). Tell "
+            "the user; replacing a driver is theirs to do")
 
 
 def _hex(n: int | None) -> str:
@@ -28,18 +43,12 @@ def render(r: Recon) -> str:
     lines: list[str] = []
     for dev in b.devices.values():
         ports = b.ports_of(dev.id)
-        if dev.other or not ports and not dev.no_driver:
+        if dev.other or not ports and not dev.access:
             continue
         sn = f"  SN {dev.serial}" if dev.serial else ""
         lines.append(f"■ {dev.name}{sn}")
-        if dev.no_driver:
-            lines.append(f"  · {NO_DRIVER.format(ifaces=', '.join(map(str, dev.no_driver)))}")
-        if dev.needs_udev:
-            lines.append("  · Linux: this user cannot open the USB device a libusb tool needs (a udev rule, then replug; "
-                         "see the target below)")
-        if dev.needs_winusb:
-            lines.append(f"  · Windows: interface(s) {', '.join(map(str, dev.needs_winusb))} need the WinUSB driver for the "
-                         "tool that opens them through libusb (see the target below)")
+        for a in dev.access:  # why something cannot open it yet: one form for every OS
+            lines.append(f"  · {access_text(a)}")
         targets: dict[str, list] = {}
         for p in ports:
             for link in b.links_of(p.id):

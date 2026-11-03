@@ -197,7 +197,7 @@ export class Harness extends EventEmitter {
   }
 
   private approvalCard(a: Approval): void {
-    if (a.by === "benchscout" && a.action === "serial.watch") {
+    if (a.by === "benchscout") {  // benchscout asks only to watch a chosen device (the core's own offer)
       // benchscout's own offer: watching is what lets it notice crashes; the human says yes or not now
       this.add({
         kind: "confirm", title: this.s.offerWatch(a.subject || a.port), body: `${this.s.offerWatchWhy}\n${this.reason(a)}`,

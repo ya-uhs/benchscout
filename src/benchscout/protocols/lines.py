@@ -37,6 +37,7 @@ class Lines(Protocol):
         return command.strip()
 
     probe_action = ("serial.listen", {})
+    watch_action = "serial.watch"
 
     def probe(self, io, port, seconds: float) -> dict | None:
         # opened the way it was judged safe to open (the port's lines): real bench 2026-11-03, a probe that dropped
@@ -59,3 +60,75 @@ class Lines(Protocol):
 
 
 LINES = Lines()
+
+
+# ---- operations over a serial port (the gate finds them by name; `ctx` is the broker: watches, bench, artifacts) ----
+
+def _rewatch_at(ctx, port, baud: int):
+    """A call at another rate than the watch's: the watch reopens at it (the gate judged that reopen as an open)."""
+    w = ctx.watches.get(port.id)
+    if w and w.alive and baud != w.baud:
+        ctx._unwatch(port.id)
+        w = ctx.watches.get(port.id) if ctx._watch(port.id, baud) else None
+    return w
+
+
+def op_watch(ctx, port, args: dict):
+    w = ctx.watches.get(port.id)
+    if w and w.alive:
+        return {"watching": port.id, "log": str(w.log.resolve()), "already": True}
+    ctx._unwatch(port.id)
+    if not ctx._watch(port.id, args["baud"]):
+        return {"error": "could not open the port to watch it"}
+    return {"watching": port.id, "log": str(ctx.watches[port.id].log.resolve())}
+
+
+def op_listen(ctx, port, args: dict):
+    from .. import recon as R
+
+    w = _rewatch_at(ctx, port, args["baud"])
+    learned = ctx.bench.devices[port.device_id].line_rules
+    if w and w.alive:  # held open: read what the watch hears
+        text = w.read_window(args["seconds"])
+        R.apply_log(ctx.bench.targets_via(port.id), text, learned=learned)
+        ctx.recon.proposals = R.propose(ctx.bench)
+        ctx._remember(port.id, text)
+        return dict(ctx._save_artifact(f"{port.id}-listen-{args['baud']}.txt", text, preview=text[-2000:]),
+                    watched_log=str(w.log.resolve()))
+    text = R.listen_into(ctx.io, port.path, ctx.bench.targets_via(port.id), args["seconds"],
+                         exclusive=True, baud=args["baud"], lines=port.open_lines)
+    ctx.recon.proposals = R.propose(ctx.bench)  # what was heard may change the next steps
+    ctx._remember(port.id, text)
+    ctx._observe_open(port.id, text)
+    if text is None:
+        detail = next((f for t in ctx.bench.targets_via(port.id) for f in reversed(t.facts) if "port disappeared" in f), "")
+        return {"error": "port disappeared while listening; the device likely reset or re-enumerated", "detail": detail}
+    return ctx._save_artifact(f"{port.id}-listen-{args['baud']}.txt", text, preview=text[-2000:])
+
+
+def op_send(ctx, port, args: dict):
+    from .. import recon as R
+    from ..codec import split, until_pattern
+
+    w = _rewatch_at(ctx, port, args["baud"])
+    until = until_pattern(args.get("until"))
+    data = (args["data"] + (args["eol"] if args.get("eol") is not None else "\n")).encode()
+    if w and w.alive:
+        text, before = w.send(data, args["seconds"], until)
+    else:  # opened for this call: nothing it printed before to tell its own lines by
+        text, before = ctx.io.serial_listen(port.path, args["seconds"], args["baud"], True, port.open_lines,
+                                            send=data, until=until), None
+    R.apply_log(ctx.bench.targets_via(port.id), text, learned=ctx.bench.devices[port.device_id].line_rules)
+    ctx.recon.proposals = R.propose(ctx.bench)
+    ctx._remember(port.id, text)
+    safe_name = "".join(c if c.isalnum() else "_" for c in args["data"])[:24]
+    saved = ctx._save_artifact(f"{port.id}-send-{safe_name}.txt", text, preview="")
+    saved.pop("preview")
+    parts = split(text, args["data"], before, until)
+    for k in ("reply", "unsolicited"):
+        if len(parts.get(k, "")) > 2000:
+            parts[k] = "…" + parts[k][-2000:]
+    return {**saved, **parts}
+
+
+OPERATIONS = {"serial.watch": op_watch, "serial.listen": op_listen, "serial.send": op_send}

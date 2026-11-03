@@ -35,19 +35,33 @@ class Device:
     serial: str | None = None
     location: str | None = None
     evidence: list[Evidence] = field(default_factory=list)
-    # interfaces the OS has no working driver for (Windows): nothing can open them until one is installed
-    no_driver: list[int] = field(default_factory=list)
-    # Windows: each interface's driver (service name), and the interfaces a libusb tool must open but cannot
-    # until their driver is replaced with WinUSB
+    # what the OS says about its interfaces: each one's driver (Windows), its USB node and whether this user may open
+    # it (Linux). Raw facts; what follows from them is in `access`
     drivers: dict[int, str] = field(default_factory=dict)
-    needs_winusb: list[int] = field(default_factory=list)
-    # Linux: this user cannot open the device's USB node, which a libusb tool needs (a udev rule, then replug)
     usb_node: str | None = None
     usb_writable: bool | None = None
-    needs_udev: bool = False
+    # why something cannot open it yet, one form for every OS: {"need": "driver" (no working driver: nothing can open
+    # those interfaces) | "winusb" (a libusb tool needs WinUSB there) | "udev" (this user cannot open the USB node a
+    # libusb tool needs), "interfaces": [...], "node": ..., "tools": [...]}
+    access: list[dict] = field(default_factory=list)
     # a USB device benchscout knows nothing about (no serial port, no data, not a hub): shown to the agent with its raw
     # clues, apart from the bench, so a programmer or probe it does not know can still be named and given a tool
     other: bool = False
+    # lines learned to mean trouble on this device (memory), checked with the shipped line rules everywhere
+    line_rules: list[dict] = field(default_factory=list)
+
+
+def hex4(n: int | None) -> str:
+    return f"{n:04x}" if n is not None else "????"
+
+
+def device_id(vid, pid, serial, location) -> str:
+    """How a USB device is known on the bench: ids and serial (or where it is plugged in, without a serial)."""
+    return f"usb:{hex4(vid)}:{hex4(pid)}:{serial or location or 'noserial'}"
+
+
+PORT_KINDS = ("serial", "jtag", "swd", "usbtmc", "lan-scpi")  # what a port is, as the graph knows it
+PROBE_KINDS = ("jtag", "swd")  # what a debug probe offers
 
 
 @dataclass
@@ -64,6 +78,7 @@ class Port:
     # How to set DTR/RTS when opening: "low" (drop both; avoids Arduino-style DTR resets) or
     # "asserted" (leave them as the OS opened them; for chips that reset on the transition).
     open_lines: str = "low"
+    baud: int | None = None  # the rate learned for it (memory, config {"baud": n}); None: the common default
     # the chip itself is this USB device (no bridge in between): if it resets, the port drops off the bus, so a port that
     # stays put after opening shows the chip did not reset. Behind a USB-UART bridge only the MCU resets and the port stays.
     own_usb: bool = False
