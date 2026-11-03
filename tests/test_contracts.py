@@ -318,3 +318,27 @@ def test_learned_wiring_carries_the_disturbance_like_shipped_wiring(tmp_path):
     again = bench(tmp_path)  # this folder remembers it: the next session too
     assert uart in classify(again.bench, "fpga.program", jtag, {"bitstream": "x.bit"}).affected_ports
     again.end_session()
+
+
+def test_recon_opens_a_port_the_way_it_was_judged_safe_to_open(tmp_path):
+    """Real bench, 2026-11-03: with memory applied before probing, recon listened to an ESP32-S3 its memory said was
+    safe to open, and reset it (rst:0x15 USB_UART_CHIP_RESET): it opened with DTR/RTS dropped, while the port is safe
+    only with them left asserted (the shipped data for that USB interface)."""
+    from benchscout.memory import Entry
+
+    esp = "/dev/cu.usbmodem1101"
+    br = bench(tmp_path)
+    port = br.resolve_port(esp)
+    lines = br.bench.ports[port].open_lines
+    assert lines == "asserted", "the shipped data: this interface resets when DTR/RTS are dropped"
+    dev = br.bench.devices[br.bench.ports[port].device_id]
+    br.memory.add(br._key(dev), Entry(kind="safety", source="human", target=port, status="active", text="safe to open",
+                                      data={"listen_safe": True}), br._header(dev))
+    br.io.calls.clear()
+    br.io.lines.clear()
+    br.scan()
+    opens = [c for c in br.io.calls if c[0] in ("serial_listen", "serial_stream")]
+    used = dict(zip([c[1] for c in opens], br.io.lines))
+    assert esp in used, "safe to open by memory: recon listens"
+    assert used[esp] == lines, "and opens it as it was judged safe to open"
+    br.end_session()

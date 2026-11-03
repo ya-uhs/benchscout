@@ -375,7 +375,9 @@ def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] 
             if classify(b, "serial.listen", port.id).effect == Effect.SAFE:
                 r.ran.append(f"serial.listen {port.path}")
                 try:
-                    got = {"probe": "listen", "result": io.serial_listen(port.path, listen_seconds, 115200, False, "low")}
+                    # opened the way it was judged safe to open (the port's lines): real bench 2026-11-03, a probe that
+                    # dropped DTR/RTS reset an ESP32-S3 its memory said was safe to open with them left asserted
+                    got = {"probe": "listen", "result": io.serial_listen(port.path, listen_seconds, 115200, False, port.open_lines)}
                 except Exception as e:  # serial.SerialException / OSError: device went away
                     got = {"probe": "listen", "error": str(e)}
 
