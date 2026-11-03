@@ -106,6 +106,11 @@ export class Harness extends EventEmitter {
     return this.add({ kind: "notify", title, body, detail, options: [], freeText: false, pin: true });
   }
 
+  /** The person switched how far benchscout goes on its own: the next event follows it. */
+  setAutonomy(a: "auto" | "suggest"): void {
+    this.opts.autonomy = a;
+  }
+
   /** The person changed benchscout's language: new cards and the agent's next turn use it. */
   setLanguage(s: Strings, language: string): void {
     this.s = s;

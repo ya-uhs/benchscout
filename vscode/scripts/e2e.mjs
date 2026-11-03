@@ -67,6 +67,13 @@ async function until(what, read, ok, seconds = 45) {
   throw new Error(`timed out waiting for ${what}; last seen:\n${last}`);
 }
 
+/** Presses a button once it is there (the panel redraws after each change). */
+async function press(text, seconds = 15) {
+  for (const end = Date.now() + seconds * 1000; ; await sleep(300)) {
+    try { return ui("click", text); } catch (e) { if (Date.now() > end) throw e; }
+  }
+}
+
 const DEVICE = "STMicroelectronics STLINK-V3";  // its console (fixtures/bench_e2e.json) crashes a few seconds after opening
 const DEVICE_ID = "/dev/cu.usbmodem21403";  // its port: the agent names the device by it
 const BENCH = join(mkdtempSync(join(tmpdir(), "benchscout-e2e-")), "bench.json");  // a copy: plugging in writes to it
@@ -132,6 +139,10 @@ try {
   plug(true);
   await until("the card closed when it is back", "cards", (t) => t.includes("back: watched again"), 20);
   step("a device plugged in is offered; a chosen one pulled out is said, and closed when it is back");
+
+  console.log(`  ${await press("Autonomy: investigates on its own")}`);
+  console.log(`  ${await press("Autonomy: only suggests")}`);  // there only once the setting changed; this switches it back
+  step("the autonomy switch at the top changes the setting, both ways");
   console.log("e2e: ok");
 } catch (e) {
   failed = true;

@@ -95,7 +95,7 @@
           ],
           "default": "auto",
           "enumDescriptions": [
-            "Wake the agent when a watched device crashes or resets",
+            "Wake the agent when a chosen device crashes or resets (it is watched all along)",
             "Only offer to investigate; the human decides"
           ],
           "description": "What benchscout does when it notices something on a watched device."

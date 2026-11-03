@@ -22,6 +22,7 @@ export interface PanelState {
   cards: Card[];
   devices: DeviceRow[];
   allowAll: boolean; // the human allowed every DISRUPTIVE call for this session
+  autonomy: "auto" | "suggest"; // wake the agent on events, or only offer to (design.md section 17)
   others?: number; // USB devices benchscout has no data for (the agent sees them; listed here only as a count)
   // what is remembered about each device on the bench (design.md section 6): seen, fixed in its file, deleted here
   memory?: { device: string; name: string; key: string; file: string;
@@ -140,7 +141,8 @@ function render() {
   h += '<div class="row" style="flex-wrap:nowrap;margin-top:0"><textarea data-draft="_top" placeholder="' + esc(s.newInput) + '">' + esc(drafts._top ?? "") +
        '</textarea><button class="primary" data-tell="1">' + esc(s.send) + "</button></div>";
   h += '<div class="row">' + (state.running ? '<button data-cmd="rescan">' + esc(s.rescan) + '</button><button data-cmd="stop">' + esc(s.stop) + "</button>"
-                                            : '<button class="primary" data-cmd="start">' + esc(s.start) + "</button>") + "</div>";
+                                            : '<button class="primary" data-cmd="start">' + esc(s.start) + "</button>") +
+       '<button data-cmd="autonomy" title="' + esc(s.autonomyHint) + '">' + esc(state.autonomy === "suggest" ? s.autonomySuggest : s.autonomyAuto) + "</button></div>";
   // while everything is allowed, say so at the top, with the way back
   if (state.allowAll) h += '<div class="allowall"><span>' + esc(s.allowAllOn) + '</span><button data-cmd="allowAllOff">' + esc(s.allowAllOff) + "</button></div>";
   h += "</div>";

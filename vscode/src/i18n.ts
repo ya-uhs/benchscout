@@ -14,6 +14,9 @@ const en = {
   allowAllSession: "Allow everything for this session",
   allowAllOn: "Allowing everything: whatever only changes a device's state runs without asking; what cannot be undone still asks.",
   allowAllOff: "Turn off",
+  autonomyAuto: "Autonomy: investigates on its own",
+  autonomySuggest: "Autonomy: only suggests",
+  autonomyHint: "Press to switch. On its own: when a chosen device crashes or resets, benchscout wakes the agent to look. Only suggests: it asks you first. Anything that changes a device still waits for your OK either way.",
   toolTitle: (name: string) => `The agent wants to add a tool: ${name}`,
   toolBody: (cmd: string, effect: string, reason: string, evidence: string, probes: string) =>
     `Runs: \`${cmd}\`\nWhat it does: ${reason} (${effect})\nThe agent's source: ${evidence}`
@@ -151,6 +154,9 @@ const ja: typeof en = {
   allowAllSession: "このセッション中はすべて許可",
   allowAllOn: "すべて許可中:機器の状態が変わるだけの操作は聞かずに実行します。元に戻せない操作は毎回確認します。",
   allowAllOff: "解除",
+  autonomyAuto: "自律:自動で調べる",
+  autonomySuggest: "自律:提案だけ",
+  autonomyHint: "押すと切り替わります。自動で調べる:選んだ機器がクラッシュやリセットをしたら、エージェントを起こして調べさせます。提案だけ:先にあなたに聞きます。どちらでも、機器の状態を変える操作はあなたの許可を待ちます。",
   toolTitle: (name: string) => `エージェントが道具の使い方を追加したいと言っています: ${name}`,
   toolBody: (cmd: string, effect: string, reason: string, evidence: string, probes: string) =>
     `実行する命令: \`${cmd}\`\nすること: ${reason}(${effect})\nエージェントが示した根拠: ${evidence}`

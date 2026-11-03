@@ -141,6 +141,11 @@ async function loadMemory(): Promise<void> {
   refresh();
 }
 
+/** How far benchscout goes on its own (design.md section 17): set in the panel or in the settings. */
+function currentAutonomy(): "auto" | "suggest" {
+  return vscode.workspace.getConfiguration("benchscout").get<string>("autonomy") === "suggest" ? "suggest" : "auto";
+}
+
 function refresh(): void {
   const cards: Card[] = harness?.cards ?? [];
   // everything that waits for the person: questions, approvals, and memory that would loosen safety
@@ -169,7 +174,7 @@ function refresh(): void {
   const state: PanelState = { running: !!core?.running, agent: AGENTS[chosenAgent()]?.label ?? "", cards, devices,
     others: views.filter((d) => d.other).length,
     memory: memoryGroups,
-    allowAll: !!core?.running && !!core?.allowAll, strings: plain };
+    allowAll: !!core?.running && !!core?.allowAll, autonomy: currentAutonomy(), strings: plain };
   view.webview.postMessage({ type: "state", state });
 }
 
@@ -186,8 +191,8 @@ async function start(ctx: vscode.ExtensionContext): Promise<void> {
   core = c;
   const max = vscode.workspace.getConfiguration("benchscout").get<number>("maxTurnsPerHour") ?? 20;
   harness?.stop();
-  const autonomy = vscode.workspace.getConfiguration("benchscout").get<"auto" | "suggest">("autonomy") ?? "auto";
-  harness = new Harness(c, () => makeDriver(ctx, ws), s, { language: languageName(currentLanguage()), maxTurnsPerHour: max, autonomy });
+  harness = new Harness(c, () => makeDriver(ctx, ws), s, { language: languageName(currentLanguage()), maxTurnsPerHour: max,
+    autonomy: currentAutonomy() });
   harness.on("changed", refresh);
   watched.clear();
   c.on("scan", (b: Bench) => { bench = b; refresh(); void loadMemory(); });
@@ -237,6 +242,10 @@ export function activate(ctx: vscode.ExtensionContext): void {
           case "stop": harness?.stop(); core?.stop(); break;
           case "rescan": askForAgent(); await core?.scan().catch(() => undefined); break;
           case "allowAllOff": await core?.setAllowAll(false).catch(() => undefined); break;
+          case "autonomy":  // kept in the setting, so it holds for the next window too; the change below applies it
+            await vscode.workspace.getConfiguration("benchscout").update("autonomy", currentAutonomy() === "auto" ? "suggest" : "auto",
+              vscode.ConfigurationTarget.Global);
+            break;
           case "memoryForget": await core?.memoryDelete(m.key, m.id).catch(() => undefined); break;
           case "memoryDecide": await core?.memoryDecide(m.key, m.id, !!m.accept).catch(() => undefined); break;
           case "memoryOpen": {  // the file is plain TOML: the person fixes it in the editor
@@ -278,6 +287,10 @@ export function activate(ctx: vscode.ExtensionContext): void {
       if (core?.running) { harness?.stop(); core.stop(); void start(ctx); }
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("benchscout.autonomy")) {
+        harness?.setAutonomy(currentAutonomy());
+        refresh();
+      }
       if (e.affectsConfiguration("benchscout.language")) {  // new cards and the panel speak it from now on
         s = strings(currentLanguage());
         harness?.setLanguage(s, languageName(currentLanguage()));
