@@ -13,7 +13,9 @@ import * as readline from "readline";
 export type Effect = "safe" | "disruptive" | "dangerous";
 
 export interface Evidence { source: string; detail: string }
-export interface Device { id: string; name: string; serial?: string | null; evidence: Evidence[]; no_driver?: number[]; needs_winusb?: number[]; needs_udev?: boolean; usb_node?: string | null; other?: boolean }
+export interface Device { id: string; name: string; serial?: string | null; evidence: Evidence[]; usb_node?: string | null;
+  /** why something cannot open it yet, one form for every OS (model.py Device.access) */
+  access?: { need: "driver" | "winusb" | "udev"; interfaces?: number[]; node?: string | null; tools?: string[] }[]; other?: boolean }
 export interface Port { id: string; device_id: string; kind: string; path?: string | null }
 export interface Target {
   id: string; name: string | null; kind: string; confidence: "identified" | "family" | "unknown";
@@ -246,6 +248,7 @@ export interface DeviceView {
 export function deviceViews(bench: Bench): DeviceView[] {
   const targets = new Map(bench.targets.map((t) => [t.id, t]));
   return bench.devices.map((d) => {
+    const need = (n: string) => (d.access ?? []).find((a) => a.need === n);
     const ports = bench.ports.filter((p) => p.device_id === d.id);
     const tids = [...new Set(bench.links.filter((l) => ports.some((p) => p.id === l.port_id)).map((l) => l.target_id))];
     const things = tids.map((tid) => {
@@ -268,10 +271,10 @@ export function deviceViews(bench: Bench): DeviceView[] {
       things,
       alert: things.some((t) => t.facts.some((f) => f.startsWith("ALERT"))),
       busyBy: busy?.match(/\((.*)\)/)?.[1],
-      noDriver: d.no_driver ?? [],
-      needsWinusb: d.needs_winusb ?? [],
+      noDriver: need("driver")?.interfaces ?? [],
+      needsWinusb: need("winusb")?.interfaces ?? [],
       other: !!d.other,
-      needsUdev: d.needs_udev ? (d.usb_node ?? "") : null,
+      needsUdev: need("udev") ? (need("udev")?.node ?? d.usb_node ?? "") : null,
     };
   });
 }

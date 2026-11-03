@@ -338,11 +338,11 @@ test("Windows: a device that needs a driver gets one card saying which interface
   const core = new CoreClient("/nonexistent", tmpdir());
   const h = new Harness(core, () => { throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 1 });
   const bench = (dev) => ({ devices: [{ id: "usb:0403:6010:x", name: "SIPEED JTAG Debugger", evidence: [], ...dev }], ports: [], targets: [], links: [] });
-  core.emit("scan", bench({ no_driver: [0, 1] }), []);
+  core.emit("scan", bench({ access: [{ need: "driver", interfaces: [0, 1] }] }), []);
   const card = () => h.cards.find((c) => c.id === "driver:usb:0403:6010:x");
   assert.equal(card().body, strings("ja").driverBody("0, 1", ""), "which interfaces lack a driver");
   assert.ok(h.cards.find((c) => c.kind === "question").body.includes(`SIPEED JTAG Debugger (${strings("ja").stateNoDriver})`));
-  core.emit("scan", bench({ needs_winusb: [0] }), []);  // the maker's driver came; openFPGALoader still needs WinUSB
+  core.emit("scan", bench({ access: [{ need: "winusb", interfaces: [0], tools: ["openFPGALoader"] }] }), []);  // the maker's driver came; openFPGALoader still needs WinUSB
   assert.equal(h.cards.filter((c) => c.id.startsWith("driver:")).length, 1);
   assert.equal(card().body, strings("ja").driverBody("", "0"), "which interface needs WinUSB, with how");
   core.emit("scan", bench({}), []);  // after Zadig and a rescan
@@ -370,7 +370,7 @@ test("Linux: a device a libusb tool cannot open gets one card naming the node an
   const core = new CoreClient("/nonexistent", tmpdir());
   const h = new Harness(core, () => { throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 1 });
   const bench = (dev) => ({ devices: [{ id: "usb:0403:6010:x", name: "SIPEED JTAG Debugger", evidence: [], ...dev }], ports: [], targets: [], links: [] });
-  core.emit("scan", bench({ needs_udev: true, usb_node: "/dev/bus/usb/003/002" }), []);
+  core.emit("scan", bench({ access: [{ need: "udev", node: "/dev/bus/usb/003/002", tools: ["openFPGALoader"] }] }), []);
   const card = () => h.cards.find((c) => c.id === "driver:usb:0403:6010:x");
   assert.equal(card().title, strings("ja").udevTitle("SIPEED JTAG Debugger"));
   assert.equal(card().body, strings("ja").udevBody("/dev/bus/usb/003/002"));
