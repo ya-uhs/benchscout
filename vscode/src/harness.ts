@@ -316,7 +316,10 @@ export class Harness extends EventEmitter {
     const own = e.source === "benchscout" && e.kind === "safety" && e.data.listen_safe;
     const seen = Number(e.data.seen ?? e.text.match(/\((\d+) times\)/)?.[1] ?? 2);
     // a command entry says exactly what it lets run, so the human confirms the command, not only the agent's words
-    const cmd = e.kind === "command" && e.data.command ? `\n${this.s.commandAs(String(e.data.command), String(e.data.effect ?? "disruptive"))}` : "";
+    const limits = Array.isArray(e.data.limits) ? (e.data.limits as ({ min?: number; max?: number } | null)[])
+      .map((l, i) => (l ? `#${i + 1} ${l.min ?? ""}..${l.max ?? ""}` : "")).filter(Boolean).join(", ") : "";
+    const cmd = e.kind === "command" && e.data.command
+      ? `\n${this.s.commandAs(String(e.data.command), String(e.data.effect ?? "disruptive"))}${limits ? `\n${this.s.limitsAs(limits)}` : ""}` : "";
     // benchscout's own: it reset when opened as safe (design.md section 6: the newer observation wins)
     const reset = e.source === "benchscout" && e.kind === "safety" && e.data.listen_safe === false;
     const body = (own ? this.s.listenSafeAsk(e.target, seen) : reset ? this.s.resetOnOpen(e.target) : e.text) + cmd

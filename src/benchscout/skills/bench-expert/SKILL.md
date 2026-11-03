@@ -29,6 +29,11 @@ The human answers cards in the benchscout inbox; keep them few and clear.
   the device (a status print is safe, a reboot is disruptive, an erase is dangerous). Then
   run them with `bench_do` `serial.command` {"name": ...}. One you call safe runs without
   asking once the human confirms it; use `serial.send` only for things not remembered.
+- A command whose effect depends on its values (`set <n>`, an instrument's `VOLT <v>`) can be
+  remembered with `limits`, one per value after the command: within them the remembered effect
+  holds, outside them (or a value that is not a plain number) it asks every time. Propose limits
+  from the manual or the human's words; the human confirms anything that asks less.
+  `serial.command` takes the values as `args`.
 - `until` is a regex for the line that ends an answer: the shell's prompt, or the line its
   answers end with ("^(ok|err)", "^(OK|ERROR)$"), as you see it in the device's output. With
   it, reading stops there instead of after `seconds`. The result splits the answer (`reply`)

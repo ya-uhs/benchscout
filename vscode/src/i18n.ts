@@ -73,6 +73,7 @@ const en = {
   learned: (name: string) => `Remembered about ${name}`,
   commandAs: (cmd: string, effect: string) =>
     `\`${cmd}\`: ${({ safe: "runs without asking", disruptive: "asks once (can be allowed for the session)", dangerous: "asks every time" } as Record<string, string>)[effect] ?? effect}`,
+  limitsAs: (t: string) => `Values allowed: ${t}. Outside them, it asks every time.`,
   learnedSafety: (name: string) => `Remember about ${name}? This loosens safety`,
   listenSafeAsk: (port: string, n: number) => `Opening ${port} left the chip's own USB port in place (${n} times), and this chip shows a reset by its port dropping off: it did not reset. Treat listening to it as safe, so it is watched without asking?`,
   resetOnOpen: (port: string) => `${port} was opened as safe to open, and it vanished right away (a reset or re-enumeration). What was remembered no longer holds: opening it asks first from now on.`,
@@ -220,6 +221,7 @@ const ja: typeof en = {
   learned: (name: string) => `${name} について覚えたこと`,
   commandAs: (cmd: string, effect: string) =>
     `\`${cmd}\`:${({ safe: "聞かずに実行します", disruptive: "一度だけ確認します(セッション中まとめて許可できます)", dangerous: "毎回確認します" } as Record<string, string>)[effect] ?? effect}`,
+  limitsAs: (t: string) => `許す値: ${t}。この外は毎回確認します。`,
   learnedSafety: (name: string) => `${name} について覚えますか?(安全の扱いが緩みます)`,
   listenSafeAsk: (port: string, n: number) => `${port} を開いても、チップ自身の USB ポートは消えませんでした(${n} 回)。このチップはリセットするとポートが消えるので、リセットしていません。聞くことを安全として扱い、次から確認なしで見張りますか?`,
   resetOnOpen: (port: string) => `${port} を「開いても安全」として開いたところ、すぐに消えました(リセットか再接続)。覚えていたことが今の機器と食い違うので、次から開く前に確認します。`,

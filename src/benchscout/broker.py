@@ -650,6 +650,12 @@ class Broker:
             return {"status": "rejected", "message": str(err)}
         if effect not in ("safe", "disruptive", "dangerous"):
             return {"status": "rejected", "message": "effect must be safe, disruptive or dangerous"}
+        limits = data.get("limits")
+        if limits is not None and (not isinstance(limits, list) or len(limits) > 16 or not all(
+                x is None or isinstance(x, dict) and x and set(x) <= {"min", "max"}
+                and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in x.values()) for x in limits)):
+            return {"status": "rejected", "message": 'limits: a list, one item per value after the command: null (any value) '
+                                                     'or {"min": number, "max": number} (either may be left out)'}
         if "eol" in data and data["eol"] not in LINE_ENDINGS:
             # a line ending that carries more ("\nerase\n") would send a second command the human never saw
             return {"status": "rejected", "message": "eol must be one of \"\\n\", \"\\r\\n\", \"\\r\" or \"\" (nothing)"}
@@ -668,12 +674,13 @@ class Broker:
             if len(units) != 1:
                 return {"status": "rejected", "message": "remember one SCPI command (one header) per entry, without ';'"}
         key = self._key(dev)
-        loosens = self._loosens(self.bench.ports[port], cmd, effect, self._in_force(key, self.bench.ports[port], cmd))
+        loosens = self._loosens(self.bench.ports[port], cmd, effect, self._in_force(key, self.bench.ports[port], cmd)) \
+            or self._widens(key, self.bench.ports[port], cmd, effect, limits)
         status = "pending" if loosens and not confirmed else "active"
         if status == "active":  # the same command again: the newer entry replaces the older (a weaker one only once confirmed)
             self._supersede_command(key, self.bench.ports[port], cmd)
         e = Entry(kind="command", text=text, source=source, evidence=evidence, target=port, status=status,
-                  data={"command": cmd, "effect": effect, **{k: data[k] for k in ("eol", "until") if data.get(k) is not None}})
+                  data={"command": cmd, "effect": effect, **{k: data[k] for k in ("eol", "until", "limits") if data.get(k) is not None}})
         e = self.memory.add(key, e, self._header(dev))
         self._load_command(self.bench, dev, e)
         self._memory_event(dev, e)
@@ -693,8 +700,8 @@ class Broker:
 
     @staticmethod
     def _loosens(port, cmd: str, effect: str, in_force: Effect | None = None) -> bool:
-        """Would this entry make the command ask less than it does now: than benchscout by itself, or than a stronger
-        entry already in force (DANGEROUS remembered, then DISRUPTIVE: that is loosening too)?"""
+        """Would this entry make the command ask less than it does now: than the rule in force for it (DANGEROUS
+        remembered, then DISRUPTIVE: that is loosening too), or than benchscout by itself when nothing is remembered?"""
         if port.kind in SCPI_PORTS:
             key = Broker._command_key(port, cmd)
             if not key:
@@ -702,7 +709,27 @@ class Broker:
             floor = scpi_default(key)[0]
         else:
             floor = Effect.DISRUPTIVE  # a firmware command is otherwise like sending bytes
-        return Effect[effect.upper()] < max(floor, in_force or floor)
+        return Effect[effect.upper()] < (in_force if in_force is not None else floor)
+
+    def _widens(self, key: str, port, cmd: str, effect: str, limits: list | None) -> bool:
+        """Would this entry let through values the rule in force (at this effect or stronger) keeps out? Removing or
+        widening limits asks less too, so the human confirms it (design.md section 3, runtime contracts)."""
+        same = self._command_key(port, cmd)
+        for e in self.memory.entries(key):
+            if not (e.kind == "command" and e.target == port.id and e.status == "active"
+                    and self._command_key(port, e.data.get("command", "")) == same):
+                continue
+            old = e.data.get("limits")
+            if not old or Effect[e.data.get("effect", "disruptive").upper()] < Effect[effect.upper()]:
+                continue
+            for i, o in enumerate(old):
+                n = (limits or [])[i] if i < len(limits or []) else None
+                if o is None:
+                    continue
+                if n is None or n.get("min", float("-inf")) < o.get("min", float("-inf")) \
+                        or n.get("max", float("inf")) > o.get("max", float("inf")):
+                    return True
+        return False
 
     def _in_force(self, key: str, port, cmd: str) -> Effect | None:
         """The strongest effect remembered (and in force) for this command on this port."""
@@ -743,6 +770,7 @@ class Broker:
         if e.status == "pending" and held and not held.get("pending"):
             return  # waiting for the human: what is in force stays in force meanwhile
         port.commands[key] = {"effect": effect, "eol": e.data.get("eol", "\n"), "until": e.data.get("until"), "text": e.text,
+                              "limits": e.data.get("limits"),
                               "loosens": loosens,
                               "pending": e.status == "pending" or (loosens and shared)}
 
@@ -1066,8 +1094,10 @@ class Broker:
                 # what will actually be sent, resolved now: the approval binds to it, and that is what runs (a definition
                 # changed while the human decides does not ride on their OK)
                 c = self.bench.ports[port_id].commands[args["name"]]
-                args = dict(args, sends={"data": args["name"], "eol": c.get("eol", "\n"), "effect": c["effect"],
-                                         **({"until": c["until"]} if c.get("until") else {})})
+                text = f"{args['name']} {args.get('args') or ''}".strip()
+                args = dict(args, sends={"data": text, "eol": c.get("eol", "\n"), "effect": c["effect"],
+                                         **({"until": c["until"]} if c.get("until") else {}),
+                                         **({"limits": c["limits"]} if c.get("limits") else {})})
             key = A.canonical(args)
             try:
                 impact = classify(self.bench, action, port_id, args, port_open=self._held_open(port_id, args))

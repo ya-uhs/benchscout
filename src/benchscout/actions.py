@@ -159,6 +159,8 @@ BUILTIN: dict[str, Action] = {a.name: a for a in (
            "run a firmware command remembered for this port (bench_remember kind command) by its name and read the "
            "answer; a command remembered as safe runs without asking once the human confirmed it",
            (Param("name", str, "the command as remembered, e.g. \"status\"", required=True),
+            Param("args", str, "values after the command, as typed (\"42\" for `set 42`); checked against the limits "
+                  "remembered for it"),
             Param("seconds", float, "how long to read the answer (at most, when an until was remembered)", 1.0, min=0.05, max=30),
             Param("baud", int, "baud rate", 115200, min=50, max=12_000_000)), port_kinds=("serial",)),
     Action("jtag.scan", Effect.SAFE, False, "reads IDCODEs; needs exclusive use of the probe channel",

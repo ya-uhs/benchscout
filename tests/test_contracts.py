@@ -81,7 +81,7 @@ def test_a_remembered_effect_is_never_weakened_without_the_human(tmp_path, monke
     for op, arg in ops:
         if op == "remember":
             r = remember(br, port, "erase", arg)
-            weaker = Effect[arg.upper()] < max(Effect.DISRUPTIVE, Effect[in_force.upper()] if in_force else Effect.DISRUPTIVE)
+            weaker = Effect[arg.upper()] < (Effect[in_force.upper()] if in_force else Effect.DISRUPTIVE)
             assert r["status"] == ("pending_human" if weaker else "remembered"), (arg, in_force)
             if not weaker:
                 in_force = arg
@@ -341,4 +341,61 @@ def test_recon_opens_a_port_the_way_it_was_judged_safe_to_open(tmp_path):
     used = dict(zip([c[1] for c in opens], br.io.lines))
     assert esp in used, "safe to open by memory: recon listens"
     assert used[esp] == lines, "and opens it as it was judged safe to open"
+    br.end_session()
+
+
+# ---- a command allowed, its values limited: one mechanism for every protocol ---------------------------------------
+
+PSU = "visa:TCPIP0::192.168.1.50::INSTR"
+
+
+def _confirm(br, port, data):
+    r = br.remember(port, "command", "within these values", data=data)
+    if r["status"] == "pending_human":
+        dev = br.bench.devices[br.bench.ports[br.resolve_port(port)].device_id]
+        br.decide_memory(br._key(dev), r["id"], True)
+    return r
+
+
+@pytest.mark.parametrize("port, name, inside, outside", [
+    (PSU, "VOLT", ["VOLT 3.3", "VOLT 0"], ["VOLT 5", "VOLT MAX", "VOLT 3.3V", "VOLT 3.3;VOLT 9", "VOLT"]),
+    (VCP, "set", ["set 42", "set 0"], ["set 200", "set -1", "set fast", "set"]),
+])
+def test_a_command_allowed_within_value_limits_asks_every_time_outside_them(tmp_path, port, name, inside, outside):
+    """design.md section 3 (2026-11-03): the human may allow a command but limit its values, the same for a firmware's
+    commands and an instrument's. Outside the limits, or a value that is not a plain number, it asks every time."""
+    br = bench(tmp_path, select=[VCP, PSU])
+    pid = br.resolve_port(port)
+    _confirm(br, pid, {"command": name, "effect": "disruptive", "limits": [{"min": 0, "max": 3.6 if port == PSU else 100}]})
+    action, key = ("scpi.write", "command") if port == PSU else ("serial.send", "data")
+    for text in inside:
+        assert br.impact(action, pid, {key: text}).effect == Effect.DISRUPTIVE, text
+    for text in outside:
+        imp = br.impact(action, pid, {key: text})
+        assert imp.effect == Effect.DANGEROUS and imp.code in ("outside_limits", "energizing"), (text, imp.reason)
+    br.end_session()
+
+
+def test_a_safe_firmware_command_with_values_runs_without_asking_only_within_its_limits(tmp_path):
+    br = bench(tmp_path, select=[VCP])
+    port = br.resolve_port(VCP)
+    _confirm(br, port, {"command": "led", "effect": "safe", "limits": [{"min": 0, "max": 7}]})
+    assert br.impact("serial.command", port, {"name": "led", "args": "3"}).effect == Effect.SAFE
+    assert br.impact("serial.command", port, {"name": "led", "args": "9"}).effect == Effect.DANGEROUS
+    assert br.impact("serial.send", port, {"data": "led 3"}).effect == Effect.DISRUPTIVE, "a raw send never asks less than that"
+    br.end_session()
+
+
+def test_widening_or_dropping_value_limits_waits_for_the_human(tmp_path):
+    br = bench(tmp_path, select=[PSU])
+    pid = br.resolve_port(PSU)
+    _confirm(br, pid, {"command": "VOLT", "effect": "disruptive", "limits": [{"min": 0, "max": 3.6}]})
+    assert br.remember(pid, "command", "x", data={"command": "VOLT", "effect": "disruptive"})["status"] == "pending_human"
+    assert br.remember(pid, "command", "x", data={"command": "VOLT", "effect": "disruptive",
+                                                  "limits": [{"min": 0, "max": 12}]})["status"] == "pending_human"
+    assert br.impact("scpi.write", pid, {"command": "VOLT 5"}).effect == Effect.DANGEROUS, "the narrower limits stay in force"
+    assert br.remember(pid, "command", "x", data={"command": "VOLT", "effect": "disruptive",
+                                                  "limits": [{"min": 1, "max": 3.3}]})["status"] == "remembered", "narrower: at once"
+    assert br.remember(pid, "command", "x", data={"command": "VOLT", "effect": "disruptive",
+                                                  "limits": [{"max": "3.6"}]})["status"] == "rejected"
     br.end_session()
