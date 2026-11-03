@@ -97,6 +97,34 @@ def test_rejected_or_shared_serial_safety_memory_does_nothing(tmp_path, monkeypa
     assert session(tmp_path, f).bench.ports[br.resolve_port(ESP)].may_reset_on_open is True
 
 
+def test_a_port_remembered_as_safe_to_open_that_resets_when_opened_asks_again(tmp_path):
+    """Memory may be stale (design.md section 6): new firmware, or another board, can reset on open where the one
+    remembered did not. The newer observation wins at once, and the next session still asks."""
+    events = []
+    f = fixture(tmp_path, streams={ESP: [{"after": 0.3, "vanish": 0.4}, {"after": 0.9, "text": f"{BANNER}\n"}]})
+    br = session(tmp_path, f, events=events)
+    dev = br.bench.devices[br.bench.ports[br.resolve_port(ESP)].device_id]
+    res = br.remember(ESP, "safety", "opening does not reset it", data={"listen_safe": True})
+    br.decide_memory(br._key(dev), res["id"], True)
+    port = br.resolve_port(ESP)
+    assert br.select([dev.id])["watching"] == [port], "remembered as safe to open: watched without asking"
+    for _ in range(100):
+        if br.bench.ports[port].may_reset_on_open:
+            break
+        time.sleep(0.02)
+    assert br.bench.ports[port].may_reset_on_open, "it vanished 0.3 s after opening: opening asks again, now"
+    status = {e.id: e.status for e in br.memory.entries(br._key(dev))}
+    assert status[res["id"]] == "contradicted", "kept as history, no longer in force"
+    stricter = [e for e in br.memory.entries(br._key(dev)) if e.kind == "safety" and e.data.get("listen_safe") is False]
+    assert len(stricter) == 1 and stricter[0].status == "active" and "asks first" in stricter[0].text
+    assert any(e["event"] == "memory_added" and e["entry"]["id"] == stricter[0].id for e in events), "the human is told"
+    br.end_session()
+    again = session(tmp_path, fixture(tmp_path))
+    assert again.request("serial.listen", ESP, {"seconds": 0.1})["status"] == "not_selected"
+    assert again.impact("serial.listen", ESP).effect.name == "DISRUPTIVE", "the next session asks too"
+    again.end_session()
+
+
 def test_two_quiet_opens_propose_listening_as_safe_pending_the_human(tmp_path):
     events = []
     br = session(tmp_path, fixture(tmp_path), CH340, events=events)

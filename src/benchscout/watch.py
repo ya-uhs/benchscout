@@ -48,6 +48,7 @@ class PortWatch:
         self._thread: threading.Thread | None = None
         self.alive = False
         self.vanishes = 0  # how often the port vanished while watched (a reset, an unplug)
+        self.opened_at = 0.0  # monotonic time the watch opened the port
         self._wall, self._mono = time.time, time.monotonic  # replaceable in tests
         self._drift = self._wall() - self._mono()
         self._slept_until = 0.0  # monotonic time until which vanishing is put down to the host sleeping
@@ -61,6 +62,7 @@ class PortWatch:
     def start(self) -> None:
         """Opens the port now (errors surface to the caller), then reads in the background."""
         self._stream = self.io.serial_stream(self.path, self.baud, True, self.lines)
+        self.opened_at = time.monotonic()
         self.alive = True
         self._thread = threading.Thread(target=self._run, name=f"watch {self.port_id}", daemon=True)
         self._thread.start()

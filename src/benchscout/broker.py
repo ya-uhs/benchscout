@@ -11,6 +11,7 @@ Approvals live in memory (`ApprovalBook`); nothing on disk grants anything.
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 from pathlib import Path
@@ -23,6 +24,7 @@ from .io import Io, run_tool
 from .locks import DeviceLocks
 from .policy import SCPI_PORTS, Effect, Impact, classify, scpi_default, scpi_headers
 
+OPEN_RESET_S = 3.0  # a port that vanishes this soon after being opened was reset (or re-enumerated) by the open
 RECENT_FOR_QUOTES = 2 * 1024 * 1024  # how much recent output a quote is checked against
 
 
@@ -413,6 +415,9 @@ class Broker:
                         t.name, t.confidence = e.text, Confidence.IDENTIFIED
                     t.evidence.append(Evidence("learned", f"{e.text}: \"{e.evidence}\" ({when})"))
                 elif e.kind == "safety":
+                    if e.target in bench.ports and e.data.get("listen_safe") is False:
+                        bench.ports[e.target].may_reset_on_open = True  # seen to reset when opened: stricter, at once
+                        continue
                     if shared:
                         continue  # another unit of this model may answer to the same serial: never loosen safety on it
                     if e.target in bench.ports and e.data.get("listen_safe"):
@@ -430,12 +435,21 @@ class Broker:
 
     def _observe_open(self, port_id: str, text: str | None) -> None:
         """benchscout's own observation, written without asking: opening a port that may reset did
-        not make it vanish. After two, propose (pending the human) treating listening as SAFE."""
+        not make it vanish. After two, propose (pending the human) treating listening as SAFE. A port opened as safe
+        that vanished at once says the opposite (_reset_on_open)."""
         from .io import VANISHED_MARK
         from .memory import Entry
 
         port = self.bench.ports[port_id]
-        if not port.may_reset_on_open or text is None or VANISHED_MARK in text:
+        if not port.may_reset_on_open:
+            gone = re.search(re.escape(VANISHED_MARK) + r" at ([\d.]+) s", text or "")
+            after = float(gone.group(1)) if gone else None
+            if text is None:
+                self._reset_on_open(port_id, "it vanished right after it was opened")
+            elif after is not None and after < OPEN_RESET_S:
+                self._reset_on_open(port_id, f"it vanished {after:.1f} s after it was opened")
+            return
+        if text is None or VANISHED_MARK in text:
             return
         dev = self.bench.devices[port.device_id]
         key = self._key(dev)
@@ -443,12 +457,42 @@ class Broker:
                                    text=f"opened {port.path} and it did not vanish (no re-enumeration seen)",
                                    time=time.strftime("%Y-%m-%dT%H:%M:%S")), self._header(dev))
         entries = self.memory.entries(key)
-        seen = sum(1 for e in entries if e.kind == "observation" and e.target == port_id and "did not vanish" in e.text)
+        # what counts is what was seen since the device last said otherwise (it reset when opened)
+        since = max((e.time for e in entries if e.kind == "safety" and e.target == port_id and e.data.get("listen_safe") is False),
+                    default="")
+        seen = sum(1 for e in entries if e.kind == "observation" and e.target == port_id and "did not vanish" in e.text
+                   and e.time > since)
         if seen >= 2 and not any(e.kind == "safety" and e.target == port_id and e.status in ("pending", "active", "rejected") for e in entries):
             e = self.memory.add(key, Entry(kind="safety", source="benchscout", target=port_id, status="pending",
                                            text=f"Listening to {port.path} did not reset {dev.name} ({seen} times). Treat listening as SAFE?",
                                            data={"listen_safe": True, "seen": seen}), self._header(dev))
             self._memory_event(dev, e)
+
+    def _reset_on_open(self, port_id: str, what: str) -> None:
+        """A port judged safe to open (by a confirmed memory or the shipped data) vanished as soon as it was opened: the
+        device reset or re-enumerated. Memory is used as possibly stale (design.md section 6), and the newer
+        observation wins: the entry that said listening is safe is marked contradicted (kept as history), and a stricter
+        entry takes effect at once, so opening this port asks first from now on. The human can delete it."""
+        from dataclasses import asdict
+
+        from .memory import Entry
+
+        with self._lock:
+            port = self.bench.ports.get(port_id)
+            if port is None or port.may_reset_on_open:
+                return
+            dev = self.bench.devices[port.device_id]
+            key = self._key(dev)
+            port.may_reset_on_open = True
+            for e in self.memory.entries(key):
+                if e.kind == "safety" and e.target == port_id and e.status in ("active", "pending") and e.data.get("listen_safe"):
+                    old = self.memory.set_status(key, e.id, "contradicted")
+                    self._emit({"event": "memory_decided", "key": key, "entry": asdict(old)})
+            e = self.memory.add(key, Entry(kind="safety", source="benchscout", target=port_id, status="active",
+                                           text=f"opened {port.path} as safe to open and {what} (a reset or re-enumeration): "
+                                                "opening it asks first from now on",
+                                           data={"listen_safe": False}), self._header(dev))
+        self._memory_event(dev, e)
 
     def _memory_event(self, dev, entry) -> None:
         from dataclasses import asdict
@@ -785,6 +829,10 @@ class Broker:
             ev["device"] = port.device_id
             ev["device_name"] = last.bench.devices[port.device_id].name
         self._emit(ev)
+        w = self.watches.get(ev["port"])
+        if ev["kind"] == "vanished" and ev.get("cause") != "host_sleep" and w and w.vanishes == 1 \
+                and time.monotonic() - w.opened_at < OPEN_RESET_S:
+            self._reset_on_open(ev["port"], f"it vanished {time.monotonic() - w.opened_at:.1f} s after it was opened")
 
     def end_session(self) -> None:
         for pid in list(self.watches):

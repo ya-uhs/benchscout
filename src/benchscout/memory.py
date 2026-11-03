@@ -15,7 +15,8 @@ Each file is a list of [[entry]] tables:
   source    benchscout | agent | user
   target    target id (for identity), port id (for safety/observation), optional
   time      ISO time it was written
-  status    active | pending (safety, waiting for the human) | rejected
+  status    active | pending (safety, waiting for the human) | rejected | superseded (a newer entry replaced it) |
+            contradicted (what the device did since says otherwise; kept as history)
   data      structured part (e.g. {listen_safe = true}, {pattern = "...", alert = "..."})
 """
 

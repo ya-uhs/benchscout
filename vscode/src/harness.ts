@@ -281,7 +281,10 @@ export class Harness extends EventEmitter {
     const seen = Number(e.data.seen ?? e.text.match(/\((\d+) times\)/)?.[1] ?? 2);
     // a command entry says exactly what it lets run, so the human confirms the command, not only the agent's words
     const cmd = e.kind === "command" && e.data.command ? `\n${this.s.commandAs(String(e.data.command), String(e.data.effect ?? "disruptive"))}` : "";
-    const body = (own ? this.s.listenSafeAsk(e.target, seen) : e.text) + cmd + (e.evidence ? `\n"${e.evidence}"` : "");
+    // benchscout's own: it reset when opened as safe (design.md section 6: the newer observation wins)
+    const reset = e.source === "benchscout" && e.kind === "safety" && e.data.listen_safe === false;
+    const body = (own ? this.s.listenSafeAsk(e.target, seen) : reset ? this.s.resetOnOpen(e.target) : e.text) + cmd
+      + (e.evidence ? `\n"${e.evidence}"` : "");
     const detail = `${e.kind} · ${e.source} · ${e.time.slice(0, 16).replace("T", " ")}`;
     if (e.status === "pending") {
       this.add({ kind: "memory", title: this.s.learnedSafety(name), body, detail, freeText: false,
