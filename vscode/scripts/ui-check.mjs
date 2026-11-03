@@ -172,6 +172,29 @@ async function main() {
       const b = row?.querySelector("button"); if (!b) return ""; b.click(); return b.textContent.trim(); })()`);
     if (!hit) throw new Error(`no device row with a button for "${rest[0]}"`);
     console.log(`pressed: ${hit}`);
+  } else if (cmd === "typing") {  // does typing survive a redraw (the agent streams), and an input method's composition?
+    console.log(await inbox(st.port, `(() => {
+      const box = doc.querySelector('textarea[data-draft="_top"]'); box.focus(); box.value = "こんにち"; box.setSelectionRange(2, 2);
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+      const win = doc.defaultView;
+      const again = () => win.postMessage({ type: "state", state: win.benchscoutState }, "*");
+      return new Promise((done) => setTimeout(() => {
+        again();
+        setTimeout(() => {
+          const kept = doc.activeElement && doc.activeElement.dataset.draft === "_top" && doc.activeElement.value === "こんにち"
+            && doc.activeElement.selectionStart === 2;
+          const before = doc.querySelector('textarea[data-draft="_top"]');
+          before.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+          again();
+          setTimeout(() => {
+            const untouched = doc.querySelector('textarea[data-draft="_top"]') === before;
+            before.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+            setTimeout(() => done(JSON.stringify({ kept, untouched,
+              redrawnAfter: doc.querySelector('textarea[data-draft="_top"]') !== before })), 100);
+          }, 100);
+        }, 100);
+      }, 50));
+    })()`));
   } else if (cmd === "reply") {  // reply "<text in the card>" "<words>": type into that open card's box and send it
     const hit = await inbox(st.port, `(() => { const card = [...doc.querySelectorAll(".card")].find((c) => !c.classList.contains("closed")
       && c.innerText.includes(${JSON.stringify(rest[0])})); const box = card && card.querySelector("textarea[data-draft]"); if (!box) return "";

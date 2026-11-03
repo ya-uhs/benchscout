@@ -86,9 +86,11 @@ def render(r: Recon) -> str:
             lines.append("Downloaded on first use (official release, after the human's OK): " + ", ".join(later))
     from . import knowledge as K
 
-    if K.PROBLEMS:
+    from . import memory as M
+
+    if K.PROBLEMS or M.PROBLEMS:
         lines.append("")
-        lines.append("Knowledge files that could not be read (none of their rules are in effect until they are fixed; "
-                     "tell the user):")
-        lines += [f"  - {p}" for p in K.PROBLEMS]
+        lines.append("Files that could not be read (nothing in them is in effect until they are fixed, and benchscout "
+                     "leaves them as they are; tell the user):")
+        lines += [f"  - {p}" for p in K.PROBLEMS] + [f"  - {p}: {e}" for p, e in M.PROBLEMS.items()]
     return "\n".join(lines)

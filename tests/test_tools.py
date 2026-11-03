@@ -104,3 +104,30 @@ def test_shipped_writes_are_dangerous_and_fpga_program_disturbs_the_fabric():
     assert flash.effect == Effect.DANGEROUS and flash.port_kinds == ("jtag",) and flash.releases_device
     assert "--write-flash" in flash.argv
     assert A.get("esptool.write_flash").params[0].coerce("0x0:a.bin,0x10000:b.bin") == [[0, "a.bin"], [0x10000, "b.bin"]]
+
+
+def test_a_long_run_does_not_hold_up_the_human_and_its_result_can_be_collected(ws):
+    """Review 7 (21): a run held the broker's lock to the end (a flash write takes minutes), so the human's selection
+    waited behind it, and a run longer than the agent's call left nothing to collect its result with."""
+    import threading
+    import time
+
+    (ws / ".benchscout" / "knowledge" / "slow.toml").write_text(
+        "[[tool]]\nname = \"lab.slow\"\neffect = \"disruptive\"\nreason = \"takes a while\"\nport_kinds = [\"serial\"]\n"
+        f"argv = ['{sys.executable}', \"-c\", \"import time; time.sleep(1.5); print('slow done')\"]\n")
+    br = broker(ws)
+    br.call_budget = 0.5  # (one call may wait this long in all)
+    asked = br.request("lab.slow", VCP, {})
+    br.decide(asked["approval_id"], True)
+    running = br.request("lab.slow", VCP, {}, approval_id=asked["approval_id"])
+    assert running["status"] == "running" and running["job"], running
+    t0 = time.monotonic()
+    other = threading.Thread(target=lambda: br.select(sorted(br.selected)))
+    other.start()
+    other.join(1.0)
+    assert not other.is_alive() and time.monotonic() - t0 < 1.0, "the human's selection does not wait for the run"
+    br.call_budget = 10
+    done = br.request("lab.slow", VCP, {}, job=running["job"])
+    assert done["status"] == "done" and "slow done" in done["result"]["preview"] and done["approval"]["id"] == asked["approval_id"]
+    assert br.request("lab.slow", VCP, {}, job=running["job"])["status"] == "unknown_job", "collected once"
+    br.end_session()

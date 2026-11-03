@@ -416,12 +416,22 @@ def _fold(b: Bench, targets: list[Target], got: dict, earlier: bool = False, por
     elif got["probe"] == "listen":
         _fold_listen(targets, result, got.get("error"), got["time"] if earlier else None)
     elif got["probe"] == "jtag":
-        for found in result or []:
+        chain = list(result or [])
+        for i, found in enumerate(chain):
             code = found["idcode"]
             # the tool's own IDCODE database names it; benchscout keeps no table (design.md section 5)
             name = " ".join(x for x in (found.get("manufacturer"), found.get("model")) if x)
             src = "openFPGALoader database" if found.get("model") else "not in openFPGALoader's database"
-            for t in targets:
+            if len(chain) > 1:
+                src += f"; part {i + 1} of {len(chain)} on the chain"
+            parts = targets
+            if i > 0 and port is not None:  # another part on the same chain is a target of its own, not a rename of the first
+                tid = f"{targets[0].id if targets else 'target:' + port.id}:part{i + 1}"
+                if tid not in b.targets:
+                    b.add_target(Target(tid, None, "unknown", Confidence.UNKNOWN, facts=[f"part {i + 1} of {len(chain)} on the JTAG chain"]))
+                    b.link(port.id, tid, "jtag")
+                parts = [b.targets[tid]]
+            for t in parts:
                 if name and t.kind in ("fpga", "mcu", "unknown"):
                     t.name, t.confidence = name, Confidence.IDENTIFIED
                     if t.kind == "unknown":

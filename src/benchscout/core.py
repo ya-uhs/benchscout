@@ -48,7 +48,8 @@ def agent_dispatch(broker: Broker, method: str, params: dict) -> Any:
     if method == "impact":
         return broker.impact(params["action"], params["port"], params.get("args")).to_dict()
     if method == "do":
-        return broker.request(params["action"], params["port"], params.get("args"), params.get("approval_id"))
+        return broker.request(params["action"], params["port"], params.get("args"), params.get("approval_id"),
+                              job=params.get("job"))
     if method == "log":
         return broker.read_log(params["port"], int(params.get("lines") or 200), params.get("contains"))
     if method == "identify":
@@ -180,9 +181,11 @@ def control_dispatch(broker: Broker, method: str, params: dict) -> Any:
     if method == "scan":
         r = broker.scan(only_new=bool(params.get("only_new")))
         from . import knowledge as K
+        from . import memory as M
 
         return {"text": render(r), "bench": r.bench.to_dict(), "proposals": [asdict(p) for p in r.proposals],
-                "selected": sorted(broker.selected), "knowledge_errors": list(K.PROBLEMS)}
+                "selected": sorted(broker.selected),
+                "knowledge_errors": list(K.PROBLEMS) + [f"{p}: {e}" for p, e in M.PROBLEMS.items()]}
     if method == "inventory":
         return (broker.last or broker.scan()).to_dict()
     if method == "select":

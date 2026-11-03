@@ -117,11 +117,14 @@ run or return denied. If the wait runs out you get approval_required with an app
 tell the user it is waiting in the panel, and call again with the same action, port, args
 and that approval_id. A tool used for the first time is downloaded after the human's OK; if
 that takes longer than one call you get downloading (with how far it is): tell the user, and
-call again the same way. Never try to reach the hardware any other way.
+call again the same way. A run that outlasts one call (a flash write can take minutes) returns
+running with a job id: call again with that `job` to wait for its result; never start it again.
+Never try to reach the hardware any other way.
 Actions:
 {catalog}""")
-    async def bench_do(action: str, port: str, args: dict | None = None, approval_id: str | None = None) -> str:
-        return await _call("do", {"action": action, "port": port, "args": args, "approval_id": approval_id},
+    async def bench_do(action: str, port: str, args: dict | None = None, approval_id: str | None = None,
+                       job: str | None = None) -> str:
+        return await _call("do", {"action": action, "port": port, "args": args, "approval_id": approval_id, "job": job},
                            timeout=APPROVAL_WAIT_S + 60)
 
     @mcp.tool()

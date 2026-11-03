@@ -114,15 +114,21 @@ class PortWatch:
         if not self._stream:
             raise PortGone("not open")
         self._stream.write(data)
+        from .codec import QUIET_S
+
         end = time.monotonic() + seconds
         with self._cond:
+            seen, quiet_since = -1, time.monotonic()
             while True:
                 new = self._total - start
                 out = bytes(self._recent[-new:]) if new else b""
-                left = end - time.monotonic()
-                if left <= 0 or ended(out, until):
+                now = time.monotonic()
+                if new != seen:
+                    seen, quiet_since = new, now
+                left = end - now
+                if left <= 0 or ended(out, until, settled=now - quiet_since >= QUIET_S):
                     break
-                self._cond.wait(min(left, 0.2))
+                self._cond.wait(min(left, 0.05))
             self._answers = (self._answers + [(start, self._total)])[-50:]
         return out.decode("utf-8", errors="replace"), before
 

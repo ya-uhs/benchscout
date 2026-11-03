@@ -137,7 +137,9 @@ def main() -> None:
     main_exe = OUT / ("openFPGALoader.exe" if sys.platform == "win32" else "openFPGALoader")
     version = subprocess.run([main_exe, "--Version"], capture_output=True, text=True).stdout.strip()
     if f"v{VERSION}" not in version:
-        print(f"warning: shipping {version or 'an openFPGALoader that does not report its version'}, pinned is v{VERSION}")
+        # the notices name v{VERSION}: shipping another build would make them wrong
+        raise SystemExit(f"refusing to ship {version or 'an openFPGALoader that does not report its version'}: pinned is "
+                         f"v{VERSION} (THIRD_PARTY_NOTICES names that one). Install it, or change VERSION and the notices together")
     size = sum(f.stat().st_size for f in OUT.rglob("*") if f.is_file()) / 1e6
     print(f"shipped {main_exe.relative_to(ROOT)} ({version}) with {[f.name for f in shipped]}, {size:.1f} MB")
 

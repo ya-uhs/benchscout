@@ -348,8 +348,9 @@ class LiveIo:
 
             while time.monotonic() < end:
                 try:
-                    buf += s.read(4096)
-                    if ended(bytes(buf), until):
+                    chunk = s.read(4096)  # (0.1 s timeout: an empty read means the output has settled)
+                    buf += chunk
+                    if ended(bytes(buf), until, settled=not chunk):
                         break
                     continue
                 except (serial.SerialException, OSError) as e:

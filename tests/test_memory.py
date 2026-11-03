@@ -293,3 +293,37 @@ def test_the_inbox_lists_what_is_remembered_per_device_with_its_file(tmp_path):
     br.forget(group["key"], a["id"])
     assert any(e["event"] == "memory_forgotten" and e["id"] == a["id"] for e in events), "the inbox hears it at once"
     assert [e["text"] for g in br.memory_view() if g["device"] == dev for e in g["entries"]] == ["TX goes to the sensor board"]
+
+
+
+def test_two_cores_writing_the_same_device_memory_lose_nothing(tmp_path):
+    """Review 7: one core per VS Code window, one memory file per device for all of them; each write read the file,
+    changed it and wrote it back, so two writing at once lost one's entries."""
+    import subprocess
+    import sys
+
+    code = ("import sys; from benchscout.memory import Memory, Entry; m = Memory(sys.argv[1], root=sys.argv[1]); "
+            "[m.add('dev', Entry(kind='observation', text=f'{sys.argv[2]} {i}', source='benchscout')) for i in range(40)]")
+    procs = [subprocess.Popen([sys.executable, "-c", code, str(tmp_path), name]) for name in ("a", "b")]
+    assert all(p.wait(60) == 0 for p in procs)
+    from benchscout.memory import Memory
+
+    texts = {e.text for e in Memory(tmp_path, root=tmp_path).entries("dev")}
+    assert len(texts) == 80
+
+
+def test_a_memory_file_that_cannot_be_read_is_left_as_it_is(tmp_path):
+    from benchscout import memory as M
+    from benchscout.memory import Entry, Memory
+
+    m = Memory(tmp_path, root=tmp_path)
+    f = tmp_path / "devices" / "dev.toml"
+    f.parent.mkdir(parents=True)
+    f.write_text("[[entry]\nkind = 'observation'\n")  # a hand edit with a missing bracket
+    assert m.entries("dev") == [] and str(f) in M.PROBLEMS
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="could not be read"):
+        m.add("dev", Entry(kind="observation", text="x", source="benchscout"))
+    assert f.read_text() == "[[entry]\nkind = 'observation'\n", "the person's file, as they left it"
+    M.PROBLEMS.clear()

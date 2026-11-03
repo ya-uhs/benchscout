@@ -286,7 +286,11 @@ export function activate(ctx: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("benchscout.rescan", () => { askForAgent(); return core?.scan(); }),
     vscode.commands.registerCommand("benchscout.stop", () => { harness?.stop(); core?.stop(); }),
     vscode.workspace.onDidGrantWorkspaceTrust(() => {  // trusted now: start again, reading the folder's knowledge
-      if (core?.running) { harness?.stop(); core.stop(); void start(ctx); }
+      const old = core;
+      if (!old?.running) return;
+      old.once("exit", () => void start(ctx));  // once it has stopped: start() does nothing while one runs
+      harness?.stop();
+      old.stop();
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("benchscout.autonomy")) {

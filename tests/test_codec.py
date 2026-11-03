@@ -10,6 +10,8 @@ import re
 import time
 from pathlib import Path
 
+import pytest
+
 from benchscout.broker import Broker
 from benchscout.codec import split
 from benchscout.io import FixtureIo
@@ -70,4 +72,25 @@ def test_a_watched_shell_stops_at_its_end_line_and_earlier_answers_are_not_taken
         assert r["reply"].splitlines()[-1] == "ok" and "uptime_ms=490807" in r["reply"], r
         assert "hb n=" not in r["reply"]
         assert Path(r["saved_to"]).read_text(encoding="utf-8").startswith("uptime_ms=490807"), "the file has it all"
+    br.end_session()
+
+
+@pytest.mark.assumed  # no shell with a bare prompt on the bench yet: replace with a recording (Zephyr's "uart:~$ ")
+def test_a_prompt_without_a_newline_ends_the_answer(tmp_path):
+    vcp = "/dev/cu.usbmodem21403"
+    data = json.loads((Path(__file__).parent.parent / "fixtures" / "bench_example.json").read_text(encoding="utf-8"))
+    data["streams"] = {vcp: [{"after": 0.02, "text": "uart:~$ "}]}
+    data["replies"] = {vcp: {"kernel uptime\n": "Uptime: 1234 ms\nuart:~$ "}}
+    f = tmp_path / "bench.json"
+    f.write_text(json.dumps(data), encoding="utf-8")
+    br = Broker(FixtureIo(f), tmp_path / "ws" / ".benchscout", approval_wait=0)
+    br.scan()
+    port = br.resolve_port(vcp)
+    br.select([br.bench.ports[port].device_id])
+    asked = br.request("serial.send", port, {"data": "kernel uptime", "seconds": 5, "until": r"uart:~\$"})
+    br.decide(asked["approval_id"], True)
+    t0 = time.monotonic()
+    done = br.request("serial.send", port, {"data": "kernel uptime", "seconds": 5, "until": r"uart:~\$"},
+                      approval_id=asked["approval_id"])
+    assert time.monotonic() - t0 < 2 and "Uptime: 1234 ms" in done["result"]["reply"]
     br.end_session()

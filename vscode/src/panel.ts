@@ -185,10 +185,27 @@ function render() {
   const open = state.cards.filter((c) => c.status !== "closed").reverse().sort((a, b) => rank(a) - rank(b));
   const closed = state.cards.filter((c) => c.status === "closed").reverse().slice(0, 15);
   h += open.map((c) => card(c, s)).join("") + closed.map((c) => card(c, s)).join("");
+  // the box being typed in survives the redraw: the same box, focused, with the caret where it was
+  const typing = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.draft : undefined;
+  const caret = typing !== undefined ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
   document.getElementById("app").innerHTML = h;
+  if (typing !== undefined) {
+    const box = document.querySelector('textarea[data-draft="' + CSS.escape(typing) + '"]');
+    if (box) { box.focus(); box.setSelectionRange(caret[0], caret[1]); }
+  }
 }
 
-window.addEventListener("message", (e) => { if (e.data.type === "state") { state = e.data.state; render(); } });
+// while a word is being composed (Japanese and other input methods), a redraw would throw the composition away: the
+// redraw waits for the word to be committed (the agent's output can stream in many times a second)
+let composing = false, redrawLater = false;
+document.addEventListener("compositionstart", () => { composing = true; });
+document.addEventListener("compositionend", () => { composing = false; if (redrawLater) { redrawLater = false; render(); } });
+window.addEventListener("message", (e) => {
+  if (e.data.type !== "state") return;
+  state = e.data.state;
+  window.benchscoutState = state;  // the last state, so a check can send it again (scripts/ui-check.mjs typing)
+  if (composing) redrawLater = true; else render();
+});
 send({ type: "ready" });
 
 document.addEventListener("input", (e) => { const id = e.target.dataset?.draft; if (id) drafts[id] = e.target.value; });

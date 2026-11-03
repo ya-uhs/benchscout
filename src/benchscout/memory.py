@@ -88,20 +88,63 @@ def dump(entries: list[Entry], header: dict) -> str:
     return "\n".join(out) + "\n"
 
 
+# memory files that could not be read (a hand edit gone wrong): left as they are, never written over, and said
+PROBLEMS: dict[str, str] = {}
+
+
 class MemoryFile:
     def __init__(self, path: Path, header: dict | None = None):
         self.path = Path(path)
         self.header = header or {}
         self.entries: list[Entry] = []
+        self.broken: str | None = None
         if self.path.exists():
-            data = tomllib.loads(self.path.read_text(encoding="utf-8"))
+            try:
+                data = tomllib.loads(self.path.read_text(encoding="utf-8"))
+                entries = [Entry(**{k: v for k, v in e.items() if k in Entry.__dataclass_fields__}) for e in data.get("entry", [])]
+            except Exception as e:  # not TOML, not UTF-8, an entry without its fields
+                self.broken = f"{type(e).__name__}: {e}"
+                PROBLEMS[str(self.path)] = self.broken
+                return
+            PROBLEMS.pop(str(self.path), None)
             self.header = {k: v for k, v in data.items() if k != "entry"} or self.header
-            for e in data.get("entry", []):
-                self.entries.append(Entry(**{k: v for k, v in e.items() if k in Entry.__dataclass_fields__}))
+            self.entries = entries
 
     def save(self) -> None:
+        if self.broken:  # the person's file as they left it: fixing it is theirs, losing it is not an option
+            raise ValueError(f"memory file {self.path} could not be read ({self.broken}); fix or delete it first")
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(dump(self.entries, self.header), encoding="utf-8")
+        tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
+        tmp.write_text(dump(self.entries, self.header), encoding="utf-8")
+        os.replace(tmp, self.path)  # whole or not at all: a stop in the middle leaves the old file
+
+
+class _FileLock:
+    """Between processes: one core per VS Code window, and device memory is shared by all of them (user-wide)."""
+
+    def __init__(self, path: Path):
+        self.path = path.with_name(f".{path.name}.lock")
+
+    def __enter__(self):
+        from .locks import _try_lock
+
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.f = open(self.path, "a+")
+        end = time.monotonic() + 10
+        while not _try_lock(self.f):
+            if time.monotonic() > end:
+                break  # another core stuck: write anyway rather than lose what was learned
+            time.sleep(0.01)
+        return self
+
+    def __exit__(self, *exc):
+        from .locks import _unlock
+
+        try:
+            _unlock(self.f)
+        except OSError:
+            pass
+        self.f.close()
 
 
 class Memory:
@@ -110,8 +153,11 @@ class Memory:
         self.workspace_file = Path(workspace) / ".benchscout" / "memory" / "workspace.toml"
         self._lock = threading.Lock()
 
+    def _path(self, key: str) -> Path:
+        return self.root / "devices" / f"{key}.toml"
+
     def device_file(self, key: str, header: dict | None = None) -> MemoryFile:
-        return MemoryFile(self.root / "devices" / f"{key}.toml", header)
+        return MemoryFile(self._path(key), header)
 
     def entries(self, key: str) -> list[Entry]:
         with self._lock:
@@ -121,7 +167,7 @@ class Memory:
         """Append; an identity or safety entry for the same target replaces the older one (kept as superseded)."""
         if entry.kind not in KINDS:
             raise ValueError(f"kind must be one of {', '.join(KINDS)}")
-        with self._lock:
+        with self._lock, _FileLock(self._path(key)):
             f = self.device_file(key, header)
             if header:
                 f.header.update(header)
@@ -136,7 +182,7 @@ class Memory:
             return entry
 
     def set_status(self, key: str, entry_id: str, status: str) -> Entry:
-        with self._lock:
+        with self._lock, _FileLock(self._path(key)):
             f = self.device_file(key)
             for e in f.entries:
                 if e.id == entry_id:
@@ -146,7 +192,7 @@ class Memory:
         raise KeyError(f"no memory entry {entry_id!r} for {key}")
 
     def delete(self, key: str, entry_id: str) -> None:
-        with self._lock:
+        with self._lock, _FileLock(self._path(key)):
             f = self.device_file(key)
             f.entries = [e for e in f.entries if e.id != entry_id]
             f.save()

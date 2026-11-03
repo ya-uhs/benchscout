@@ -29,6 +29,27 @@ OPEN_RESET_S = 3.0  # a port that vanishes this soon after being opened was rese
 RECENT_FOR_QUOTES = 2 * 1024 * 1024  # how much recent output a quote is checked against
 
 
+def _tail(path: Path, nbytes: int) -> str:
+    """The last `nbytes` of a file, without reading the rest (a watched log grows for as long as it is watched)."""
+    with open(path, "rb") as f:
+        f.seek(0, 2)
+        f.seek(max(0, f.tell() - nbytes))
+        return f.read().decode("utf-8", errors="replace")
+
+
+class _Job:
+    """An action running on a device, outside the broker's lock."""
+
+    def __init__(self, action: str, port: str, extra: dict):
+        import uuid
+
+        self.id, self.action, self.port, self.extra = uuid.uuid4().hex[:6], action, port, extra
+        self.t0 = time.monotonic()
+        self.done = threading.Event()
+        self.result: dict | None = None
+        self.error: Exception | None = None
+
+
 class _Download:
     """One tool's first-use download, in the background from the human's OK on, reported to the inbox as it goes
     (design.md section 12, 2026-11-02). A call waits a while for it, then says it is still downloading."""
@@ -123,6 +144,11 @@ class Broker:
         from collections import deque
 
         self.done: deque[dict] = deque(maxlen=500)
+        self._jobs: dict[str, _Job] = {}  # runs that outlasted the call that started them
+        self._turns: dict[str, threading.Lock] = {}  # one action at a time on each device
+        # how long one agent call may wait in all (the human, a download, the run): under the relay's limit, so the
+        # agent gets "running" with a job id rather than a call that timed out (review 7, 21)
+        self.call_budget = max(30.0, approval_wait + 50.0)
 
     def _emit(self, event: dict) -> None:
         if self.on_event:
@@ -811,7 +837,7 @@ class Broker:
         log = self.state / "logs" / (pid.replace(":", "_") + ".log")
         if not log.exists():
             return {"status": "no_log", "message": f"{pid} has not been watched in this folder yet; use serial.watch"}
-        text = log.read_bytes()[-RECENT_FOR_QUOTES:].decode("utf-8", errors="replace").splitlines()
+        text = _tail(log, RECENT_FOR_QUOTES).splitlines()
         if contains:
             text = [l for l in text if contains in l]
         tail = text[-max(1, min(lines, 2000)):]
@@ -827,7 +853,7 @@ class Broker:
                 texts.append(("the watched log", w.recent(RECENT_FOR_QUOTES)))
             log = self.state / "logs" / (p.id.replace(":", "_") + ".log")
             if log.exists():
-                texts.append((log.name, log.read_bytes()[-RECENT_FOR_QUOTES:].decode("utf-8", errors="replace")))
+                texts.append((log.name, _tail(log, RECENT_FOR_QUOTES)))
             for f in sorted(self.artifacts.glob(f"*{p.id.replace(':', '_')}*"))[-20:]:
                 texts.append((f.name, f.read_text(encoding="utf-8", errors="replace")))
         for kind, (when, text) in self.observed.get(target_id, {}).items():
@@ -973,9 +999,14 @@ class Broker:
 
     # ---- the one entry point the agent uses -----------------------------------
     def request(self, action: str, port: str, args: dict | None = None, approval_id: str | None = None,
-                wait: float | None = None) -> dict:
+                wait: float | None = None, job: str | None = None) -> dict:
         """`args` are the action's typed arguments (see actions.py). An approval is bound to
-        (action, port, args) after defaults are filled in."""
+        (action, port, args) after defaults are filled in. `job`: collect a run that outlasted an earlier call."""
+        started = time.monotonic()
+        if job:
+            j = self._jobs.get(job)
+            return self._collect(j, started) if j else {"status": "unknown_job", "job": job}
+        go: tuple | None = None
         wait = self.approval_wait if wait is None else wait
         try:
             spec = A.get(action)
@@ -1016,10 +1047,11 @@ class Broker:
             fetch = self._fetch_needed(spec)
             if not fetch and (impact.effect == Effect.SAFE or
                               (approval_id is None and self.approvals.covered(action, port_id, impact.effect, impact.subjects))):
-                return self._run(impact, args, "safe" if impact.effect == Effect.SAFE else
-                                 "allowed by the human for the session" if not self.approvals.allow_all else
-                                 "allowed by the human: allow all")
-            if approval_id is None:
+                go = (impact, args, "safe" if impact.effect == Effect.SAFE else "allowed by the human for the session"
+                      if not self.approvals.allow_all else "allowed by the human: allow all", {})
+            if go:
+                pass  # runs below, outside the lock: nothing to ask
+            elif approval_id is None:
                 approval_id = self.approvals.open(impact, key, fetch=fetch).id
             else:
                 # an id for another call: say so now, not after waiting on a card that shows something else
@@ -1030,8 +1062,10 @@ class Broker:
                     return {"status": "approval_mismatch", "approval_id": approval_id,
                             "message": f"{approval_id} was asked for {asked[0]} on {asked[1]} with {asked[2]}; call without "
                                        "approval_id to ask for this one"}
-
-        import time
+        if go:  # (the lock is let go first: a long run must not hold up the human's selections and the agent's reads)
+            g_impact, g_args, g_allowed, g_extra = go
+            return self._start(g_impact, g_args, g_allowed, extra=g_extra, started=started)
+        assert approval_id is not None  # (opened above, or the agent's own)
 
         t0 = time.monotonic()
         status = self.approvals.wait(approval_id, wait)  # the human decides in the panel (S3)
@@ -1045,13 +1079,13 @@ class Broker:
             if status != "granted":
                 return {"status": status, "approval_id": approval_id}
         if fetch:  # the human's OK covers the download its card named: it runs now, in the background
-            job = self._download(spec.argv[0])
-            if not job.done.wait(self.download_wait):
-                return {"status": "downloading", "approval_id": approval_id, "download": job.summary(),
-                        "tell_user": f"benchscout is downloading {job.summary()} (the human allowed it). It keeps going; "
+            dl = self._download(spec.argv[0])
+            if not dl.done.wait(self.download_wait):
+                return {"status": "downloading", "approval_id": approval_id, "download": dl.summary(),
+                        "tell_user": f"benchscout is downloading {dl.summary()} (the human allowed it). It keeps going; "
                                      "call again with this approval_id to continue."}
-            if job.error:
-                return {"status": "download_failed", "approval_id": approval_id, "message": job.error,
+            if dl.error:
+                return {"status": "download_failed", "approval_id": approval_id, "message": dl.error,
                         "tell_user": "The download failed; the approval still stands, so calling again with this "
                                      "approval_id tries again."}
         with self._lock:
@@ -1061,10 +1095,45 @@ class Broker:
             used = self.approvals.consume(approval_id, action, port_id, key, impact.effect.name.lower())
             if used != "ok":
                 return {"status": used, "approval_id": approval_id}
-            # say so, or the agent reports a long call as "ran without approval" (real bench, S5)
-            return dict(self._run(impact, args, "allowed by the human, once"),
-                        approval={"id": approval_id, "granted_by": "the human, in the benchscout panel",
-                                                           "waited_s": waited})
+        # say so, or the agent reports a long call as "ran without approval" (real bench, S5)
+        return self._start(impact, args, "allowed by the human, once", started=started,
+                           extra={"approval": {"id": approval_id, "granted_by": "the human, in the benchscout panel",
+                                               "waited_s": waited}})
+
+    def _start(self, impact: Impact, args: dict, allowed: str, extra: dict | None = None, started: float = 0.0) -> dict:
+        """Run it outside the broker's lock, one at a time on each device. If it outlasts what one call may wait (a flash
+        write can take minutes; the agent's call gives up), say it is running and give a job id to collect it with."""
+        dev = self.bench.ports[impact.port_id].device_id
+        job = _Job(impact.action, impact.port_id, extra or {})
+
+        def work() -> None:
+            with self._device_turn(dev):
+                try:
+                    job.result = self._run(impact, args, allowed)
+                except Exception as e:  # handed to whoever collects it
+                    job.error = e
+                finally:
+                    job.done.set()
+
+        threading.Thread(target=work, name=f"run {impact.action}", daemon=True).start()
+        return self._collect(job, started or time.monotonic())
+
+    def _collect(self, job: "_Job", started: float) -> dict:
+        left = self.call_budget - (time.monotonic() - started)
+        if job.done.wait(max(left, 1.0)):
+            self._jobs.pop(job.id, None)
+            if job.error:
+                raise job.error
+            return dict(job.result or {}, **job.extra)
+        self._jobs[job.id] = job
+        return {"status": "running", "job": job.id, "action": job.action, "port": job.port,
+                "running_s": round(time.monotonic() - job.t0),
+                "tell_user": f"{job.action} is still running. Call bench_do again with job={job.id} to wait for its result; "
+                             "do not start it again."}
+
+    def _device_turn(self, device: str) -> threading.Lock:
+        with self._lock:
+            return self._turns.setdefault(device, threading.Lock())
 
     def _outside_session(self, port_id: str) -> dict | None:
         dev = self.bench.ports[port_id].device_id
@@ -1245,8 +1314,9 @@ class Broker:
         try:
             text, code = run_tool(argv, spec.timeout, cwd=ws)
         finally:
-            for pid, baud in watched:
-                self._watch(pid, baud)
+            for pid, baud in watched:  # back to watching, if the device is still in the session and still there
+                if dev.id in self.selected and pid in self.bench.ports and self.bench.ports[pid].device_id == dev.id:
+                    self._watch(pid, baud)
         res = self._save_artifact(f"{port.id}-{spec.name}.txt", " ".join(argv) + "\n\n" + text, preview=text[-2000:])
         return dict(res, returncode=code, argv=argv)
 

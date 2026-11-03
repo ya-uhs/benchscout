@@ -143,6 +143,10 @@ try {
   console.log(`  ${await press("Autonomy: investigates on its own")}`);
   console.log(`  ${await press("Autonomy: only suggests")}`);  // there only once the setting changed; this switches it back
   step("the autonomy switch at the top changes the setting, both ways");
+
+  const typing = JSON.parse(ui("typing"));
+  if (!typing.kept || !typing.untouched || !typing.redrawnAfter) throw new Error(`typing lost on a redraw: ${JSON.stringify(typing)}`);
+  step("what is being typed survives a redraw, and an input method's word is not redrawn away while composed");
   console.log("e2e: ok");
 } catch (e) {
   failed = true;

@@ -243,6 +243,16 @@ def test_idcode_without_a_tool_database_stays_unknown(tmp_path):
     assert fpga.name is None
     assert any("0x0362D093" in e.detail for e in fpga.evidence)
 
+def test_each_part_on_a_jtag_chain_is_its_own_target(tmp_path):
+    """Review 7: with two parts on the chain, the second one's IDCODE was written over the first's target."""
+    io = _variant(tmp_path, lambda d: (d["tools"].append("openFPGALoader"),
+                                       d["jtag"].update({"210319A8C7D1": ["0x0362D093", "0x4BA00477"]})))
+    r = recon.run(io)
+    port = next(p for p in r.bench.ports.values() if p.kind == "jtag" and "210319A8C7D1" in p.id)
+    codes = {t.id: [e.detail for e in t.evidence if e.source == "jtag idcode"] for t in r.bench.targets_via(port.id)}
+    assert sum(1 for v in codes.values() if v) == 2 and all(len(v) <= 1 for v in codes.values()), codes
+
+
 def test_openfpgaloader_only_reaches_probes_the_usb_data_says_how_to(tmp_path):
     io = _variant(tmp_path, lambda d: d["tools"].append("openFPGALoader"))
     recon.run(io)

@@ -61,7 +61,9 @@ The human answers cards in the benchscout inbox; keep them few and clear.
   lines what is waiting in the panel, then call again with the approval_id. Say an approval
   is waiting only when a call returned approval_required. If it returns downloading (a
   tool's first use: benchscout fetches it after the human's OK), say so in one line and call
-  again with the same approval_id; do not install the tool yourself. Never try to approve or select
+  again with the same approval_id; do not install the tool yourself. If it returns running (a long
+  run, such as a flash write, outlasted the call), say so and call again with that `job`; never start
+  it a second time. Never try to approve or select
   anything yourself, and never start or drive `benchscout` from a shell.
 - Only selected devices can be used. If `bench_do` returns not_selected, call
   `request_devices` with the reason; the human decides in the inbox.

@@ -37,12 +37,16 @@ def until_pattern(text: str | None) -> re.Pattern | None:
         raise ValueError(f"until is not a regular expression: {e}") from None
 
 
-def ended(data: bytes, until: re.Pattern | None) -> bool:
-    """A whole line of `data` matches `until` (a line still arriving is not judged yet)."""
+QUIET_S = 0.15  # a shell prompt has no newline after it: the last line is judged once nothing more has come this long
+
+
+def ended(data: bytes, until: re.Pattern | None, settled: bool = False) -> bool:
+    """A whole line of `data` matches `until`; the line still arriving too once the output has `settled` (a prompt
+    is printed without a newline and then the shell waits)."""
     if until is None:
         return False
-    text = data.decode("utf-8", errors="replace").replace("\r", "")
-    return any(until.search(line) for line in text.split("\n")[:-1])
+    lines = data.decode("utf-8", errors="replace").replace("\r", "").split("\n")
+    return any(until.search(line) for line in (lines if settled else lines[:-1]) if line.strip())
 
 
 def split(text: str, sent: str, before: str | None, until: re.Pattern | None) -> dict:
