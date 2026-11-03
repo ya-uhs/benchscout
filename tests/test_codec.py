@@ -31,6 +31,12 @@ def test_the_answer_is_told_from_the_heartbeat_that_arrived_with_it():
     unwatched = split(STATUS, "status", None, None)
     assert "hb n=28" in unwatched["reply"] and "not watched" in unwatched["how"], "nothing to compare with: said, not guessed"
 
+    # 2026-11-03, watched through the product path: five heartbeats, then `status` sent; the read stopped at "ok" after
+    # 0.2 s (it was given 5), before the next heartbeat
+    watched = (REAL / "esp32s3-testfw-watched-status-2026-11-03.txt").read_text(encoding="utf-8").splitlines(keepends=True)
+    live = split("".join(watched[5:]), "status", "".join(watched[:5]), re.compile(r"^(ok|err)"))
+    assert live["reply"].splitlines() == [watched[5].strip(), "ok"] and "unsolicited" not in live and "ok" in live["ended"]
+
     tang = split((REAL / "tangnano9k-testbit-send-underscore.txt").read_text(encoding="utf-8"), "_",
                  (REAL / "tangnano9k-testbit-unprompted.txt").read_text(encoding="utf-8"), None)
     assert tang["reply"] == "benchscout-testbit tangnano9k v1 baud=115200"

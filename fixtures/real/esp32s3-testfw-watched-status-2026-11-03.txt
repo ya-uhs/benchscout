@@ -1,0 +1,7 @@
+hb n=57433 uptime_ms=57434360
+hb n=57434 uptime_ms=57435360
+hb n=57435 uptime_ms=57436360
+hb n=57436 uptime_ms=57437360
+hb n=57437 uptime_ms=57438360
+uptime_ms=57438933 boot=17 reset=UNKNOWN heap_free=373300 cores=2 chip_rev=0 value=0 hb_ms=1000
+ok
