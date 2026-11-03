@@ -84,4 +84,11 @@ def render(r: Recon) -> str:
             lines.append("Tools not installed: " + ", ".join(k for k in missing if k not in later))
         if later:
             lines.append("Downloaded on first use (official release, after the human's OK): " + ", ".join(later))
+    from . import knowledge as K
+
+    if K.PROBLEMS:
+        lines.append("")
+        lines.append("Knowledge files that could not be read (none of their rules are in effect until they are fixed; "
+                     "tell the user):")
+        lines += [f"  - {p}" for p in K.PROBLEMS]
     return "\n".join(lines)

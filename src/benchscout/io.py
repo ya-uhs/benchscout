@@ -379,6 +379,7 @@ WINDOWS_PNP_QUERY = (  # UTF-8 out: Windows PowerShell would print a device's na
     "bus = $prop[\"$($_.InstanceId)|DEVPKEY_Device_BusReportedDeviceDesc\"]; "
     "parent = $prop[\"$($_.InstanceId)|DEVPKEY_Device_Parent\"] } } | ConvertTo-Json -Compress"
 )
+WINDOWS_HUB_DRIVERS = ("USBHUB3", "USBHUB")  # Windows' own USB hub drivers (USB 3 and USB 2)
 _PNP_ID = re.compile(r"^USB\\VID_([0-9A-F]{4})&PID_([0-9A-F]{4})(?:&MI_([0-9A-F]+))?\\(.+)$", re.I)
 
 
@@ -420,9 +421,12 @@ def parse_windows_pnp(text: str, strings: list[dict] | None = None) -> list[dict
         # which driver each interface has (its service: usbser, FTDIBUS, WinUSB ...), for tools that need a certain kind
         drivers = {int(cm.group(3), 16): ce["service"] for cm, ce in kids if ce.get("service") and not bad(ce)} \
             or ({0: e["service"]} if not kids and e.get("service") and not bad(e) else {})
+        # a hub, as Windows says by driving it with its own hub driver: the name it reports is not always returned
+        # (real VM, 2026-11-03: "QEMU USB Hub" in one scan, nothing in the next, so it came and went)
+        hub = (e.get("service") or "").upper() in WINDOWS_HUB_DRIVERS
         out.append({"name": desc.get("product") or bus, "vendor": desc.get("manufacturer"), "vid": vid, "pid": pid,
                     "serial": desc.get("serial") or serial, "location": None if serial else inst, "no_driver": no_driver,
-                    "drivers": drivers})
+                    "drivers": drivers, **({"device_class": 0x09} if hub else {})})
     return out
 
 

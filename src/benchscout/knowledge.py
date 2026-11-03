@@ -32,6 +32,8 @@ LOG_SIGNATURES: list[tuple[re.Pattern, dict]] = []
 TOOLS: dict[str, dict] = {}  # external-tool actions defined as data (design.md section 4)
 GETS: dict[str, dict] = {}  # executable -> pinned official downloads per platform (fetch.py)
 SOURCES: list[Path] = []  # files actually read, for `benchscout knowledge` / debugging
+# the user's or the folder's knowledge files that could not be read: not in effect, and said so (report, inbox)
+PROBLEMS: list[str] = []
 
 
 def user_dir() -> Path:
@@ -50,39 +52,63 @@ def layers(workspace: Path | None = None) -> list[Path]:
 
 
 def load(workspace: Path | None = None) -> None:
-    """(Re)read every layer. Later layers override earlier ones entry by entry."""
-    usb: dict[tuple[int, int], dict] = {}
-    boards: list[dict] = []
-    shared: set[str] = set()
-    logs: list[tuple[re.Pattern, dict]] = []
-    tools: dict[str, dict] = {}
-    access: dict[str, str] = {}
-    gets: dict[str, dict] = {}
+    """(Re)read every layer. Later layers override earlier ones entry by entry. A file of the user's or the folder's
+    that cannot be read (not UTF-8, not TOML, an entry without what it needs) is left out whole and named in
+    PROBLEMS: one bad file there must not stop benchscout, and a file is never half applied. A broken shipped file
+    is benchscout's own bug and stops it. Hidden files (macOS's ._* beside copied files) are not knowledge."""
+    acc = _Layers()
     sources: list[Path] = []
-    for d in layers(workspace):
+    problems: list[str] = []
+    for i, d in enumerate(layers(workspace)):
         if not d.is_dir():
             continue
         for f in sorted(d.glob("*.toml")):
-            data = tomllib.loads(f.read_text(encoding="utf-8"))
+            if f.name.startswith("."):
+                continue
+            try:
+                data = tomllib.loads(f.read_text(encoding="utf-8"))
+                _Layers().add(data)  # tried alone first, so a bad entry leaves the whole file out
+            except Exception as e:
+                if i == 0:
+                    raise
+                problems.append(f"{f}: {type(e).__name__}: {e}")
+                continue
+            acc.add(data)
             sources.append(f)
-            shared |= set(data.get("shared_serials", []))
-            for e in data.get("usb", []):
-                key = (int(e["vid"]), int(e["pid"]))
-                usb[key] = {**usb.get(key, {}), **{k: v for k, v in e.items() if k not in ("vid", "pid")}}
-            for e in reversed(data.get("board", [])):  # later layers are tried first
-                boards.insert(0, _board(e))
-            for e in data.get("log", []):
-                flags = (re.I if e.get("ignore_case") else 0) | (re.M if e.get("multiline") else 0)
-                logs.append((re.compile(e["pattern"], flags), e))
-            for e in data.get("tool", []):
-                tools[e["name"]] = e  # a later layer replaces a tool of the same name
-            access.update(data.get("usb_access", {}))
-            for exe, g in data.get("get", {}).items():
-                gets[exe] = g  # a later layer pins its own version
-    global USB_IDS, MULTI_CHANNEL_BOARDS, SHARED_SERIALS, LOG_SIGNATURES, SOURCES, TOOLS, GETS, USB_ACCESS
-    USB_IDS, MULTI_CHANNEL_BOARDS, SHARED_SERIALS = usb, boards, shared
-    LOG_SIGNATURES, SOURCES, TOOLS, GETS = logs, sources, tools, gets
-    USB_ACCESS = access
+    global USB_IDS, MULTI_CHANNEL_BOARDS, SHARED_SERIALS, LOG_SIGNATURES, SOURCES, TOOLS, GETS, USB_ACCESS, PROBLEMS
+    USB_IDS, MULTI_CHANNEL_BOARDS, SHARED_SERIALS = acc.usb, acc.boards, acc.shared
+    LOG_SIGNATURES, SOURCES, TOOLS, GETS = acc.logs, sources, acc.tools, acc.gets
+    USB_ACCESS, PROBLEMS = acc.access, problems
+
+
+class _Layers:
+    def __init__(self) -> None:
+        self.usb: dict[tuple[int, int], dict] = {}
+        self.boards: list[dict] = []
+        self.shared: set[str] = set()
+        self.logs: list[tuple[re.Pattern, dict]] = []
+        self.tools: dict[str, dict] = {}
+        self.access: dict[str, str] = {}
+        self.gets: dict[str, dict] = {}
+
+    def add(self, data: dict) -> None:
+        from .actions import from_data
+
+        self.shared |= set(data.get("shared_serials", []))
+        for e in data.get("usb", []):
+            key = (int(e["vid"]), int(e["pid"]))
+            self.usb[key] = {**self.usb.get(key, {}), **{k: v for k, v in e.items() if k not in ("vid", "pid")}}
+        for e in reversed(data.get("board", [])):  # later layers are tried first
+            self.boards.insert(0, _board(e))
+        for e in data.get("log", []):
+            flags = (re.I if e.get("ignore_case") else 0) | (re.M if e.get("multiline") else 0)
+            self.logs.append((re.compile(e["pattern"], flags), e))
+        for e in data.get("tool", []):
+            from_data(e)  # an action that cannot be built is a broken file, not a broken action later
+            self.tools[e["name"]] = e  # a later layer replaces a tool of the same name
+        self.access.update(data.get("usb_access", {}))
+        for exe, g in data.get("get", {}).items():
+            self.gets[exe] = g  # a later layer pins its own version
 
 
 def _board(e: dict) -> dict:

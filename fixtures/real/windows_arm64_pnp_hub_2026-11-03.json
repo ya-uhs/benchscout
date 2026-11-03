@@ -1,0 +1,79 @@
+{
+ "_comment": "Windows 11 ARM64 in UTM, 2026-11-03: WINDOWS_PNP_QUERY (with each device's service) and usb_strings(), no bench device attached; the VM's own USB hub is driven by USBHUB3",
+ "pnp": [
+  {
+   "id": "USB\\VID_46F4&PID_0001\\1-0000:00:03.0-4.1",
+   "status": "OK",
+   "problem": "CM_PROB_NONE",
+   "service": "USBSTOR",
+   "bus": "QEMU USB HARDDRIVE",
+   "parent": "USB\\VID_0409&PID_55AA\\MSFT20314159-0000:00:03.0-4"
+  },
+  {
+   "id": "USB\\VID_0409&PID_55AA\\MSFT20314159-0000:00:03.0-4",
+   "status": "OK",
+   "problem": "CM_PROB_NONE",
+   "service": "USBHUB3",
+   "bus": "QEMU USB Hub",
+   "parent": "USB\\ROOT_HUB30\\4&9a1dcae&0&0"
+  },
+  {
+   "id": "USB\\VID_0627&PID_0001\\28754-0000:00:03.0-1",
+   "status": "OK",
+   "problem": "CM_PROB_NONE",
+   "service": "HidUsb",
+   "bus": "QEMU USB Tablet",
+   "parent": "USB\\ROOT_HUB30\\4&9a1dcae&0&0"
+  },
+  {
+   "id": "USB\\VID_0627&PID_0001\\68284-0000:00:03.0-3",
+   "status": "OK",
+   "problem": "CM_PROB_NONE",
+   "service": "HidUsb",
+   "bus": null,
+   "parent": null
+  },
+  {
+   "id": "USB\\VID_0627&PID_0001\\89126-0000:00:03.0-2",
+   "status": "OK",
+   "problem": "CM_PROB_NONE",
+   "service": "HidUsb",
+   "bus": "QEMU USB Mouse",
+   "parent": "USB\\ROOT_HUB30\\4&9a1dcae&0&0"
+  }
+ ],
+ "strings": [
+  {
+   "vid": 1575,
+   "pid": 1,
+   "manufacturer": null,
+   "product": null,
+   "serial": "28754-0000:00:03.0-1",
+   "location": "\\\\?\\usb#root_hub30#4&9a1dcae&0&0#{f18a0e88-c30c-11d0-8815-00a0c906bed8}#5"
+  },
+  {
+   "vid": 1575,
+   "pid": 1,
+   "manufacturer": null,
+   "product": null,
+   "serial": "89126-0000:00:03.0-2",
+   "location": "\\\\?\\usb#root_hub30#4&9a1dcae&0&0#{f18a0e88-c30c-11d0-8815-00a0c906bed8}#6"
+  },
+  {
+   "vid": 1575,
+   "pid": 1,
+   "manufacturer": null,
+   "product": null,
+   "serial": "68284-0000:00:03.0-3",
+   "location": "\\\\?\\usb#root_hub30#4&9a1dcae&0&0#{f18a0e88-c30c-11d0-8815-00a0c906bed8}#7"
+  },
+  {
+   "vid": 18164,
+   "pid": 1,
+   "manufacturer": "QEMU",
+   "product": "QEMU USB HARDDRIVE",
+   "serial": "1-0000:00:03.0-4.1",
+   "location": "\\\\?\\usb#vid_0409&pid_55aa#msft20314159-0000:00:03.0-4#{f18a0e88-c30c-11d0-8815-00a0c906bed8}#1"
+  }
+ ]
+}

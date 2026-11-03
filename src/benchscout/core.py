@@ -179,8 +179,10 @@ def parse_shorthand(line: str) -> dict:
 def control_dispatch(broker: Broker, method: str, params: dict) -> Any:
     if method == "scan":
         r = broker.scan(only_new=bool(params.get("only_new")))
+        from . import knowledge as K
+
         return {"text": render(r), "bench": r.bench.to_dict(), "proposals": [asdict(p) for p in r.proposals],
-                "selected": sorted(broker.selected)}
+                "selected": sorted(broker.selected), "knowledge_errors": list(K.PROBLEMS)}
     if method == "inventory":
         return (broker.last or broker.scan()).to_dict()
     if method == "select":

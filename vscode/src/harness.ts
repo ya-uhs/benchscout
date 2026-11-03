@@ -59,7 +59,11 @@ export class Harness extends EventEmitter {
   constructor(private core: CoreClient, private makeDriver: () => AgentDriver, private s: Strings,
               private opts: HarnessOptions = { language: "English", maxTurnsPerHour: 20 }) {
     super();
-    core.on("scan", (b: Bench) => { if (!this.askedFirst) { this.askedFirst = true; this.firstQuestion(b); } this.driverCards(b); });
+    core.on("scan", (b: Bench, _p: unknown, broken: string[] = []) => {
+      if (!this.askedFirst) { this.askedFirst = true; this.firstQuestion(b); }
+      this.driverCards(b);
+      this.knowledgeCards(broken);
+    });
     core.on("approvalRequested", (a: Approval) => this.approvalCard(a));
     core.on("approvalDecided", (a: Approval) => this.closeRef(`approval:${a.id}`, a.status));
     core.on("allowAll", () => this.changed());  // the inbox shows it, with a way to turn it off
@@ -225,6 +229,21 @@ export class Harness extends EventEmitter {
       if (old) this.cards = this.cards.filter((c) => c !== old);
       const title = d.needsUdev !== null ? this.s.udevTitle(d.name) : this.s.driverTitle(d.name);
       this.add({ kind: "report", title, body, options: [], freeText: false }, undefined, id);
+    }
+  }
+
+  /** A knowledge file of the person's or the folder's that could not be read: one card each until it is fixed (its
+   *  rules are not in effect meanwhile). It closes by itself once a scan reads the file. */
+  private knowledgeCards(broken: string[]): void {
+    const files = new Map(broken.map((p) => [p.split(": ")[0], p.slice(p.indexOf(": ") + 2)]));
+    for (const c of this.cards) {
+      if (c.id.startsWith("knowledge:") && c.status === "open" && !files.has(c.id.slice(10))) this.closeRef(c.id, this.s.knowledgeFixed);
+    }
+    for (const [file, why] of files) {
+      const id = `knowledge:${file}`;
+      if (this.cards.some((c) => c.id === id && c.status === "open")) continue;
+      this.add({ kind: "notify", title: this.s.knowledgeBroken(file.split(/[\\/]/).pop() ?? file), body: this.s.knowledgeBrokenBody,
+        detail: `${file}\n${why}`, options: [], freeText: false }, undefined, id);
     }
   }
 

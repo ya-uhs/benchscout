@@ -95,6 +95,27 @@ def test_workspace_overrides_shipped_entry_by_entry(tmp_path):
     assert ch340.may_reset_on_open is False
 
 
+def test_a_broken_knowledge_file_is_left_out_whole_and_said_not_a_stopped_core(tmp_path):
+    """Windows VM, 2026-11-03: a folder copied from a Mac carried ._tools.toml (macOS's resource-fork file beside
+    each copied file); the core read it as knowledge, could not decode it, and did not start at all."""
+    from benchscout.report import render
+
+    kdir = tmp_path / "ws" / ".benchscout" / "knowledge"
+    kdir.mkdir(parents=True)
+    (kdir / "._lab.toml").write_bytes(b"\x00\x05\x16\x07\x00\x02\x00\x00Mac OS X        \xa3\x00")
+    (kdir / "lab.toml").write_text("[[usb]]\nvid = 0x1A86\npid = 0x7523\nmay_reset_on_open = false\n")
+    (kdir / "typo.toml").write_text("[[usb]\nvid = 0x0483\n")  # a hand edit with a missing bracket
+    # one good entry and one that cannot be an action: the file is not half applied
+    (kdir / "half.toml").write_text('[[usb]]\nvid = 0x10C4\npid = 0xEA60\nmay_reset_on_open = false\n\n'
+                                    '[[tool]]\nname = "x.do"\neffect = "safe"\n')
+    br = Broker(FixtureIo(FIXTURE), tmp_path / "ws" / ".benchscout")
+    r = br.scan()
+    assert br.bench.ports["serial:usbserial-10"].may_reset_on_open is False, "the readable file is in effect"
+    assert {Path(p.split(": ")[0]).name for p in K.PROBLEMS} == {"typo.toml", "half.toml"}, "hidden files are not knowledge"
+    assert (0x10C4, 0xEA60) not in K.USB_IDS or K.USB_IDS[(0x10C4, 0xEA60)].get("may_reset_on_open") is not False
+    assert "could not be read" in render(r) and "typo.toml" in render(r), "the agent and the report say so"
+
+
 def test_a_user_board_is_tried_before_shipped_ones(tmp_path):
     user = tmp_path / "user-knowledge"
     user.mkdir()

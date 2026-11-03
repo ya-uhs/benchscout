@@ -212,3 +212,15 @@ def test_linux_a_libusb_tool_the_user_cannot_open_is_named_with_the_fix_not_trie
     assert not [c for c in io.calls if c[0] == "jtag_scan"], "not tried: it cannot open the device"
     text = report.render(r)
     assert "udev rule" in text and "/dev/bus/usb/003/002" in text and "udevadm trigger" in text
+
+
+def test_a_windows_hub_is_known_by_its_driver_even_when_its_name_is_not_returned():
+    """Windows 11 ARM64 VM, 2026-11-03: the VM's USB hub came and went in the device list while the Tang Nano was
+    plugged and unplugged: its reported name ("QEMU USB Hub") was returned in one scan and not the next, and hubs were
+    left out by name only. Its driver (USBHUB3) is always there."""
+    rec = json.loads((Path(__file__).parent.parent / "fixtures" / "real" / "windows_arm64_pnp_hub_2026-11-03.json")
+                      .read_text(encoding="utf-8"))
+    nameless = [dict(e, bus=None) for e in rec["pnp"]]  # as in the scan that listed it as "USB 0409:55aa"
+    for pnp in (rec["pnp"], nameless):
+        hubs = [d for d in parse_windows_pnp(json.dumps(pnp), rec["strings"]) if d.get("device_class") == 0x09]
+        assert [(d["vid"], d["pid"]) for d in hubs] == [(0x0409, 0x55AA)]

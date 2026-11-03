@@ -66,7 +66,7 @@ export interface MemoryGroup { device: string; name: string; key: string; file: 
 
 export interface CoreEvents {
   ready: [];
-  scan: [Bench, Proposal[]];
+  scan: [Bench, Proposal[], string[]];  // the last: knowledge files that could not be read
   selection: [string[], Record<string, { workspace?: string; pid?: number }>];
   approvalRequested: [Approval];
   approvalDecided: [Approval];
@@ -214,7 +214,7 @@ export class CoreClient extends EventEmitter {
     if (msg.id === undefined) return;
     if (msg.result && msg.result.bench) {
       // a scan (ours, or the core's own: the first one with id "initial", one after a plug with id "plugged")
-      this.emit("scan", msg.result.bench, (msg.result.proposals ?? []) as Proposal[]);
+      this.emit("scan", msg.result.bench, (msg.result.proposals ?? []) as Proposal[], (msg.result.knowledge_errors ?? []) as string[]);
     }
     const w = this.waiting.get(msg.id);
     if (!w) return;
