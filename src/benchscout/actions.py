@@ -100,7 +100,6 @@ class Action:
     reason: str
     doc: str
     params: tuple[Param, ...] = field(default_factory=tuple)
-    implemented: bool = True
     # defined as data (design.md section 4): an external tool run with these arguments, no shell
     argv: tuple[str, ...] = ()
     port_kinds: tuple[str, ...] = ()  # which kinds of port it applies to ("" = any)
@@ -164,7 +163,6 @@ BUILTIN: dict[str, Action] = {a.name: a for a in (
             Param("baud", int, "baud rate", 115200, min=50, max=12_000_000)), port_kinds=("serial",)),
     Action("jtag.scan", Effect.SAFE, False, "reads IDCODEs; needs exclusive use of the probe channel",
            "read the IDCODEs on a JTAG chain"),
-    Action("jtag.halt", Effect.DISRUPTIVE, True, "stops the CPU", "halt the CPU over JTAG", implemented=False),
     # the command line decides the effect (policy.py): the standard's status and identity queries are SAFE, an output
     # setting asks every time, anything else asks and the human may allow that command for the session or always;
     # these base effects apply only with no command at all
@@ -185,7 +183,7 @@ def from_data(e: dict) -> Action:
                          p.get("min"), p.get("max"), tuple(p.get("ext", ()))) for n, p in e.get("args", {}).items())
     effect = Effect[e.get("effect", "dangerous").upper()]  # no declared effect -> DANGEROUS
     return Action(e["name"], effect, bool(e.get("disturbs", effect > Effect.SAFE)), e.get("reason", "external tool"),
-                  e.get("doc", ""), params, True, tuple(e["argv"]), tuple(e.get("port_kinds", ())),
+                  e.get("doc", ""), params, tuple(e["argv"]), tuple(e.get("port_kinds", ())),
                   bool(e.get("releases_device", False)), float(e.get("timeout", 60)), dict(e.get("version", {})))
 
 
@@ -221,7 +219,6 @@ def catalog() -> str:
     lines = ["(The effect in brackets is the base one. The port can raise it, e.g. opening a port that "
              "resets the device; bench_impact gives the actual effect.)"]
     for a in all_actions().values():
-        state = "" if a.implemented else " (not implemented yet)"
         params = f" args: {a.describe_params()}" if a.params else ""
-        lines.append(f"- {a.name} [{a.effect.name}]{state}: {a.doc}.{params}")
+        lines.append(f"- {a.name} [{a.effect.name}]: {a.doc}.{params}")
     return "\n".join(lines)

@@ -140,12 +140,6 @@ def test_dangerous_cannot_be_granted_beyond_one_use(io, tmp_path):
         br.decide(res["approval_id"], True, "session")
 
 
-def test_unimplemented_actions_are_not_put_to_the_human(io, tmp_path):  # fpga.program for now
-    br = broker_with(io, tmp_path, "jtag:210319A8C7D1")
-    assert br.request("jtag.halt", "jtag:210319A8C7D1")["status"] == "not_implemented"
-    assert br.approvals.pending() == []
-
-
 def test_listen_args_are_typed_and_checked(io, tmp_path):
     """Real bench, 2026-10-31: `arg=9600` meant a baud rate but was read as 9600 seconds."""
     br = broker_with(io, tmp_path, VCP)

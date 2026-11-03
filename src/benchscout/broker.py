@@ -857,8 +857,6 @@ class Broker:
             until_pattern(args.get("until"))  # a pattern that does not compile is said now, not after an approval
         except (A.ArgError, ValueError) as e:
             return {"status": "invalid_args", "message": str(e)}
-        if not spec.implemented:
-            return {"status": "not_implemented", "message": f"{action} is classified but not implemented yet"}
         key = A.canonical(args)
         with self._lock:
             try:
