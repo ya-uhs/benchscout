@@ -390,11 +390,15 @@ export class Harness extends EventEmitter {
       return;
     }
     const title = e.kind === "alert" ? this.s.deviceAlert(name) : this.s.deviceReset(name);
-    const body = e.kind === "alert" ? `${e.what}${e.line ? `\n> ${e.line}` : ""}` : e.what;
+    // benchscout's own record of what it did on this device just before: said to the person and to the agent
+    const done = e.through_benchscout?.length ? e.through_benchscout : undefined;
+    const body = (e.kind === "alert" ? `${e.what}${e.line ? `\n> ${e.line}` : ""}` : e.what)
+      + (done ? `\n${this.s.throughBenchscout}\n${done.join("\n")}` : "");
     const request = [
       `benchscout noticed this on ${name} (${e.port}): ${e.kind === "alert" ? e.what
         : "its port vanished and came back (a reset, a USB re-enumeration or a loose cable; check the device's own output to tell)"}.`,
       e.line ? `The line: ${e.line}` : "",
+      done ? `Done to this device through benchscout in the two minutes before (benchscout's own record):\n${done.join("\n")}` : "",
       e.log ? `Everything the port printed is in ${e.log} (read the end of it).` : "",
       "Find out what happened and why, with evidence from the device's output.",
     ].filter(Boolean).join("\n");

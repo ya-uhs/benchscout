@@ -116,6 +116,11 @@ class Broker:
         self.observed: dict[str, dict[str, tuple[str, str]]] = {}  # target id -> kind -> (time, text)
         self._lock = threading.RLock()
         self.last: R.Recon | None = None
+        # what benchscout itself did on the bench this session (action, port, args, who allowed it): a raw clue the agent
+        # otherwise has to ask the human for (real bench, 2026-11-03: "did anyone send something just before the crash?")
+        from collections import deque
+
+        self.done: deque[dict] = deque(maxlen=500)
 
     def _emit(self, event: dict) -> None:
         if self.on_event:
@@ -714,7 +719,9 @@ class Broker:
         if contains:
             text = [l for l in text if contains in l]
         tail = text[-max(1, min(lines, 2000)):]
-        return {"status": "done", "log": str(log.resolve()), "lines": len(tail), "text": "\n".join(tail)}
+        done = self._done_on(self.bench.ports[pid].device_id)[-20:]
+        return {"status": "done", "log": str(log.resolve()), "lines": len(tail), "text": "\n".join(tail),
+                **({"through_benchscout": done} if done else {})}
 
     def _find_quote(self, target_id: str, quote: str) -> str | None:
         texts: list[tuple[str, str]] = []
@@ -828,6 +835,10 @@ class Broker:
         if last and port:
             ev["device"] = port.device_id
             ev["device_name"] = last.bench.devices[port.device_id].name
+            if ev["kind"] in ("alert", "vanished", "returned", "gone"):
+                recent = self._done_on(port.device_id, within=120)
+                if recent:  # benchscout's own record of what it did just before: a clue, not an explanation
+                    ev["through_benchscout"] = recent
         self._emit(ev)
         w = self.watches.get(ev["port"])
         if ev["kind"] == "vanished" and ev.get("cause") != "host_sleep" and w and w.vanishes == 1 \
@@ -887,7 +898,9 @@ class Broker:
             fetch = self._fetch_needed(spec)
             if not fetch and (impact.effect == Effect.SAFE or
                               (approval_id is None and self.approvals.covered(action, port_id, impact.effect, impact.subjects))):
-                return self._run(impact, args)
+                return self._run(impact, args, "safe" if impact.effect == Effect.SAFE else
+                                 "allowed by the human for the session" if not self.approvals.allow_all else
+                                 "allowed by the human: allow all")
             if approval_id is None:
                 approval_id = self.approvals.open(impact, key, fetch=fetch).id
             else:
@@ -931,7 +944,8 @@ class Broker:
             if used != "ok":
                 return {"status": used, "approval_id": approval_id}
             # say so, or the agent reports a long call as "ran without approval" (real bench, S5)
-            return dict(self._run(impact, args), approval={"id": approval_id, "granted_by": "the human, in the benchscout panel",
+            return dict(self._run(impact, args, "allowed by the human, once"),
+                        approval={"id": approval_id, "granted_by": "the human, in the benchscout panel",
                                                            "waited_s": waited})
 
     def _outside_session(self, port_id: str) -> dict | None:
@@ -942,8 +956,17 @@ class Broker:
                 "message": f"{self.bench.devices[dev].name} is not in this session. Ask the user to select it "
                            f"in the benchscout panel; only selected devices can be used."}
 
-    def _run(self, impact: Impact, args: dict) -> dict:
+    def _run(self, impact: Impact, args: dict, allowed: str) -> dict:
+        port = self.bench.ports.get(impact.port_id)
+        self.done.append({"at": time.time(), "time": time.strftime("%H:%M:%S"), "action": impact.action, "port": impact.port_id,
+                          "device": port.device_id if port else None, "args": A.canonical(args), "allowed": allowed})
         return {"status": "done", "impact": impact.to_dict(), "result": self._execute(impact.action, impact.port_id, args)}
+
+    def _done_on(self, device: str | None, within: float | None = None) -> list[str]:
+        """What benchscout did on this device's ports (the last `within` seconds), one line each, oldest first."""
+        now = time.time()
+        return [f"{d['time']} {d['action']} {d['args']} on {d['port']} ({d['allowed']})" for d in list(self.done)
+                if d["device"] == device and (within is None or now - d["at"] <= within)]
 
     def _execute(self, action: str, port_id: str, args: dict):
         port = self.bench.ports[port_id]

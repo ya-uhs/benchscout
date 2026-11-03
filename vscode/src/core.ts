@@ -51,6 +51,7 @@ export interface DeviceEvent {
   port: string; device?: string; device_name?: string;
   kind: "alert" | "vanished" | "returned" | "gone" | "unwatchable" | "watching"; what: string; line?: string | null; log?: string; time?: number;
   cause?: "host_sleep"; // the computer had been asleep: the device did not necessarily do anything
+  through_benchscout?: string[]; // what benchscout itself did on this device just before (its own record)
 }
 
 /** Devices plugged in or pulled out since the last scan (the core notices by itself; design.md section 17). */

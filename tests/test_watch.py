@@ -196,3 +196,22 @@ def test_a_port_lost_while_awake_has_no_cause(tmp_path):
     back = wait_for(events, lambda e: e["kind"] == "returned", timeout=4)[0]
     assert "cause" not in back
     br.end_session()
+
+
+def test_a_crash_right_after_a_command_sent_through_benchscout_comes_with_that_command(tmp_path):
+    """Real bench, 2026-11-03 (acceptance test, Claude Code): `panic` was sent through benchscout with the human's OK,
+    the ESP32-S3 crashed, benchscout woke the agent, and the agent had to ask the human whether anything had been sent:
+    benchscout knew, and did not say. Its own record now comes with the event and with bench_log."""
+    panic = (Path(__file__).parent.parent / "fixtures" / "real" / "esp32s3-testfw-panic.txt").read_text(encoding="utf-8")
+    io, br, events = bench(tmp_path, {VCP: [{"after": 0.05, "text": "hb n=1 uptime_ms=1306\n"}]})
+    io.data["replies"] = {VCP: {"panic\n": panic}}
+    select(br, VCP)
+    port = br.resolve_port(VCP)
+    aid = br.request("serial.send", port, {"data": "panic", "seconds": 0.3})["approval_id"]
+    br.decide(aid, True)
+    br.request("serial.send", port, {"data": "panic", "seconds": 0.3}, approval_id=aid)
+    alert = wait_for(events, lambda e: e["kind"] == "alert")[0]
+    assert any("serial.send" in d and '"panic"' in d and "allowed by the human, once" in d for d in alert["through_benchscout"])
+    log = br.read_log(VCP)
+    assert any('"panic"' in d for d in log["through_benchscout"]) and "abort()" in log["text"]
+    br.end_session()

@@ -172,6 +172,13 @@ async function main() {
       const b = row?.querySelector("button"); if (!b) return ""; b.click(); return b.textContent.trim(); })()`);
     if (!hit) throw new Error(`no device row with a button for "${rest[0]}"`);
     console.log(`pressed: ${hit}`);
+  } else if (cmd === "reply") {  // reply "<text in the card>" "<words>": type into that open card's box and send it
+    const hit = await inbox(st.port, `(() => { const card = [...doc.querySelectorAll(".card")].find((c) => !c.classList.contains("closed")
+      && c.innerText.includes(${JSON.stringify(rest[0])})); const box = card && card.querySelector("textarea[data-draft]"); if (!box) return "";
+      box.value = ${JSON.stringify(rest[1] ?? "")}; box.dispatchEvent(new Event("input", { bubbles: true }));
+      card.querySelector("button[data-text]").click(); return card.querySelector(".head").innerText.trim(); })()`);
+    if (!hit) throw new Error(`no open card with "${rest[0]}" and a reply box in the inbox`);
+    console.log(`replied to: ${hit}`);
   } else if (cmd === "click") {
     const hit = await inbox(st.port, `(() => { const b = [...doc.querySelectorAll("button")].find((b) => b.textContent.trim() === ${JSON.stringify(rest[0])}
       || b.textContent.includes(${JSON.stringify(rest[0])})); if (!b) return ""; b.click(); return b.textContent.trim(); })()`);

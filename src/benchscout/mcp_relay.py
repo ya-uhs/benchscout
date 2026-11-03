@@ -137,7 +137,10 @@ Actions:
     @mcp.tool()
     async def bench_log(port: str, lines: int = 200, contains: str | None = None) -> str:
         """Read the end of a watched serial port's log (everything it printed since it was
-        watched). Safe: it only reads the file. `contains` keeps only lines with that text."""
+        watched). Safe: it only reads the file. `contains` keeps only lines with that text.
+        `through_benchscout` lists what was done to this device through benchscout this session
+        (time, action, arguments, who allowed it), so a crash right after a command sent through
+        benchscout is not taken for a fault without saying so."""
         return await _call("log", {"port": port, "lines": lines, "contains": contains})
 
     @mcp.tool()

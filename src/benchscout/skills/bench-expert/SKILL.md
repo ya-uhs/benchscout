@@ -71,6 +71,10 @@ The human answers cards in the benchscout inbox; keep them few and clear.
   output is all in its log (`.benchscout/logs/`): read it with `bench_log` (no shell needed)
   rather than listening again. If benchscout has already asked the human whether to watch a
   port, do not ask again; work with what you have until they answer.
+- When woken for an event, or reading a log after one, look first at `through_benchscout` (in the
+  wake request and in `bench_log`): what was done to this device through benchscout just before,
+  with who allowed it. A crash right after a command sent that way is that command's doing until
+  shown otherwise; ask the human only about what benchscout could not have seen.
 - You cannot see where scope probes or wires go. Ask: "Which net is CH1 on?"
 
 ## When you are woken
