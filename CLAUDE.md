@@ -120,7 +120,14 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
 - Classify by effect, not read/write. `esptool chip_id` reads but resets the chip, so it
   is DISRUPTIVE. Impact propagates over the graph (`policy.py`): reprogramming an FPGA
   also disturbs the UART implemented in its fabric.
-- An action or command with no declared effect is DANGEROUS.
+- An action (a tool definition) with no declared effect is DANGEROUS. Text sent to a device (serial, SCPI) whose effect
+  neither the standard nor memory fixes is DISRUPTIVE, and a grant covers only the command word/header the human saw.
+  A remembered effect applies through every entrance (`serial.command` and raw `serial.send` alike).
+- Runtime contracts (design.md §3, review 7): every open or reopen of a device port is decided by the broker on the current
+  state (selected, same unit, safe to open now); an approval binds to the resolved content (bytes, argv, definition); an
+  operation's effect is the strongest of its steps (open, settings, content, tool); "loosening" is judged against the
+  strongest rule in force, and loosening memory applies only to a unit with a unique serial; indistinguishable units are
+  never matched by guess; recon applies memory before talking to a device.
 - A list of risky patterns may only add caution on top of a default that is acceptable alone: lists miss
   things. SCPI: only the standard's status/identity queries are SAFE; anything else asks, and a standing grant
   (for the session, or "always on this instrument", which the human's channel writes to memory) covers that
