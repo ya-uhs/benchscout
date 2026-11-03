@@ -46,7 +46,7 @@ def render(r: Recon) -> str:
                 targets.setdefault(link.target_id, []).append((p, link))
         for tid, via in targets.items():
             t = b.targets[tid]
-            host = f"  (inside {b.targets[t.hosted_on].name or 'the FPGA'})" if t.hosted_on else ""
+            host = f"  (inside {b.targets[t.hosted_on].name or b.targets[t.hosted_on].id})" if t.hosted_on else ""
             lines.append(f"  ├ {t.name or '?'}{host}  [{_MARK[t.confidence]}]")
             for p, link in via:
                 path = f"  {p.path}" if p.path and p.path not in p.id else ""

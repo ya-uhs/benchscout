@@ -55,8 +55,8 @@ def test_one_usb_device_two_targets(r):
     ftdi = next(d for d in b.devices.values() if d.name == "Digilent USB Device")  # what it calls itself
     kinds = sorted(p.kind for p in b.ports_of(ftdi.id))
     assert kinds == ["jtag", "serial"]
-    fabric = next(t for t in b.targets.values() if t.kind == "fabric-endpoint")
-    assert b.targets[fabric.hosted_on].kind == "fpga"
+    fabric = next(t for t in b.targets.values() if t.hosted_on)
+    assert any(p.kind == "jtag" for p in b.ports_reaching(fabric.hosted_on))
 
 
 def test_unknown_stays_unknown(r):
@@ -66,7 +66,7 @@ def test_unknown_stays_unknown(r):
     (t,) = b.targets_via(ch340.id)
     assert t.name is None and t.confidence == Confidence.UNKNOWN
     # FPGA part is unknown until a JTAG scan actually runs
-    fpga = next(t for t in b.targets.values() if t.kind == "fpga")
+    fpga = next(t for t in b.targets.values() if any(p.kind == "jtag" for p in b.ports_reaching(t.id)))
     assert fpga.name is None
 
 
@@ -227,7 +227,7 @@ def test_tang_nano_9k(tmp_path):
     fpga = target_named(r.bench, "Gowin GW1N(R)-9C")
     assert any("openFPGALoader's database" in e.detail for e in fpga.evidence), "the evidence says which database decided"
     assert fpga.confidence == Confidence.IDENTIFIED
-    fabric = next(t for t in r.bench.targets.values() if t.kind == "fabric-endpoint")
+    fabric = next(t for t in r.bench.targets.values() if t.hosted_on)
     assert fabric.hosted_on == fpga.id
     (dev,) = r.bench.devices.values()
     assert dev.name == "SIPEED JTAG Debugger"  # what the BL702 debugger calls itself
@@ -239,7 +239,7 @@ def test_idcode_without_a_tool_database_stays_unknown(tmp_path):
     the raw IDCODE is the clue for the agent."""
     io = _variant(tmp_path, lambda d: (d["tools"].append("openFPGALoader"), d["probes"].update({"210319A8C7D1": "index 0:\n\tidcode 0x0362D093\n"})))
     r = recon.run(io)
-    fpga = next(t for t in r.bench.targets.values() if t.kind == "fpga")
+    fpga = next(t for t in r.bench.targets.values() if any(p.kind == "jtag" for p in r.bench.ports_reaching(t.id)))
     assert fpga.name is None
     assert any("0x0362D093" in e.detail for e in fpga.evidence)
 

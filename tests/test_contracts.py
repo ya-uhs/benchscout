@@ -309,7 +309,7 @@ def test_learned_wiring_carries_the_disturbance_like_shipped_wiring(tmp_path):
 
     br = bench(tmp_path)
     uart = br.resolve_port(CH340)
-    fpga = next(t.id for t in br.bench.targets.values() if t.kind == "fpga")
+    fpga = next(t.id for t in br.bench.targets.values() if any(p.kind == "jtag" for p in br.bench.ports_reaching(t.id)))
     jtag = next(p.id for p in br.bench.ports_reaching(fpga) if p.kind == "jtag")
     assert uart not in classify(br.bench, "fpga.program", jtag, {"bitstream": "x.bit"}).affected_ports
     assert br.remember(uart, "config", "wired to the FPGA's fabric", data={"inside": "target:nowhere"})["status"] == "rejected"

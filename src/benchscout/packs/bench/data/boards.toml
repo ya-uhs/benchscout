@@ -4,15 +4,22 @@
 # `match` condition holds.
 #   match.text_contains: substrings of the USB vendor or product string (case-insensitive)
 #   match.serial_prefix: prefixes of the USB serial number
-#   channels: channel number -> "jtag-fpga" | "uart-fpga-fabric"
+#   channels: channel number -> "jtag" | "uart" (what the channel is wired as)
+#   inside: channel -> channel: the far end of the first is inside the part on the second (a UART in an FPGA's
+#     fabric: writing that part disturbs it). The same relation as wiring the agent learns (memory `inside`)
+#   ids: channel -> the name its target goes by (kept stable, memory refers to it); default ch<n>
 #   source: the wiring as assumed, in words (shown with the evidence)
 
 [[board]]
 source = "wiring assumed for safety (USB descriptor says 'digilent', or a serial starting 2102-2104): channel A = JTAG of an FPGA, channel B = UART on the FPGA's pins"
 match = { text_contains = ["digilent"], serial_prefix = ["2102", "2103", "2104"] }
-channels = { 0 = "jtag-fpga", 1 = "uart-fpga-fabric" }
+channels = { 0 = "jtag", 1 = "uart" }
+inside = { 1 = 0 }
+ids = { 0 = "fpga", 1 = "fabric-uart" }
 
 [[board]]
 source = "wiring assumed for safety (USB descriptor says 'sipeed'; an FT2232-compatible debugger): channel A = JTAG of an FPGA, channel B = UART on the FPGA's pins"
 match = { text_contains = ["sipeed"] }
-channels = { 0 = "jtag-fpga", 1 = "uart-fpga-fabric" }
+channels = { 0 = "jtag", 1 = "uart" }
+inside = { 1 = 0 }
+ids = { 0 = "fpga", 1 = "fabric-uart" }

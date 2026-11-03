@@ -56,7 +56,7 @@ def _bench(tmp_path, usb, serial):
 
 
 def fabric_port(b):
-    fab = next(t for t in b.targets.values() if t.kind == "fabric-endpoint")
+    fab = next(t for t in b.targets.values() if t.hosted_on)
     (p,) = b.ports_reaching(fab.id)
     return p
 

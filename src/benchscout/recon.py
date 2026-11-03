@@ -271,20 +271,31 @@ def _apply_usb_knowledge(b: Bench, dev: Device, info: dict, serials: list[dict],
             ev = Evidence("board-knowledge", board["source"])
             if dev.serial in K.SHARED_SERIALS:
                 dev.evidence.append(Evidence("usb-descriptor", f"serial '{dev.serial}' is shared by every unit of this model; two of these boards would be indistinguishable"))
-            fpga = b.add_target(Target(f"target:{short}:fpga", None, "fpga", Confidence.UNKNOWN,
-                                       facts=["an FPGA on JTAG, as the shipped wiring assumes (for safety; it names nothing)"],
-                                       evidence=[ev]))
-            jtag_ch = next((ch for ch, what in board["channels"].items() if what == "jtag-fpga"), 0)
-            jp = b.add_port(Port(f"jtag:{short}", dev.id, "jtag", interface=jtag_ch, evidence=[ev]))
-            jp.tools = _tool_args(info, dev, jp)
-            b.link(jp.id, fpga.id, "jtag", ev)
+            # the wiring as data says: what each channel is wired as, and which channel's far end is inside which
+            # (the same relation as wiring the agent learns, `inside`); nothing here knows what kind of part it is
+            reached: dict[int, Target] = {}
+
+            def target(ch: int, fact: str) -> Target:
+                return b.add_target(Target(f"target:{short}:{board['ids'].get(ch, f'ch{ch}')}", None, "unknown",
+                                           Confidence.UNKNOWN, facts=[fact], evidence=[ev]))
+
+            jtags = [ch for ch, role in sorted(board["channels"].items()) if role == "jtag"]
+            for ch in jtags:
+                reached[ch] = target(ch, "the part on this board's JTAG, as the shipped wiring assumes (for safety; it names nothing)")
+                jp = b.add_port(Port(f"jtag:{short}" + (f":{ch}" if len(jtags) > 1 else ""), dev.id, "jtag", interface=ch,
+                                     evidence=[ev]))
+                jp.tools = _tool_args(info, dev, jp)
+                b.link(jp.id, reached[ch].id, "jtag", ev)
             for i, s in enumerate(serials):
                 ch = s.get("channel", i)
-                if board["channels"].get(ch) == "uart-fpga-fabric":
-                    fab = b.add_target(Target(f"target:{short}:fabric-uart", None, "fabric-endpoint", Confidence.UNKNOWN,
-                                              hosted_on=fpga.id, facts=["UART endpoint implemented in FPGA fabric"], evidence=[ev]))
+                if board["channels"].get(ch) == "uart":
+                    reached[ch] = target(ch, "a UART, as the shipped wiring assumes (for safety; it names nothing)")
                     p = _serial_port(b, dev, s)
-                    b.link(p.id, fab.id, "uart", ev)
+                    b.link(p.id, reached[ch].id, "uart", ev)
+            for ch, host in board["inside"].items():
+                if ch in reached and host in reached:
+                    reached[ch].hosted_on = reached[host].id
+                    reached[ch].facts.append(f"inside the part on channel {host}, as the shipped wiring assumes")
             return
         # Unknown board: channels are just unknown serial ports.
         role = "bridge"

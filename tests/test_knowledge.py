@@ -124,11 +124,12 @@ def test_a_user_board_is_tried_before_shipped_ones(tmp_path):
 board = "My FT2232H dev board"
 source = "our schematic rev B: channel A = UART to the FPGA, channel B = JTAG"
 match = { serial_prefix = ["2103"] }
-channels = { 0 = "uart-fpga-fabric", 1 = "jtag-fpga" }
+channels = { 0 = "uart", 1 = "jtag" }
+inside = { 0 = 1 }
 ''')
     K.load()
     b = recon.build(FixtureIo(FIXTURE))
-    fpga = next(t for t in b.targets.values() if t.kind == "fpga")
+    fpga = next(t for t in b.targets.values() if any(p.kind == "jtag" for p in b.ports_reaching(t.id)))
     assert any("our schematic rev B" in e.detail for e in fpga.evidence), "the user's wiring, before the shipped one"
 
 

@@ -256,8 +256,8 @@ export function deviceViews(bench: Bench): DeviceView[] {
         status: t.confidence,
         how: proof.join(" · "),
         facts: t.facts,
-        // shown even when the host's part is still unknown: "inside the FPGA"
-        inside: t.hosted_on ? (targets.get(t.hosted_on)?.name ?? targets.get(t.hosted_on)?.kind.toUpperCase()) : undefined,
+        // the part it is inside (its name, or its id while the part is still unknown: nothing is guessed)
+        inside: t.hosted_on ? (targets.get(t.hosted_on)?.name ?? t.hosted_on) : undefined,
       };
     });
     const busy = things.flatMap((t) => t.facts).find((f) => f.startsWith("in use by another benchscout window"));

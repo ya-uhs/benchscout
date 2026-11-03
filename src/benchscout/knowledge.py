@@ -120,7 +120,9 @@ def _board(e: dict) -> dict:
         text = f"{raw.get('vendor') or ''} {raw.get('name') or ''}".lower()
         return any(t in text for t in texts) or bool(prefixes and (raw.get("serial") or "").startswith(prefixes))
 
-    return {**e, "match": match, "channels": {int(k): v for k, v in e.get("channels", {}).items()}}
+    return {**e, "match": match, "channels": {int(k): v for k, v in e.get("channels", {}).items()},
+            "inside": {int(k): int(v) for k, v in e.get("inside", {}).items()},
+            "ids": {int(k): str(v) for k, v in e.get("ids", {}).items()}}
 
 
 def _fill(template: str, m: re.Match) -> str:

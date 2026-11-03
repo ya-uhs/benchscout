@@ -81,7 +81,7 @@ class Target:
 
     id: str
     name: str | None  # None means unknown; never filled in with a guess
-    kind: str  # "mcu" | "fpga" | "instrument" | "fabric-endpoint" | "unknown"
+    kind: str  # a plain label ("mcu" for a chip on its own USB, "instrument" behind SCPI, else "unknown"); decides nothing
     confidence: Confidence = Confidence.UNKNOWN
     hosted_on: str | None = None  # e.g. a soft CPU console living inside an FPGA
     facts: list[str] = field(default_factory=list)
