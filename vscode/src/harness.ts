@@ -211,8 +211,8 @@ export class Harness extends EventEmitter {
     const command = a.effect === "disruptive" && Array.isArray(a.impact.subjects) && a.impact.subjects.length > 0;
     const options: CardOption[] = [{ id: "once", label: this.s.allowOnce, primary: true }];
     if (a.effect === "disruptive") options.push({ id: "session", label: command ? this.s.allowCommandSession : this.s.allowSession });
-    // "always on this instrument" is what the core can keep for SCPI commands only (until the entrances are one)
-    const always = command && a.action.startsWith("scpi.");
+    // "always on this device": the commands the human saw are remembered as theirs, whatever the protocol
+    const always = command;
     if (always) options.push({ id: "always", label: this.s.allowAlwaysHere });
     if (a.effect === "disruptive" && !this.core.allowAll) options.push({ id: "all", label: this.s.allowAllSession });
     options.push({ id: "deny", label: this.s.deny });

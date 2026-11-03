@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from dataclasses import asdict, dataclass, field
 from typing import Callable
 
 from . import knowledge as K
 from .io import VANISHED_MARK, Io
 from .model import Bench, Confidence, Device, Evidence, Port, Target
-from .policy import SCPI_PORTS, Effect, Impact, classify
+from .policy import Effect, Impact, classify
 
 
 @dataclass
@@ -28,9 +29,9 @@ class Recon:
     bench: Bench
     proposals: list[Proposal] = field(default_factory=list)
     ran: list[str] = field(default_factory=list)  # audit of probes actually executed
-    # what each port's SAFE probe got, so a later scan that leaves the device alone (it is in use, or only new devices
-    # are probed) still shows it: port id -> {"probe": "idn" | "listen" | "jtag", "time": ..., "result" | "error": ...}
-    heard: dict[str, dict] = field(default_factory=dict)
+    # what each port's SAFE probes got, so a later scan that leaves the device alone (it is in use, or only new devices
+    # are probed) still shows it: port id -> [{"probe": "output" | "identity" | "chain", "time": ..., ...}]
+    heard: dict[str, list[dict]] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {"bench": self.bench.to_dict(), "proposals": [asdict(p) for p in self.proposals], "ran": self.ran}
@@ -337,13 +338,11 @@ def _add_visa(b: Bench, res: str, names: dict | None = None) -> None:
 
 
 def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] | None = None,
-        keep: set[str] | frozenset[str] = frozenset(), heard: dict[str, dict] | None = None,
+        keep: set[str] | frozenset[str] = frozenset(), heard: dict[str, list[dict]] | None = None,
         prepare: Callable[[Bench], None] | None = None) -> Recon:
     """`busy(device_id)` names another benchscout window holding that device; its ports are
     left alone (docs/notes.md review S1/S2). Devices in `keep` are not probed either (the session is using them,
     or only newly plugged devices are being looked at): what their probes got before (`heard`) is shown again."""
-    import time
-
     b = build(io)
     if prepare:  # memory first: a port learned to reset when opened is not opened by a probe (design.md section 3)
         prepare(b)
@@ -360,71 +359,115 @@ def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] 
                     t.facts.append(fact)
             continue
         if port.device_id in keep:
-            if heard and port.id in heard:
-                r.heard[port.id] = heard[port.id]
-                _fold(b, targets, heard[port.id], earlier=True, port=port)
+            for got in (heard or {}).get(port.id, []):
+                r.heard.setdefault(port.id, []).append(got)
+                _fold(b, targets, got, earlier=True, port=port)
             continue
 
-        got: dict | None = None
-        if port.kind in SCPI_PORTS and port.path:
-            if classify(b, "scpi.query", port.id, {"command": "*IDN?"}).effect == Effect.SAFE:
-                r.ran.append(f"scpi.query *IDN? {port.path}")
-                got = {"probe": "idn", "result": io.visa_query(port.path, "*IDN?")}
-
-        elif port.kind == "serial" and port.path:
-            if classify(b, "serial.listen", port.id).effect == Effect.SAFE:
-                r.ran.append(f"serial.listen {port.path}")
-                try:
-                    # opened the way it was judged safe to open (the port's lines): real bench 2026-11-03, a probe that
-                    # dropped DTR/RTS reset an ESP32-S3 its memory said was safe to open with them left asserted
-                    got = {"probe": "listen", "result": io.serial_listen(port.path, listen_seconds, 115200, False, port.open_lines)}
-                except Exception as e:  # serial.SerialException / OSError: device went away
-                    got = {"probe": "listen", "error": str(e)}
-
-        elif port.kind == "jtag" and b.tools.get("openFPGALoader") and port.tools.get("openFPGALoader") \
-                and not b.devices[port.device_id].needs_udev and not b.devices[port.device_id].needs_winusb:
-            # only where the USB data says how openFPGALoader reaches this probe; others stay unknown
-            if classify(b, "jtag.scan", port.id).effect == Effect.SAFE:
-                r.ran.append(f"jtag.scan {port.id}")
-                got = {"probe": "jtag", "result": io.jtag_scan(port.tools["openFPGALoader"])}
-        if got is not None:
+        for got in _probe(io, b, port, listen_seconds, r.ran):
             got["time"] = time.strftime("%Y-%m-%d %H:%M")
-            r.heard[port.id] = got
+            r.heard.setdefault(port.id, []).append(got)
             _fold(b, targets, got, port=port)
 
     r.proposals = propose(b)
     return r
 
 
+def _probe(io: Io, b: Bench, port: Port, seconds: float, ran: list[str]) -> list[dict]:
+    """The SAFE probes for this port: its protocol's (what the device prints, or says it is), and every tool defined as
+    a probe that reaches it (tools.toml `probe`; the tool's own database names the parts). Nothing here names one."""
+    from . import actions as A
+    from . import protocols
+
+    out = []
+    proto = protocols.for_port(port)
+    if proto and proto.probe_action and port.path:
+        action, args = proto.probe_action
+        if classify(b, action, port.id, args).effect == Effect.SAFE:
+            ran.append(" ".join([action, *[str(v) for v in args.values()], port.path]))
+            got = proto.probe(io, port, seconds)
+            if got:
+                out.append(got)
+    dev = b.devices[port.device_id]
+    for spec in A.all_actions().values():
+        if not spec.probe or spec.port_kinds and port.kind not in spec.port_kinds or dev.needs_udev or dev.needs_winusb:
+            continue
+        exe = b.tools.get(spec.argv[0])
+        argv = _probe_argv(spec, port, dev, exe)
+        if argv is None or classify(b, spec.name, port.id).effect != Effect.SAFE:
+            continue
+        ran.append(f"{spec.name} {port.id}")
+        text = io.run_probe(argv, spec.timeout)
+        out.append({"probe": "chain", "result": read_parts(spec.probe, text or ""),
+                    "source": spec.probe.get("source", spec.argv[0])})
+    return out
+
+
+def _probe_argv(spec, port: Port, dev, exe: str | None) -> list[str] | None:
+    """The probe's command line for this port, or None when it cannot run here (not installed, no known way to reach
+    the port, or it needs arguments a probe cannot have)."""
+    if not exe:
+        return None
+    argv = [exe]
+    for a in spec.argv[1:]:
+        if a == "{port.select*}":
+            sel = port.tools.get(spec.argv[0])
+            if not sel:
+                return None  # only where the USB data says how this tool reaches this port
+            argv += sel
+            continue
+        val = a.replace("{port.path}", port.path or "").replace("{device.serial}", dev.serial or "")
+        if "{" in val:
+            return None
+        argv.append(val)
+    return argv
+
+
+def read_parts(probe: dict, text: str) -> list[dict]:
+    """The parts a probe tool listed, read as its definition says (`each` block: `idcode`, `maker`, `model`)."""
+    each = probe.get("each")
+    blocks = re.split(each, text, flags=re.M)[1:] if each else [text]
+    parts = []
+    for block in blocks:
+        def grab(key: str, blk: str = block) -> str | None:
+            m = re.search(probe[key], blk, re.M) if probe.get(key) else None
+            return m.group(1).strip() if m else None
+
+        code = grab("idcode")
+        if code:
+            parts.append({"idcode": int(code, 0), "maker": grab("maker"), "model": grab("model")})
+    return parts
+
+
 def _fold(b: Bench, targets: list[Target], got: dict, earlier: bool = False, port: Port | None = None) -> None:
     """What a probe got, into the targets it reaches. `earlier`: from a scan before this one (the device was left
     alone this time); a log is then labelled with when it was heard, as output kept from before is."""
     result = got.get("result")
-    if got["probe"] == "idn":
-        info = K.parse_idn(result) if result else None
+    if got["probe"] == "identity":
+        source = got.get("source", "identity")
         for t in targets:
-            if info and (info["maker"] or info["model"]):
-                t.name = " ".join(x for x in ((info["maker"].split() or [""])[0].title(), info["model"]) if x)
+            if got.get("maker") or got.get("model"):
+                t.name = " ".join(x for x in (((got.get("maker") or "").split() or [""])[0].title(), got.get("model") or "") if x)
                 t.confidence = Confidence.IDENTIFIED
-                t.evidence.append(Evidence("scpi *IDN?", str(result)))
+                t.evidence.append(Evidence(source, str(result)))
             elif result:
-                t.evidence.append(Evidence("scpi *IDN?", str(result)))  # an answer that names nothing
+                t.evidence.append(Evidence(source, str(result)))  # an answer that names nothing
             else:
-                t.facts.append("no answer to *IDN?")
-        if info and info["serial"] and port is not None:
+                t.facts.append(f"no answer to {source}")
+        if got.get("serial") and port is not None:
             dev = b.devices[port.device_id]
             if dev.transport == "lan" and not dev.serial:
                 # a LAN instrument has no USB serial: the unit is what it says it is (maker, model, serial), not its address
-                dev.serial = " ".join(x for x in (info["maker"], info["model"], info["serial"]) if x)
-    elif got["probe"] == "listen":
+                dev.serial = " ".join(x for x in (got.get("maker"), got.get("model"), got.get("serial")) if x)
+    elif got["probe"] == "output":
         _fold_listen(targets, result, got.get("error"), got["time"] if earlier else None)
-    elif got["probe"] == "jtag":
+    elif got["probe"] == "chain":
         chain = list(result or [])
         for i, found in enumerate(chain):
             code = found["idcode"]
-            # the tool's own IDCODE database names it; benchscout keeps no table (design.md section 5)
-            name = " ".join(x for x in (found.get("manufacturer"), found.get("model")) if x)
-            src = "openFPGALoader database" if found.get("model") else "not in openFPGALoader's database"
+            # the tool's own database names it; benchscout keeps no table (design.md section 5)
+            name = " ".join(x for x in (found.get("maker"), found.get("model")) if x)
+            src = got.get("source", "the tool") if found.get("model") else f"not in {got.get('source', 'the tool')}"
             if len(chain) > 1:
                 src += f"; part {i + 1} of {len(chain)} on the chain"
             parts = targets
@@ -435,10 +478,8 @@ def _fold(b: Bench, targets: list[Target], got: dict, earlier: bool = False, por
                     b.link(port.id, tid, "jtag")
                 parts = [b.targets[tid]]
             for t in parts:
-                if name and t.kind in ("fpga", "mcu", "unknown"):
+                if name:  # what the tool's database says; the kind of part is not guessed from it
                     t.name, t.confidence = name, Confidence.IDENTIFIED
-                    if t.kind == "unknown":
-                        t.kind = "fpga"
                 t.evidence.append(Evidence("jtag idcode", f"0x{code:08X} ({src})"))
 
 
@@ -483,6 +524,15 @@ def apply_log(t_list: list[Target], text: str, seen: str | None = None) -> None:
         t.facts += [f"{'earlier log' if seen else 'log'}: {line}" for line in c["sample"]]
 
 
+def _probe_tools_missing(b: Bench, port: Port) -> list:
+    """Probe tools defined for this kind of port that know how to reach it, but are not installed."""
+    from . import actions as A
+
+    return [spec for spec in A.all_actions().values()
+            if spec.probe and (not spec.port_kinds or port.kind in spec.port_kinds) and not b.tools.get(spec.argv[0])
+            and ("{port.select*}" not in spec.argv or port.tools.get(spec.argv[0]))]
+
+
 def _from_impact(text: str, imp: Impact, needs: str | None = None) -> Proposal:
     """A proposal that carries the broker's own reason, so the agent never has to guess it."""
     reason = imp.reason
@@ -501,10 +551,14 @@ def propose(b: Bench) -> list[Proposal]:
                     and not any(f.startswith("log:") for f in t.facts):
                 imp = classify(b, "serial.listen", port.id)
                 out.append(_from_impact(f"Listen on {port.path} to see what is behind {b.devices[port.device_id].name}", imp))
-            if port.kind == "jtag" and t.confidence == Confidence.UNKNOWN and not b.tools.get("openFPGALoader") \
-                    and port.tools.get("openFPGALoader"):
-                imp = classify(b, "jtag.scan", port.id)
-                out.append(_from_impact(f"Scan the JTAG chain on {port.id} to identify the part", imp, "install openFPGALoader"))
+            if t.confidence == Confidence.UNKNOWN:
+                for spec in _probe_tools_missing(b, port):  # a probe that would name it, not installed (yet)
+                    from . import fetch
+
+                    exe = spec.argv[0]
+                    imp = classify(b, spec.name, port.id)
+                    out.append(_from_impact(f"Read {port.id} with {spec.name} to identify the part", imp,
+                                            f"{exe} (downloaded on first use)" if fetch.plan(exe) else f"install {exe}"))
     # one proposal per (text) is enough
     seen, uniq = set(), []
     for p in out:

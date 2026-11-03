@@ -208,12 +208,12 @@ def test_a_command_remembered_as_safe_waits_for_the_human_then_runs_without_aski
     port = br.resolve_port(UART)
     r = br.remember(port, "command", "prints uptime", data={"command": "status", "effect": "safe", "eol": "\r\n"})
     assert r["status"] == "pending_human"
-    first = br.request("serial.command", port, {"name": "status"})
+    first = br.request("serial.send", port, {"data": "status"})
     assert first["status"] == "approval_required", "until the human confirms, it is gated like serial.send"
-    assert first["impact"]["code"] == "command_unconfirmed"
+    assert first["impact"]["code"] == "action:serial.send", "like any text the firmware will act on"
     key = br._key(br.bench.devices[br.bench.ports[port].device_id])
     br.decide_memory(key, r["id"], True)
-    closed = br.request("serial.command", port, {"name": "status"})
+    closed = br.request("serial.send", port, {"data": "status"})
     assert closed["status"] == "approval_required" and closed["impact"]["code"] == "reset_on_open", \
         "safe once sent, but sending it opens a port that may reset the board: the open is a step of the call"
     br.decide(br.watch_offers[port], True)  # the human: watch it (held open from now on)
@@ -221,7 +221,7 @@ def test_a_command_remembered_as_safe_waits_for_the_human_then_runs_without_aski
         if br._held_open(port, {}):
             break
         time.sleep(0.02)
-    done = br.request("serial.command", port, {"name": "status"})
+    done = br.request("serial.send", port, {"data": "status"})
     assert done["status"] == "done" and done["impact"]["effect"] == "safe"
     assert "uptime 42s" in done["result"]["reply"], "sent with the remembered line ending"
     assert done["impact"]["code"] == "command_safe"
@@ -236,17 +236,17 @@ def test_a_unit_without_its_own_serial_is_not_loosened_by_memory(tmp_path):
     port = br.resolve_port("/dev/cu.usbserial-10")
     r = br.remember(port, "command", "prints uptime", data={"command": "status", "effect": "safe", "eol": "\r\n"})
     br.decide_memory(br._key(br.bench.devices[br.bench.ports[port].device_id]), r["id"], True)
-    assert br.impact("serial.command", port, {"name": "status"}).effect.name != "SAFE"
+    assert br.impact("serial.send", port, {"data": "status"}).effect.name != "SAFE"
     br.end_session()
 
 
 def test_unknown_or_disruptive_commands_are_not_loosened(tmp_path):
     br = _cmd_bench(tmp_path)
-    bad = br.request("serial.command", "serial:usbserial-10", {"name": "reboot"})
-    assert bad["status"] == "invalid_args" and "none yet" in bad["message"]
+    unknown = br.request("serial.send", "serial:usbserial-10", {"data": "reboot"})
+    assert unknown["status"] == "approval_required", "nothing remembered: text the firmware will act on, it asks"
     r = br.remember("serial:usbserial-10", "command", "restarts the firmware", data={"command": "reboot", "effect": "disruptive"})
     assert r["status"] == "remembered"
-    assert br.request("serial.command", "serial:usbserial-10", {"name": "reboot"})["status"] == "approval_required"
+    assert br.request("serial.send", "serial:usbserial-10", {"data": "reboot"})["status"] == "approval_required"
     assert br.remember("serial:usbserial-10", "command", "x", data={"effect": "safe"})["status"] == "rejected"
     assert br.remember("serial:usbserial-10", "command", "x", data={"command": "a\nb"})["status"] == "rejected"
     # a later scan still knows the commands, and shows them to the agent

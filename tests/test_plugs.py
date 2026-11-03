@@ -112,7 +112,7 @@ def test_a_scan_does_not_open_what_the_session_is_using(bench):
     events = []
     br.on_event = events.append
     br.scan(only_new=True)
-    probed = [c for c in io.calls if c[0] in ("serial_listen", "serial_stream", "visa_query", "jtag_scan")]
+    probed = [c for c in io.calls if c[0] in ("serial_listen", "serial_stream", "visa_query", "probe")]
     assert all(c[1] == "/dev/cu.usbserial-0001" for c in probed), probed
     changed = next(e for e in events if e["event"] == "devices_changed")
     assert [d["id"] for d in changed["added"]] == ["usb:10c4:ea60:0001"] and not changed["removed"]

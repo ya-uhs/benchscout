@@ -20,7 +20,8 @@ from benchscout import recon
 from benchscout.actions import ArgError
 from benchscout.broker import Broker
 from benchscout.io import FixtureIo
-from benchscout.policy import _ENERGIZING, _SCPI_SAFE, Effect, classify, scpi_headers
+from benchscout.policy import Effect, classify
+from benchscout.protocols.scpi import _ENERGIZING, _SCPI_SAFE, scpi_headers
 
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "bench_example.json"
 PSU = "visa:TCPIP0::192.168.1.50::INSTR"

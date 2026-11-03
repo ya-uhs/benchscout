@@ -10,6 +10,19 @@
 # action needs it, after the human's OK on that action's card, into the per-user tools folder (fetch.py).
 # No pinned hash, no download. Windows on Arm uses the win32-x64 build (emulation).
 
+# `probe`: a SAFE action recon runs by itself on every port it can reach, and how to read what it prints: `each`
+# starts one part's block, and `idcode`, `maker`, `model` are read in each block (the tool's own database names the
+# part, design.md section 5). Any tool can be a probe this way (the agent can propose one with bench_define_tool).
+[[tool]]
+name = "openFPGALoader.detect"
+doc = "read the IDCODEs on a JTAG chain, named by openFPGALoader's own database"
+effect = "safe"
+reason = "reads IDCODEs; needs exclusive use of the probe channel"
+port_kinds = ["jtag"]
+argv = ["openFPGALoader", "{port.select*}", "--detect"]
+timeout = 30
+probe = { each = '^index \d+:', idcode = 'idcode\s+(0x[0-9a-fA-F]+)', maker = 'manufacturer\s+(.+)', model = 'model\s+(.+)', source = "openFPGALoader's database" }
+
 [[tool]]
 name = "fpga.program"
 doc = "load a bitstream into the FPGA's SRAM (gone at power-off; nothing is written to flash)"

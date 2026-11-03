@@ -209,7 +209,7 @@ def test_linux_a_libusb_tool_the_user_cannot_open_is_named_with_the_fix_not_trie
     r = recon.run(io)
     tang = next(d for d in r.bench.devices.values() if d.vid == 0x0403)
     assert tang.needs_udev
-    assert not [c for c in io.calls if c[0] == "jtag_scan"], "not tried: it cannot open the device"
+    assert not [c for c in io.calls if c[0] == "probe"], "not tried: it cannot open the device"
     text = report.render(r)
     assert "udev rule" in text and "/dev/bus/usb/003/002" in text and "udevadm trigger" in text
 

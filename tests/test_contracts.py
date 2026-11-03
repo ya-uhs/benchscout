@@ -49,13 +49,13 @@ def test_an_approval_runs_only_what_the_human_saw(tmp_path):
     br = bench(tmp_path, select=[VCP])
     port = br.resolve_port(VCP)
     assert remember(br, port, "status", "disruptive")["status"] == "remembered"
-    asked = br.request("serial.command", port, {"name": "status"})
+    asked = br.request("serial.send", port, {"data": "status"})
     assert asked["status"] == "approval_required"
     card = br.approvals.get(asked["approval_id"])
     assert '"data": "status"' in card.args and '"eol": "\\n"' in card.args, "the card shows what will be sent"
     remember(br, port, "status", "disruptive", eol="\r\n")  # the definition changes while the human decides
     br.decide(asked["approval_id"], True)
-    again = br.request("serial.command", port, {"name": "status"}, approval_id=asked["approval_id"])
+    again = br.request("serial.send", port, {"data": "status"}, approval_id=asked["approval_id"])
     assert again["status"] == "approval_mismatch", "the OK was for other bytes"
     # a line ending is a line ending: it cannot carry a second command past the human
     assert remember(br, port, "ping", "safe", eol="\nerase\n")["status"] == "rejected"
@@ -92,8 +92,9 @@ def test_a_remembered_effect_is_never_weakened_without_the_human(tmp_path, monke
                 if arg:
                     in_force = waiting[-1].data["effect"]
         expected = Effect[in_force.upper()] if in_force else Effect.DISRUPTIVE
-        assert br.impact("serial.command", port, {"name": "erase"}).effect == expected
-        assert br.impact("serial.send", port, {"data": "erase"}).effect == max(expected, Effect.DISRUPTIVE)
+        assert br.impact("serial.send", port, {"data": "erase"}).effect == expected, "one rule, whatever the entrance"
+        assert br.impact("serial.send", port, {"data": "erase now"}).effect == max(expected, Effect.DISRUPTIVE), \
+            "a word the rule does not take as a value asks no less than an unknown command"
     br.end_session()
 
 
@@ -102,7 +103,7 @@ def test_a_dangerous_command_waits_for_the_human_to_be_weakened(tmp_path):
     port = br.resolve_port(VCP)
     remember(br, port, "erase", "dangerous")
     assert remember(br, port, "erase", "disruptive")["status"] == "pending_human"
-    assert br.impact("serial.command", port, {"name": "erase"}).effect == Effect.DANGEROUS, "the stronger stays in force"
+    assert br.impact("serial.send", port, {"data": "erase"}).effect == Effect.DANGEROUS, "the stronger stays in force"
     br.end_session()
 
 
@@ -134,7 +135,7 @@ def test_every_call_that_opens_a_port_that_may_reset_asks(tmp_path):
     port = br.resolve_port("/dev/cu.usbmodem1101")  # the chip's own USB: opening may reset it
     br.bench.ports[port].commands["status"] = {"effect": "safe", "eol": "\n", "text": "", "pending": False}
     for action, args in (("serial.listen", {}), ("serial.watch", {}), ("serial.send", {"data": "status"}),
-                         ("serial.command", {"name": "status"})):
+                         ("serial.send", {"data": "status"})):
         assert br.impact(action, port, args).effect >= Effect.DISRUPTIVE, action
     br.end_session()
 
@@ -380,9 +381,10 @@ def test_a_safe_firmware_command_with_values_runs_without_asking_only_within_its
     br = bench(tmp_path, select=[VCP])
     port = br.resolve_port(VCP)
     _confirm(br, port, {"command": "led", "effect": "safe", "limits": [{"min": 0, "max": 7}]})
-    assert br.impact("serial.command", port, {"name": "led", "args": "3"}).effect == Effect.SAFE
-    assert br.impact("serial.command", port, {"name": "led", "args": "9"}).effect == Effect.DANGEROUS
-    assert br.impact("serial.send", port, {"data": "led 3"}).effect == Effect.DISRUPTIVE, "a raw send never asks less than that"
+    assert br.impact("serial.send", port, {"data": "led 3"}).effect == Effect.SAFE
+    assert br.impact("serial.send", port, {"data": "led 9"}).effect == Effect.DANGEROUS
+    assert br.impact("serial.send", port, {"data": "led 3 now"}).effect == Effect.DISRUPTIVE, \
+        "a word its rule does not take as a value: what was confirmed was the command, not that"
     br.end_session()
 
 
@@ -398,4 +400,17 @@ def test_widening_or_dropping_value_limits_waits_for_the_human(tmp_path):
                                                   "limits": [{"min": 1, "max": 3.3}]})["status"] == "remembered", "narrower: at once"
     assert br.remember(pid, "command", "x", data={"command": "VOLT", "effect": "disruptive",
                                                   "limits": [{"max": "3.6"}]})["status"] == "rejected"
+    br.end_session()
+
+
+
+def test_always_on_this_device_works_for_a_firmware_command_as_for_an_instrument_command(tmp_path):
+    """One rule table for every protocol: what the human allows always is kept the same way for both."""
+    br = bench(tmp_path, select=[VCP, PSU])
+    for port, action, args in ((br.resolve_port(VCP), "serial.send", {"data": "status", "seconds": 0.05}),
+                               (br.resolve_port(PSU), "scpi.query", {"command": "MEAS:VOLT?"})):
+        asked = br.request(action, port, args)
+        assert asked["status"] == "approval_required"
+        br.decide(asked["approval_id"], True, "always")
+        assert br.impact(action, port, args).effect == Effect.SAFE, (action, "remembered as the human's, for this device")
     br.end_session()

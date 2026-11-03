@@ -22,7 +22,8 @@ from . import recon as R
 from .approvals import ApprovalBook, Scope
 from .io import Io, run_tool
 from .locks import DeviceLocks
-from .policy import SCPI_PORTS, Effect, Impact, classify, scpi_default, scpi_headers
+from . import protocols
+from .policy import Effect, Impact, classify
 
 LINE_ENDINGS = ("\n", "\r\n", "\r", "")
 OPEN_RESET_S = 3.0  # a port that vanishes this soon after being opened was reset (or re-enumerated) by the open
@@ -372,20 +373,20 @@ class Broker:
         return {"allow_all": self.approvals.allow_all}
 
     def _allow_always(self, approval_id: str, granted: bool) -> dict:
-        """Control channel: "always on this instrument" for a SCPI call that asks once. The human saw the command
-        and decided, so it is remembered for this instrument as confirmed (they can forget it in the inbox), and
-        this call runs. What the standard or an output setting makes DANGEROUS cannot be allowed this way."""
+        """Control channel: "always on this device" for a call that asks once and whose commands its protocol judged.
+        The human saw the commands and decided, so each is remembered for this device as confirmed (they can forget it
+        in the inbox), and this call runs. What is DANGEROUS cannot be allowed this way."""
         from dataclasses import asdict
 
         a = self.approvals.get(approval_id)
         if a is None or not granted:
             return self.decide(approval_id, granted, "once")
-        if a.action not in ("scpi.query", "scpi.write") or a.effect != Effect.DISRUPTIVE.name.lower():
-            raise ValueError(f"only a SCPI command that asks once can be allowed always; this is {a.action} ({a.effect.upper()})")
+        if not (A.get(a.action).protocol and a.impact.get("subjects")) or a.effect != Effect.DISRUPTIVE.name.lower():
+            raise ValueError(f"only a command that asks once can be allowed always; this is {a.action} ({a.effect.upper()})")
         with self._lock:
             dev = self.bench.devices[self.bench.ports[a.port].device_id]
             for h in a.impact.get("subjects") or []:
-                self._remember_command(dev, a.port, "allowed always on this instrument, in the benchscout inbox", "",
+                self._remember_command(dev, a.port, "allowed always on this device, in the benchscout inbox", "",
                                        {"command": h, "effect": "safe"}, "human", confirmed=True)
         return asdict(self.approvals.decide(approval_id, True, "once"))
 
@@ -659,20 +660,22 @@ class Broker:
         if "eol" in data and data["eol"] not in LINE_ENDINGS:
             # a line ending that carries more ("\nerase\n") would send a second command the human never saw
             return {"status": "rejected", "message": "eol must be one of \"\\n\", \"\\r\\n\", \"\\r\" or \"\" (nothing)"}
-        kinds = ("serial", *SCPI_PORTS)
         port = next((p.id for p in self.bench.ports_of(dev.id) if p.id == ref or p.path == ref), None)
         if not port:
-            ports = [p.id for p in self.bench.ports_of(dev.id) if p.kind in kinds]
+            ports = [p.id for p in self.bench.ports_of(dev.id) if protocols.for_port(p)]
             if len(ports) != 1:
                 return {"status": "rejected", "message": f"a command belongs to one port; give its id ({', '.join(ports) or 'none'})"}
             port = ports[0]
-        if self.bench.ports[port].kind in SCPI_PORTS:
-            try:
-                units = scpi_headers(cmd)
-            except A.ArgError as err:
-                return {"status": "rejected", "message": str(err)}
-            if len(units) != 1:
-                return {"status": "rejected", "message": "remember one SCPI command (one header) per entry, without ';'"}
+        proto = protocols.for_port(self.bench.ports[port])
+        if proto is None:
+            return {"status": "rejected", "message": f"{port} carries no commands (a tool reaches it)"}
+        try:
+            proto.check(cmd)
+            one = len(proto.commands(cmd)) == 1
+        except A.ArgError as err:
+            return {"status": "rejected", "message": str(err)}
+        if not one:
+            return {"status": "rejected", "message": "remember one command per entry (one line, one header, no ';')"}
         key = self._key(dev)
         loosens = self._loosens(self.bench.ports[port], cmd, effect, self._in_force(key, self.bench.ports[port], cmd)) \
             or self._widens(key, self.bench.ports[port], cmd, effect, limits)
@@ -690,25 +693,19 @@ class Broker:
 
     @staticmethod
     def _command_key(port, cmd: str) -> str:
-        """How a remembered command is looked up: a firmware command by its text, a SCPI one by its header."""
-        if port.kind in SCPI_PORTS:
-            try:
-                return scpi_headers(cmd)[0][0]
-            except (A.ArgError, IndexError):
-                return ""
-        return cmd
+        """How a remembered command is looked up, as the port's protocol says."""
+        proto = protocols.for_port(port)
+        return proto.key(cmd) if proto else ""
 
     @staticmethod
     def _loosens(port, cmd: str, effect: str, in_force: Effect | None = None) -> bool:
         """Would this entry make the command ask less than it does now: than the rule in force for it (DANGEROUS
-        remembered, then DISRUPTIVE: that is loosening too), or than benchscout by itself when nothing is remembered?"""
-        if port.kind in SCPI_PORTS:
-            key = Broker._command_key(port, cmd)
-            if not key:
-                return True
-            floor = scpi_default(key)[0]
-        else:
-            floor = Effect.DISRUPTIVE  # a firmware command is otherwise like sending bytes
+        remembered, then DISRUPTIVE: that is loosening too), or than the protocol's default when nothing is remembered?"""
+        proto = protocols.for_port(port)
+        key = proto.key(cmd) if proto else ""
+        if not proto or not key:
+            return True
+        floor = proto.default(key)[0]
         return Effect[effect.upper()] < (in_force if in_force is not None else floor)
 
     def _widens(self, key: str, port, cmd: str, effect: str, limits: list | None) -> bool:
@@ -1085,19 +1082,11 @@ class Broker:
             kind = self.bench.ports[port_id].kind
             if spec.port_kinds and kind not in spec.port_kinds:
                 return {"status": "invalid_args", "message": f"{action} works on {'/'.join(spec.port_kinds)} ports, not on a {kind} port"}
-            if action == "serial.command" and args["name"] not in self.bench.ports[port_id].commands:
-                known = ", ".join(sorted(self.bench.ports[port_id].commands)) or "none yet"
-                return {"status": "invalid_args",
-                        "message": f"{args['name']!r} is not a remembered command of {port_id} (remembered: {known}). "
-                                   "Remember it first with bench_remember (kind command), or send it with serial.send"}
-            if action == "serial.command":
-                # what will actually be sent, resolved now: the approval binds to it, and that is what runs (a definition
-                # changed while the human decides does not ride on their OK)
-                c = self.bench.ports[port_id].commands[args["name"]]
-                text = f"{args['name']} {args.get('args') or ''}".strip()
-                args = dict(args, sends={"data": text, "eol": c.get("eol", "\n"), "effect": c["effect"],
-                                         **({"until": c["until"]} if c.get("until") else {}),
-                                         **({"limits": c["limits"]} if c.get("limits") else {})})
+            proto = protocols.get(spec.protocol) if spec.protocol else None
+            if proto:
+                # what will actually be sent, resolved now (a remembered command's line ending): the approval binds to
+                # it, and that is what runs; a definition changed while the human decides does not ride on their OK
+                args = proto.resolve(self.bench.ports[port_id], args)
             key = A.canonical(args)
             try:
                 impact = classify(self.bench, action, port_id, args, port_open=self._held_open(port_id, args))
@@ -1223,10 +1212,6 @@ class Broker:
         if spec.argv:
             return self._run_tool(spec, port, args)
         w = self.watches.get(port_id)
-        if action == "serial.command":  # sent like text: what was resolved (and approved) when it was asked for
-            c = args["sends"]
-            action, args = "serial.send", {"data": c["data"], "eol": c["eol"], "seconds": args["seconds"],
-                                           "baud": args["baud"], **({"until": c["until"]} if c.get("until") else {})}
         if w and w.alive and action in ("serial.listen", "serial.send") and args["baud"] != w.baud:
             # a different rate was asked for: reopen the watch at it (the port is SAFE to open, it was watched)
             self._unwatch(port_id)
@@ -1249,7 +1234,7 @@ class Broker:
             from .codec import split, until_pattern
 
             until = until_pattern(args.get("until"))
-            data = (args["data"] + args["eol"]).encode()
+            data = (args["data"] + (args["eol"] if args.get("eol") is not None else "\n")).encode()
             if w and w.alive:
                 text, before = w.send(data, args["seconds"], until)
             else:  # opened for this call: nothing it printed before to tell its own lines by
@@ -1279,17 +1264,14 @@ class Broker:
             return self._save_artifact(f"{port_id}-listen-{args['baud']}.txt", text, preview=text[-2000:])
         if action in ("scpi.query", "scpi.write"):
             # an answer is read only when the line asks for one: a command alone has none to wait for
+            from .protocols.scpi import scpi_headers
+
             asks = any(h[0].endswith("?") for h in scpi_headers(args["command"]))
             if not asks:
                 return {"sent": self.io.visa_write(port.path, args["command"])}
             if args.get("save"):
                 return self._save_capture(port, args["command"], args["save"])
             return self.io.visa_query(port.path, args["command"])
-        if action == "jtag.scan":
-            if not port.tools.get("openFPGALoader"):
-                return {"error": f"no way is known to reach {port_id} with openFPGALoader",
-                        "fix": "add `tools = { openFPGALoader = [...] }` for this USB id in a knowledge file"}
-            return [dict(d, idcode=f"0x{d['idcode']:08X}") for d in self.io.jtag_scan(port.tools["openFPGALoader"])]
         return {"error": f"{action} is classified but not implemented in this prototype"}
 
     # ---- external tools defined as data (design.md section 4) ------------------------------
@@ -1378,6 +1360,13 @@ class Broker:
                 if dev.id in self.selected and pid in self.bench.ports and self.bench.ports[pid].device_id == dev.id:
                     self._watch(pid, baud)
         res = self._save_artifact(f"{port.id}-{spec.name}.txt", " ".join(argv) + "\n\n" + text, preview=text[-2000:])
+        if spec.probe:  # read as its definition says: the parts it named go on the bench (the tool's own database)
+            parts = R.read_parts(spec.probe, text)
+            got = {"probe": "chain", "result": parts, "source": spec.probe.get("source", spec.argv[0]),
+                   "time": time.strftime("%Y-%m-%d %H:%M")}
+            self.recon.heard[port.id] = [g for g in self.recon.heard.get(port.id, []) if g["probe"] != "chain"] + [got]
+            R._fold(self.bench, self.bench.targets_via(port.id), got, port=port)
+            res["parts"] = [dict(p, idcode=f"0x{p['idcode']:08X}") for p in parts]
         return dict(res, returncode=code, argv=argv)
 
     @staticmethod

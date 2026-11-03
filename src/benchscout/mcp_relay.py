@@ -184,7 +184,8 @@ Actions:
         {"command": "status", "effect": "safe"|"disruptive"|"dangerous", "eol": "\\r\\n" if not "\\n", "until": regex for
         the line that ends its answer, e.g. the shell's prompt or "^(ok|err)", read from its output, "limits": [one per
         value after the command: null or {"min": n, "max": n}] when the effect holds only for some values}; text says
-        what it does; then run it with bench_do serial.command {"name": "status"}; or a SCPI command of one
+        what it does; then send it with bench_do serial.send {"data": "status"} (its line ending and end line come from
+        what you remembered); or a SCPI command of one
         instrument, by its header, as its programming manual describes it: data {"command": "MEAS:CURR?", "effect":
         ...}; scpi.query/scpi.write then treat that header so on this instrument). kind "safety" (data
         {"listen_safe": true} for one port), a firmware command with effect "safe" and a SCPI command made to ask

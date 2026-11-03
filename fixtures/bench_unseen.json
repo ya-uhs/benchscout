@@ -1,32 +1,118 @@
 {
   "_comment": "Devices benchscout ships no data about (2026-11-02 review): it must name them only from what they say, treat them cautiously, and still notice a crash once watched.",
-  "tools": ["openFPGALoader"],
+  "tools": [
+    "openFPGALoader"
+  ],
   "usb": [
-    {"name": "Board in FS mode", "vendor": "MicroPython", "vid": "0x2e8a", "pid": "0x0005", "serial": "E6614C311B7A3A2E", "location": "0x01210000"},
-    {"name": "Arduino Uno", "vendor": "Arduino (www.arduino.cc)", "vid": "0x2341", "pid": "0x0043", "serial": "85735313834351E0E1B1", "location": "0x01220000"},
-    {"name": "Open DFU Bootloader", "vendor": "Nordic Semiconductor", "vid": "0x1915", "pid": "0x521f", "serial": "C1A2B3D4E5F6", "location": "0x01230000"},
-    {"name": "J-Link", "vendor": "SEGGER", "vid": "0x1366", "pid": "0x0105", "serial": "000683521234", "location": "0x01240000"},
-    {"name": "iCEBreaker V1.0e", "vendor": "1BitSquared", "vid": "0x0403", "pid": "0x6010", "serial": "ib8xQ3Z1", "location": "0x01250000"},
-    {"name": "34465A", "vendor": "Keysight Technologies", "vid": "0x2a8d", "pid": "0x0201", "serial": "MY59001234", "location": "0x01260000"}
+    {
+      "name": "Board in FS mode",
+      "vendor": "MicroPython",
+      "vid": "0x2e8a",
+      "pid": "0x0005",
+      "serial": "E6614C311B7A3A2E",
+      "location": "0x01210000"
+    },
+    {
+      "name": "Arduino Uno",
+      "vendor": "Arduino (www.arduino.cc)",
+      "vid": "0x2341",
+      "pid": "0x0043",
+      "serial": "85735313834351E0E1B1",
+      "location": "0x01220000"
+    },
+    {
+      "name": "Open DFU Bootloader",
+      "vendor": "Nordic Semiconductor",
+      "vid": "0x1915",
+      "pid": "0x521f",
+      "serial": "C1A2B3D4E5F6",
+      "location": "0x01230000"
+    },
+    {
+      "name": "J-Link",
+      "vendor": "SEGGER",
+      "vid": "0x1366",
+      "pid": "0x0105",
+      "serial": "000683521234",
+      "location": "0x01240000"
+    },
+    {
+      "name": "iCEBreaker V1.0e",
+      "vendor": "1BitSquared",
+      "vid": "0x0403",
+      "pid": "0x6010",
+      "serial": "ib8xQ3Z1",
+      "location": "0x01250000"
+    },
+    {
+      "name": "34465A",
+      "vendor": "Keysight Technologies",
+      "vid": "0x2a8d",
+      "pid": "0x0201",
+      "serial": "MY59001234",
+      "location": "0x01260000"
+    }
   ],
   "serial": [
-    {"device": "/dev/cu.usbmodem14201", "vid": "0x2e8a", "pid": "0x0005", "serial_number": "E6614C311B7A3A2E", "description": "Board in FS mode"},
-    {"device": "/dev/cu.usbmodem14301", "vid": "0x2341", "pid": "0x0043", "serial_number": "85735313834351E0E1B1", "description": "Arduino Uno"},
-    {"device": "/dev/cu.usbmodem14401", "vid": "0x1915", "pid": "0x521f", "serial_number": "C1A2B3D4E5F6", "description": "Open DFU Bootloader"},
-    {"device": "/dev/cu.usbmodem000683521234", "vid": "0x1366", "pid": "0x0105", "serial_number": "000683521234", "description": "J-Link"},
-    {"device": "/dev/cu.usbserial-ib8xQ3Z10", "vid": "0x0403", "pid": "0x6010", "serial_number": "ib8xQ3Z1", "channel": 0, "description": "iCEBreaker V1.0e"},
-    {"device": "/dev/cu.usbserial-ib8xQ3Z11", "vid": "0x0403", "pid": "0x6010", "serial_number": "ib8xQ3Z1", "channel": 1, "description": "iCEBreaker V1.0e"}
+    {
+      "device": "/dev/cu.usbmodem14201",
+      "vid": "0x2e8a",
+      "pid": "0x0005",
+      "serial_number": "E6614C311B7A3A2E",
+      "description": "Board in FS mode"
+    },
+    {
+      "device": "/dev/cu.usbmodem14301",
+      "vid": "0x2341",
+      "pid": "0x0043",
+      "serial_number": "85735313834351E0E1B1",
+      "description": "Arduino Uno"
+    },
+    {
+      "device": "/dev/cu.usbmodem14401",
+      "vid": "0x1915",
+      "pid": "0x521f",
+      "serial_number": "C1A2B3D4E5F6",
+      "description": "Open DFU Bootloader"
+    },
+    {
+      "device": "/dev/cu.usbmodem000683521234",
+      "vid": "0x1366",
+      "pid": "0x0105",
+      "serial_number": "000683521234",
+      "description": "J-Link"
+    },
+    {
+      "device": "/dev/cu.usbserial-ib8xQ3Z10",
+      "vid": "0x0403",
+      "pid": "0x6010",
+      "serial_number": "ib8xQ3Z1",
+      "channel": 0,
+      "description": "iCEBreaker V1.0e"
+    },
+    {
+      "device": "/dev/cu.usbserial-ib8xQ3Z11",
+      "vid": "0x0403",
+      "pid": "0x6010",
+      "serial_number": "ib8xQ3Z1",
+      "channel": 1,
+      "description": "iCEBreaker V1.0e"
+    }
   ],
   "visa": {
-    "USB0::0x2A8D::0x0201::MY59001234::INSTR": {"*IDN?": "Keysight Technologies,34465A,MY59001234,A.03.01-02.40-03.01-00.52-02-01"},
-    "TCPIP0::192.168.1.77::INSTR": {"*IDN?": "TEKTRONIX,MSO44,C012345,CF:91.1CT FV:1.44.3.433"},
+    "USB0::0x2A8D::0x0201::MY59001234::INSTR": {
+      "*IDN?": "Keysight Technologies,34465A,MY59001234,A.03.01-02.40-03.01-00.52-02-01"
+    },
+    "TCPIP0::192.168.1.77::INSTR": {
+      "*IDN?": "TEKTRONIX,MSO44,C012345,CF:91.1CT FV:1.44.3.433"
+    },
     "TCPIP0::192.168.1.78::INSTR": {},
     "ASRL/dev/cu.usbmodem14201::INSTR": {}
   },
   "listen": {
     "/dev/cu.usbmodem14201": "MicroPython v1.24.1 on 2024-11-29; Raspberry Pi Pico with RP2040\n>>> \n"
   },
-  "jtag": {
-    "ib8xQ3Z1": ["0x00000000"]
+  "probes": {
+    "ib8xQ3Z1": "index 0:\n\tidcode 0x00000000\n"
   }
 }

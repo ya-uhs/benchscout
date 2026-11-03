@@ -40,7 +40,7 @@ class Io(Protocol):
     def serial_listen(self, path: str, seconds: float, baud: int, exclusive: bool = False, lines: str = "low",
                       send: bytes | None = None, until: re.Pattern | None = None) -> str: ...
     # `send` is written once, right after opening; a whole line matching `until` ends the read early (codec.py)
-    def jtag_scan(self, select: list[str]) -> list[dict]: ...  # [{idcode, manufacturer, model}]; select: the probe's args
+    def run_probe(self, argv: list[str], timeout: float) -> str | None: ...  # a probe tool's output (tools.toml `probe`)
 
 
 def ieee_block(data: bytes) -> bytes:
@@ -384,15 +384,9 @@ class LiveIo:
                 continue
         return None
 
-    def jtag_scan(self, select: list[str]) -> list[dict]:
-        from .fetch import find
-
-        exe = find("openFPGALoader")
-        if not exe:
-            return []
-        args = [exe, "--detect", *select]  # how to reach this probe comes from the USB data
-        text, _ = run_tool(args, timeout=10)
-        return parse_detect(text)
+    def run_probe(self, argv: list[str], timeout: float) -> str | None:
+        text, code = run_tool(argv, timeout)
+        return text if code is not None else None
 
 
 WINDOWS_PNP_QUERY = (  # UTF-8 out: Windows PowerShell would print a device's name in the console's code page
@@ -498,27 +492,6 @@ def parse_ioreg(data: bytes) -> list[dict]:
                         "location": f"0x{it['locationID']:08x}" if isinstance(it.get("locationID"), int) else None,
                         "device_class": it.get("bDeviceClass")})
     return out
-
-
-def parse_detect(text: str) -> list[dict]:
-    """Parse `openFPGALoader --detect`. Each `index N:` block carries the tool's own
-    database lookup (manufacturer/family/model), which beats our small table.
-
-        index 0:
-            idcode 0x100481b
-            manufacturer Gowin
-            family GW1N
-            model  GW1N(R)-9C
-    """
-    devices: list[dict] = []
-    for line in text.splitlines():
-        key, _, val = line.strip().partition(" ")
-        val = val.strip()
-        if key == "index":
-            devices.append({"idcode": None, "manufacturer": None, "family": None, "model": None})
-        elif devices and key in ("idcode", "manufacturer", "family", "model") and val:
-            devices[-1][key] = int(val, 16) if key == "idcode" else val
-    return [d for d in devices if d["idcode"] is not None]
 
 
 class _FixtureStream:
@@ -658,10 +631,8 @@ class FixtureIo:
             raise OSError(6, v["error"])
         return v
 
-    def jtag_scan(self, select: list[str]) -> list[dict]:
-        self.calls.append(("jtag_scan", tuple(select)))
-        recorded = self.data.get("jtag", {})
-        v: str | list[str] = next((recorded[a] for a in select if a in recorded), [])  # keyed by the probe's serial
-        if isinstance(v, str):  # recorded raw tool output
-            return parse_detect(v)
-        return [{"idcode": int(c, 16), "manufacturer": None, "family": None, "model": None} for c in v]
+    def run_probe(self, argv: list[str], timeout: float) -> str | None:
+        """A probe tool's recorded output, found by any of its arguments (a probe's serial, say) in "probes"."""
+        self.calls.append(("probe", tuple(argv)))
+        recorded = self.data.get("probes", {})
+        return next((recorded[a] for a in argv if a in recorded), "")

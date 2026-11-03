@@ -392,15 +392,12 @@ test("with only devices benchscout has no data for, the first question still off
 });
 
 
-test("a raw serial send is not offered 'always on this instrument', which only SCPI commands can be kept as", () => {
-  // regression 2026-11-03: unifying the command rules gave serial sends command words too, and the card offered an
-  // option the core refuses for them
+test("'always on this device' is offered for a command whatever its protocol (the core keeps it for any)", () => {
   const core = new CoreClient("/nonexistent", tmpdir());
   const s = strings("en");
   const h = new Harness(core, () => { throw new Error("not woken"); }, s, { language: "English", maxTurnsPerHour: 1 });
   core.emit("approvalRequested", { id: "a1", action: "serial.send", port: "serial:x", args: '{"data": "status"}', effect: "disruptive",
     status: "pending", by: "agent", impact: { reason: "sends bytes", affected_ports: [], disturbs: [], subjects: ["status"] } });
   const card = h.cards.find((c) => c.id === "approval:a1");
-  assert.ok(card.options.some((o) => o.label === s.allowCommandSession));
-  assert.ok(!card.options.some((o) => o.label === s.allowAlwaysHere));
+  assert.ok(card.options.some((o) => o.label === s.allowCommandSession) && card.options.some((o) => o.label === s.allowAlwaysHere));
 });

@@ -106,6 +106,11 @@ class Action:
     releases_device: bool = False  # the tool opens the device itself: stop watching it meanwhile
     timeout: float = 60.0
     version: dict = field(default_factory=dict)  # {"argv": [...], "min": "5.0", "why": "..."}
+    # what it sends, judged by the protocol it declares (protocols/): the protocol's name and the argument with the text
+    protocol: str = ""
+    text: str = ""
+    opens: bool = False  # it opens the port unless the port is held open already: opening is a step of the call
+    probe: dict = field(default_factory=dict)  # recon runs it by itself (SAFE), reading its output this way (tools.toml)
 
     def normalize(self, args: dict | None) -> dict:
         if args is not None and not isinstance(args, dict):
@@ -143,39 +148,34 @@ _QUERY = _COMMAND + (Param("save", str, f"save the answer to a file instead of r
 
 BUILTIN: dict[str, Action] = {a.name: a for a in (
     Action("serial.listen", Effect.SAFE, False, "passively reads console output",
-           "listen to a serial port and save what it prints", _LISTEN),
+           "listen to a serial port and save what it prints", _LISTEN, opens=True),
     Action("serial.watch", Effect.SAFE, False, "keeps the port open and reads it continuously",
            "keep listening to a serial port in the background; then serial.listen reads from it without reopening, "
-           "and alerts (crashes, resets) are noticed", (Param("baud", int, "baud rate", 115200, min=50, max=12_000_000),)),
+           "and alerts (crashes, resets) are noticed", (Param("baud", int, "baud rate", 115200, min=50, max=12_000_000),),
+           opens=True),
     Action("serial.send", Effect.DISRUPTIVE, True, "sends bytes the firmware will act on",
-           "send text to a serial port and read the answer",
+           "send text to a serial port and read the answer; a command remembered for the port is judged by its rule "
+           "(effect, value limits) and sent with its own line ending and end line",
            (Param("data", str, "text to send", required=True),
-            Param("eol", str, "appended to data: \"\\n\" (default), \"\\r\\n\", or \"\" for single-byte commands", "\n"),
+            Param("eol", str, "appended to data: \"\\n\", \"\\r\\n\", or \"\" for single-byte commands (default: the "
+                  "remembered command's, else \"\\n\")"),
             Param("seconds", float, "how long to read the answer (at most, with until)", 1.0, min=0.05, max=30),
             Param("baud", int, "baud rate", 115200, min=50, max=12_000_000),
             Param("until", str, "regular expression for the line that ends the answer (the shell's prompt, \"^(ok|err)\", "
-                  "\"^(OK|ERROR)$\"): reading stops there instead of after seconds; read it from the device's output"))),
-    Action("serial.command", Effect.DISRUPTIVE, True, "runs a remembered firmware command; its effect is what memory says",
-           "run a firmware command remembered for this port (bench_remember kind command) by its name and read the "
-           "answer; a command remembered as safe runs without asking once the human confirmed it",
-           (Param("name", str, "the command as remembered, e.g. \"status\"", required=True),
-            Param("args", str, "values after the command, as typed (\"42\" for `set 42`); checked against the limits "
-                  "remembered for it"),
-            Param("seconds", float, "how long to read the answer (at most, when an until was remembered)", 1.0, min=0.05, max=30),
-            Param("baud", int, "baud rate", 115200, min=50, max=12_000_000)), port_kinds=("serial",)),
-    Action("jtag.scan", Effect.SAFE, False, "reads IDCODEs; needs exclusive use of the probe channel",
-           "read the IDCODEs on a JTAG chain"),
+                  "\"^(OK|ERROR)$\"): reading stops there instead of after seconds; read it from the device's output")),
+           protocol="lines", text="data", opens=True),
     # the command line decides the effect (policy.py): the standard's status and identity queries are SAFE, an output
     # setting asks every time, anything else asks and the human may allow that command for the session or always;
     # these base effects apply only with no command at all
     Action("scpi.query", Effect.DISRUPTIVE, False, "a SCPI query; what it does depends on the command and the instrument",
            "send a SCPI query and read the answer (one message, printable ASCII; *IDN?, SYST:ERR? and the other "
            "status queries run without asking; another query asks, and the human may allow it for the session or "
-           "always on this instrument; `save` puts a screen capture or waveform in a file)", _QUERY),
+           "always on this instrument; `save` puts a screen capture or waveform in a file)", _QUERY,
+           protocol="scpi", text="command"),
     Action("scpi.write", Effect.DANGEROUS, False, "a SCPI command; what it does depends on the instrument",
            "send a SCPI command (one message, printable ASCII); it asks the human, who may allow that command for the "
            "session or always on this instrument; one that sets an output (voltage, current, output on) asks every "
-           "time", _COMMAND),
+           "time", _COMMAND, protocol="scpi", text="command"),
 )}
 
 
@@ -186,7 +186,7 @@ def from_data(e: dict) -> Action:
     effect = Effect[e.get("effect", "dangerous").upper()]  # no declared effect -> DANGEROUS
     return Action(e["name"], effect, bool(e.get("disturbs", effect > Effect.SAFE)), e.get("reason", "external tool"),
                   e.get("doc", ""), params, tuple(e["argv"]), tuple(e.get("port_kinds", ())),
-                  bool(e.get("releases_device", False)), float(e.get("timeout", 60)), dict(e.get("version", {})))
+                  bool(e.get("releases_device", False)), float(e.get("timeout", 60)), dict(e.get("version", {})), probe=dict(e.get("probe", {})))
 
 
 def all_actions() -> dict[str, Action]:

@@ -180,7 +180,7 @@ TestGate = Gate.TestCase
 # ---- every action on every port: never weaker than the action itself, unless a rule says why ----------
 
 BENCHES = [recon.run(FixtureIo(FIXTURE)).bench, recon.run(FixtureIo(ROOT / "fixtures" / "bench_unseen.json")).bench]
-COMMAND_DECIDES = {"scpi.query", "scpi.write", "serial.command"}  # the command line or confirmed memory decides
+COMMAND_DECIDES = {"scpi.query", "scpi.write", "serial.send"}  # the command line or confirmed memory decides
 
 
 def _value(p: A.Param):

@@ -140,8 +140,8 @@ def test_every_proposal_says_why(r):
 
 
 def test_proposal_reason_matches_policy(r):
-    jtag = next(p for p in r.proposals if p.action == "jtag.scan")
-    assert jtag.reason == classify(r.bench, "jtag.scan", jtag.port).reason
+    jtag = next(p for p in r.proposals if p.action == "openFPGALoader.detect")
+    assert jtag.reason == classify(r.bench, "openFPGALoader.detect", jtag.port).reason
 
 
 @pytest.mark.parametrize(
@@ -219,13 +219,13 @@ def test_tang_nano_9k(tmp_path):
         d["visa"] = {}
         d["tools"] = ["openFPGALoader"]
         # raw output captured from a real Tang Nano 9K (openFPGALoader v1.2.0)
-        d["jtag"] = {"FactoryAIOT Pro": "No cable or board specified: using direct ft2232 interface\n"
+        d["probes"] = {"FactoryAIOT Pro": "No cable or board specified: using direct ft2232 interface\n"
                      "Jtag frequency : requested 6.00MHz    -> real 6.00MHz   \nindex 0:\n\tidcode 0x100481b\n"
                      "\tmanufacturer Gowin\n\tfamily GW1N\n\tmodel  GW1N(R)-9C\n\tirlength 8\n"}
     io = _variant(tmp_path, mutate)
     r = recon.run(io)
     fpga = target_named(r.bench, "Gowin GW1N(R)-9C")
-    assert any("openFPGALoader database" in e.detail for e in fpga.evidence)
+    assert any("openFPGALoader's database" in e.detail for e in fpga.evidence), "the evidence says which database decided"
     assert fpga.confidence == Confidence.IDENTIFIED
     fabric = next(t for t in r.bench.targets.values() if t.kind == "fabric-endpoint")
     assert fabric.hosted_on == fpga.id
@@ -237,7 +237,7 @@ def test_tang_nano_9k(tmp_path):
 def test_idcode_without_a_tool_database_stays_unknown(tmp_path):
     """Without openFPGALoader's model line there is no name: benchscout keeps no IDCODE table;
     the raw IDCODE is the clue for the agent."""
-    io = _variant(tmp_path, lambda d: (d["tools"].append("openFPGALoader"), d["jtag"].update({"210319A8C7D1": ["0x0362D093"]})))
+    io = _variant(tmp_path, lambda d: (d["tools"].append("openFPGALoader"), d["probes"].update({"210319A8C7D1": "index 0:\n\tidcode 0x0362D093\n"})))
     r = recon.run(io)
     fpga = next(t for t in r.bench.targets.values() if t.kind == "fpga")
     assert fpga.name is None
@@ -246,7 +246,7 @@ def test_idcode_without_a_tool_database_stays_unknown(tmp_path):
 def test_each_part_on_a_jtag_chain_is_its_own_target(tmp_path):
     """Review 7: with two parts on the chain, the second one's IDCODE was written over the first's target."""
     io = _variant(tmp_path, lambda d: (d["tools"].append("openFPGALoader"),
-                                       d["jtag"].update({"210319A8C7D1": ["0x0362D093", "0x4BA00477"]})))
+                                       d["probes"].update({"210319A8C7D1": "index 0:\n\tidcode 0x0362D093\nindex 1:\n\tidcode 0x4BA00477\n"})))
     r = recon.run(io)
     port = next(p for p in r.bench.ports.values() if p.kind == "jtag" and "210319A8C7D1" in p.id)
     codes = {t.id: [e.detail for e in t.evidence if e.source == "jtag idcode"] for t in r.bench.targets_via(port.id)}
@@ -256,7 +256,7 @@ def test_each_part_on_a_jtag_chain_is_its_own_target(tmp_path):
 def test_openfpgaloader_only_reaches_probes_the_usb_data_says_how_to(tmp_path):
     io = _variant(tmp_path, lambda d: d["tools"].append("openFPGALoader"))
     recon.run(io)
-    scanned = [c[1] for c in io.calls if c[0] == "jtag_scan"]
+    scanned = [c[1][1:-1] for c in io.calls if c[0] == "probe"]
     # the FT2232H board, with the cable options from usb.toml; not the ESP32's USB-JTAG (no entry for it)
     assert scanned == [("-c", "ft2232", "--ftdi-serial", "210319A8C7D1", "--ftdi-channel", "0")]
 
@@ -326,7 +326,7 @@ def test_every_reason_has_a_code_the_panel_can_translate(tmp_path):
 
     b = recon.run(FixtureIo(FIXTURE)).bench
     assert classify(b, "serial.listen", "serial:usbserial-10").code == "reset_on_open"
-    assert classify(b, "jtag.scan", next(p for p in b.ports if p.startswith("jtag:"))).code == "action:jtag.scan"
+    assert classify(b, "openFPGALoader.detect", next(p for p in b.ports if p.startswith("jtag:"))).code == "action:openFPGALoader.detect"
     assert classify(b, "no.such.action", "serial:usbserial-10").code == "unknown_action"
     scpi = "visa:TCPIP0::192.168.1.50::INSTR"  # the PSU on the LAN
     assert classify(b, "scpi.query", scpi, {"command": "OUTP CH1,ON"}).code == "energizing"
