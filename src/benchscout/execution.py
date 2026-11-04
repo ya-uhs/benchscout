@@ -144,9 +144,10 @@ class Run:
                 end = time.monotonic() + self.plan.timeout
                 seen, notified = 0, 0.0
                 while True:
+                    exited = p.poll() is not None
                     size = self.stdout.stat().st_size + self.stderr.stat().st_size
                     now = time.monotonic()
-                    if self.plan.observe and size > seen and now - notified >= 1:
+                    if self.plan.observe and size > seen and (exited or now - notified >= 1):
                         self.emit({"event": "device_event", "kind": "observation", "port": self.plan.ports[0][0],
                                    "device": self.plan.ports[0][1], "what": self.plan.purpose,
                                    "log": str(self.stdout), "stderr": str(self.stderr), "job": self.id, "time": time.time()})
@@ -160,7 +161,7 @@ class Run:
                     if now >= end:
                         self.status = "timed_out"
                         break
-                    if p.poll() is not None:
+                    if exited:
                         self.status = "completed" if p.returncode == 0 else "failed"
                         break
                     self.cancel.wait(0.05)

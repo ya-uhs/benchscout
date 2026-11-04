@@ -210,3 +210,21 @@ def test_terminal_outcomes_are_explicit(bench, code, extra, status):
     b, r, _ = bench
     run = start(b, plan(b, r, code, **extra))
     assert finish(b, run["job"])["status"] == status
+
+
+def test_final_observation_is_not_lost_to_notification_throttle(bench):
+    b, r, events = bench
+    snapshots = []
+    original = b.on_event
+
+    def capture(event):
+        if event.get("kind") == "observation":
+            snapshots.append(Path(event["log"]).read_bytes())
+        original(event)
+
+    b.on_event = capture
+    run = start(b, plan(b, r, "import time\nprint('first', flush=True)\ntime.sleep(.2)\nprint('last', flush=True)",
+                        observe=True))
+    result = finish(b, run["job"])
+    assert result["status"] == "completed"
+    assert snapshots[-1].splitlines() == [b"first", b"last"]

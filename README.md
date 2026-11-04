@@ -102,3 +102,8 @@ ESP32-S3 USB ─┬─ /dev/cu.usbmodem ─uart─┐
 See [docs/notes.md](docs/notes.md) (次にやること): Copilot Chat inside VS Code using the tools (needs a
 signed-in VS Code), device commands from memory, Japanese wording from the core (approval reasons),
 Windows/Linux in CI and on hardware, writing flash with esptool 5 on the real bench.
+
+CI maintenance: pushes run the lightweight Linux checks, including Windows-targeted type checking.
+Manual `test` workflow runs validate all platforms and generate VSIX artifacts; pushes do not cancel those runs.
+Jobs have time limits (15 minutes for quick checks, 30 for platform jobs). Failure screenshots are retained for
+7 days and VSIX artifacts for 14 days; download packages you need to keep before they expire.

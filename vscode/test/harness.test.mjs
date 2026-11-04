@@ -142,7 +142,7 @@ test("unknown resource: human approves a program, receives its observation and s
     await h.answer(running.id, { option: "stop" });
     const stopped = (await agentCall(env, root, "run_state", { job: started.job })).result;
     assert.equal(stopped.status, "cancelled");
-    assert.equal(readFileSync(stopped.stdout, "utf8"), "raw observation\n");
+    assert.deepEqual(readFileSync(stopped.stdout, "utf8").trimEnd().split(/\r?\n/), ["raw observation"]);
   } finally { done(); }
 });
 
