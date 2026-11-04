@@ -634,3 +634,4 @@ Claude Code の利用上限で、記憶表示の日本語化と作業メモ更�
 - SAFEと判定されたopenFPGALoader.detectをMCP経路から実行。IDCODE 0x0100481B、GW1N(R)-9C、exit=0、共通ジョブcompleted、生stdout/stderr/plan保存を実機で確認。記録はfixtures/real/harness-2026-11-05.json。
 - リセット・フラッシュ書込みは実施していない。今回の実機確認はmacOSの接続中のベンチであり、Windows/Linuxや状態変更操作まで検証済みとはしない。
 - 検証: Python全体256成功・1 skip、両OS向けmypy、Ruff、VS Code E2E成功。検証用実機コアはshutdownで正常終了し、占有を解放した。
+- CI停滞の原因を確定: af2bef2のrun 41936431940はジョブ開始前に失敗。check-run 126945932421の注記は「recent account payments have failed or your spending limit needs to be increased」。GitHub Billing & plans側の解消が必要で、コードのテスト失敗ではない。課金設定は変更せず、重複再実行を控える。
