@@ -12,6 +12,7 @@ import os
 import platform
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Protocol
@@ -105,7 +106,7 @@ class _LiveStream:
 def _exclusive(s) -> None:
     """POSIX: TIOCEXCL on the open tty, so no other program can open it while benchscout holds it (pyserial's
     `exclusive` is an flock, which only programs that also take it respect). Windows COM ports are exclusive anyway."""
-    if platform.system() == "Windows":
+    if sys.platform == "win32":
         return
     import fcntl
     import termios

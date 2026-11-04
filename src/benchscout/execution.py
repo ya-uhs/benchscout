@@ -14,6 +14,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -82,7 +83,7 @@ def prepare(argv: list[str], ports: list[tuple[str, str, str | None]], files: li
 
 
 def kill_tree(p: subprocess.Popen) -> None:
-    if os.name == "nt":
+    if sys.platform == "win32":
         subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], stdin=subprocess.DEVNULL,
                        capture_output=True, timeout=10)
     else:

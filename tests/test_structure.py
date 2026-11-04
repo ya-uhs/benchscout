@@ -23,7 +23,7 @@ HOMES = {
                          {"actions.py", "protocols/lines.py", "protocols/scpi.py", "mcp_relay.py"}),
     "an external tool": (r"openFPGALoader|esptool|openocd|probe-rs", {"mcp_relay.py"}),
     "an operating system": (r"\bWindows\b|\bLinux\b|Darwin|win32|platform\.system",
-                            {"io.py", "winusb_strings.py", "runtime.py", "cli.py", "fetch.py", "locks.py", "memory.py",
+                            {"execution.py", "io.py", "winusb_strings.py", "runtime.py", "cli.py", "fetch.py", "locks.py", "memory.py",
                              "knowledge.py", "report.py"}),
     "a branch on a port's kind": (r"\.kind\s*(==|!=|in)\s*[(\"]",
                                   {"protocols/lines.py", "protocols/scpi.py", "protocols/__init__.py", "recon.py"}),
