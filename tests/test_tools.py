@@ -77,7 +77,7 @@ def test_a_user_tool_runs_without_a_shell_with_filled_in_args(ws):
 def test_files_and_port_kinds_are_checked_before_anything_runs(ws):
     br = broker(ws)
     assert br.request("lab.flash", VCP, {"image": "app.hex"})["status"] == "invalid_args"
-    assert "file not found" in approved(br, "lab.flash", VCP, {"image": "missing.bin"})["result"]["error"]
+    assert br.request("lab.flash", VCP, {"image": "missing.bin"})["status"] == "invalid_args"
     res = br.request("lab.flash", "swd:0039003A3133510637363934", {"image": "app.bin"})
     assert res["status"] == "invalid_args" and "serial ports" in res["message"]
     br.end_session()

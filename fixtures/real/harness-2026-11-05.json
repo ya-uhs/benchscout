@@ -1,0 +1,16 @@
+{
+  "date": "2026-11-05",
+  "source": "benchscout core and MCP relay in bench-session; physical bench",
+  "esp32_log": ["hb n=28227 uptime_ms=28262877", "hb n=28228 uptime_ms=28263877", "hb n=28229 uptime_ms=28264877", "hb n=28230 uptime_ms=28265877"],
+  "fpga_log": ["hb 00006e54", "hb 00006e55", "hb 00006e56", "hb 00006e57"],
+  "fpga_detect": {
+    "action": "openFPGALoader.detect",
+    "effect": "safe",
+    "status": "completed",
+    "exit_code": 0,
+    "idcode": "0x0100481B",
+    "model": "GW1N(R)-9C",
+    "raw_artifacts_created": true
+  },
+  "limits": "No flash/program/reset operation was performed. These observations do not validate disruptive operations, Windows or Linux."
+}

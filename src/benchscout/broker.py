@@ -1197,6 +1197,31 @@ class Broker:
                 raise
         return r.view()
 
+    def _tool_snapshot(self, spec, port_id: str, args: dict) -> str:
+        from dataclasses import asdict
+        from .execution import digest
+        from .fetch import plan as fetch_plan
+
+        port = self.bench.ports[port_id]
+        paths = set()
+        for param in spec.params:
+            value = args.get(param.name)
+            if value is not None and param.type is A.FilePath:
+                paths.add(str(value))
+            elif value is not None and param.type is A.FlashMap:
+                paths.update(str(f) for _, f in value)
+        for word in spec.argv[1:]:
+            if "{" not in word and (self.state.parent / word).is_file():
+                paths.add(word)
+        exe = self._which(spec.argv[0])
+        download = fetch_plan(spec.argv[0])
+        if exe and not download:
+            paths.add(exe)
+        files = {str((self.state.parent / f).absolute()): digest(self.state.parent / f) for f in sorted(paths)}
+        return json.dumps({"args": args, "definition": asdict(spec), "files": files, "download": download,
+                           "port": {"id": port.id, "device": port.device_id, "path": port.path, "tools": port.tools},
+                           "serial": self.bench.devices[port.device_id].serial}, sort_keys=True, default=str)
+
     # ---- the one entry point the agent uses -----------------------------------
     def request(self, action: str, port: str, args: dict | None = None, approval_id: str | None = None,
                 wait: float | None = None, job: str | None = None) -> dict:
@@ -1234,7 +1259,11 @@ class Broker:
                 # what will actually be sent, resolved now (a remembered command's line ending): the approval binds to
                 # it, and that is what runs; a definition changed while the human decides does not ride on their OK
                 args = proto.resolve(self.bench.ports[port_id], args)
-            key = A.canonical(args)
+            try:
+                snapshot = self._tool_snapshot(spec, port_id, args) if spec.argv else None
+            except (OSError, ValueError) as e:
+                return {"status": "invalid_args", "message": str(e)}
+            key = snapshot or A.canonical(args)
             try:
                 impact = classify(self.bench, action, port_id, args, port_open=self._held_open(port_id, args))
             except A.ArgError as e:  # a SCPI line that is not one plain message
@@ -1260,7 +1289,7 @@ class Broker:
                                        "approval_id to ask for this one"}
         if go:  # (the lock is let go first: a long run must not hold up the human's selections and the agent's reads)
             g_impact, g_args, g_allowed, g_extra = go
-            return self._start(g_impact, g_args, g_allowed, extra=g_extra, started=started)
+            return self._start(g_impact, g_args, g_allowed, extra=g_extra, started=started, tool_snapshot=snapshot)
         assert approval_id is not None  # (opened above, or the agent's own)
 
         t0 = time.monotonic()
@@ -1288,15 +1317,19 @@ class Broker:
             refused = self._outside_session(port_id)  # the device may have left the session meanwhile
             if refused:
                 return refused
+            if snapshot is not None and snapshot != self._tool_snapshot(A.get(action), port_id, args):
+                return {"status": "approval_mismatch", "approval_id": approval_id,
+                        "message": "tool, input or connection changed; request approval for the current plan"}
             used = self.approvals.consume(approval_id, action, port_id, key, impact.effect.name.lower())
             if used != "ok":
                 return {"status": used, "approval_id": approval_id}
         # say so, or the agent reports a long call as "ran without approval" (real bench, S5)
-        return self._start(impact, args, "allowed by the human, once", started=started,
+        return self._start(impact, args, "allowed by the human, once", started=started, tool_snapshot=snapshot,
                            extra={"approval": {"id": approval_id, "granted_by": "the human, in the benchscout panel",
                                                "waited_s": waited}})
 
-    def _start(self, impact: Impact, args: dict, allowed: str, extra: dict | None = None, started: float = 0.0) -> dict:
+    def _start(self, impact: Impact, args: dict, allowed: str, extra: dict | None = None, started: float = 0.0,
+               tool_snapshot: str | None = None) -> dict:
         """Run it outside the broker's lock, one at a time on each device. If it outlasts what one call may wait (a flash
         write can take minutes; the agent's call gives up), say it is running and give a job id to collect it with."""
         with self._lock:
@@ -1313,7 +1346,7 @@ class Broker:
 
         def work() -> None:
             try:
-                job.result = self._run(impact, args, allowed)
+                job.result = self._run(impact, args, allowed, tool_snapshot)
             except Exception as e:  # handed to whoever collects it
                 job.error = e
             finally:
@@ -1349,13 +1382,13 @@ class Broker:
                 "message": f"{self.bench.devices[dev].name} is not in this session. Ask the user to select it "
                            f"in the benchscout panel; only selected devices can be used."}
 
-    def _run(self, impact: Impact, args: dict, allowed: str) -> dict:
+    def _run(self, impact: Impact, args: dict, allowed: str, tool_snapshot: str | None = None) -> dict:
         port = self.bench.ports.get(impact.port_id)
         if port is not None and impact.action == self._watch_action(port) and impact.effect != Effect.SAFE:
             self.watch_approved.add(impact.port_id)  # the human accepted that opening it may reset the device
         self.done.append({"at": time.time(), "time": time.strftime("%H:%M:%S"), "action": impact.action, "port": impact.port_id,
                           "device": port.device_id if port else None, "args": A.canonical(args), "allowed": allowed})
-        return {"status": "done", "impact": impact.to_dict(), "result": self._execute(impact.action, impact.port_id, args)}
+        return {"status": "done", "impact": impact.to_dict(), "result": self._execute(impact.action, impact.port_id, args, tool_snapshot)}
 
     def _done_on(self, device: str | None, within: float | None = None) -> list[str]:
         """What benchscout did on this device's ports (the last `within` seconds), one line each, oldest first."""
@@ -1363,7 +1396,7 @@ class Broker:
         return [f"{d['time']} {d['action']} {d['args']} on {d['port']} ({d['allowed']})" for d in list(self.done)
                 if d["device"] == device and (within is None or now - d["at"] <= within)]
 
-    def _execute(self, action: str, port_id: str, args: dict):
+    def _execute(self, action: str, port_id: str, args: dict, tool_snapshot: str | None = None):
         """Run what was judged and allowed. The gate does not know how: a tool defined as data runs as data says, and
         every other operation is its protocol's (protocols/), found by name."""
         from . import protocols
@@ -1371,7 +1404,7 @@ class Broker:
         port = self.bench.ports[port_id]
         spec = A.get(action)
         if spec.argv:
-            return self._run_tool(spec, port, args)
+            return self._run_tool(spec, port, args, tool_snapshot)
         op = protocols.OPERATIONS.get(action)
         if op is None:
             return {"error": f"{action} is classified but nothing runs it"}
@@ -1408,7 +1441,7 @@ class Broker:
         p = fetch.plan(spec.argv[0])
         return fetch.describe(p) if p else ""
 
-    def _run_tool(self, spec, port, args: dict) -> dict:
+    def _run_tool(self, spec, port, args: dict, tool_snapshot: str | None = None) -> dict:
         from . import fetch
 
         exe, problem = self._usable_tool(spec)
@@ -1460,6 +1493,8 @@ class Broker:
             current = self.bench.ports.get(port.id)
             if dev.id not in self.selected or current is None or (current.device_id, current.path) != (dev.id, port.path):
                 return {"status": "resource_changed", "error": "device left the session before launch"}
+            if tool_snapshot is not None and tool_snapshot != self._tool_snapshot(A.get(spec.name), port.id, args):
+                return {"status": "approval_mismatch", "error": "tool or inputs changed before launch"}
             plan = prepare(argv, [(port.id, dev.id, port.path)], [], ws, spec.doc or spec.name,
                            spec.timeout, False, 16777216)
             run = Run(plan, self.artifacts, self._emit)

@@ -263,3 +263,26 @@ def test_adapter_tool_uses_managed_stop_and_raw_artifacts(bench, monkeypatch, st
     assert result["execution"]["status"] == "cancelled"
     assert Path(result["execution"]["stdout"]).read_bytes() == b"\x00\xff"
     assert result["returncode"] is None
+
+
+@pytest.mark.parametrize("change", ["script", "definition", "connection"])
+def test_adapter_approval_rejects_changed_execution_plan(bench, monkeypatch, change):
+    from benchscout import knowledge as K
+
+    b, r, _ = bench
+    script = b.state.parent / "approved.py"
+    script.write_text("print('approved')")
+    definition = {"name": "fixture.run", "argv": [sys.executable, str(script)], "effect": "dangerous",
+                  "reason": "fixture program", "timeout": 60}
+    monkeypatch.setitem(K.TOOLS, "fixture.run", definition)
+    asked = b.request("fixture.run", r["resource"])
+    assert asked["status"] == "approval_required"
+    b.decide(asked["approval_id"], True)
+    if change == "script":
+        script.write_text("print('changed')")
+    elif change == "definition":
+        monkeypatch.setitem(K.TOOLS, "fixture.run", dict(definition, argv=[sys.executable, "-c", "print('changed')"]))
+    else:
+        b.bench.ports[r["resource"]].path = "another:endpoint"
+    assert b.request("fixture.run", r["resource"], approval_id=asked["approval_id"])["status"] == "approval_mismatch"
+    assert not b.runs
