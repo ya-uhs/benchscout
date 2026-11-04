@@ -77,6 +77,32 @@ def test_interpreter_keeps_its_virtual_environment(bench):
     assert Path(result["stdout"]).read_text().strip() == sys.prefix
 
 
+@pytest.mark.parametrize("during_verification", [False, True])
+def test_cancelled_before_launch_never_starts_program(bench, monkeypatch, during_verification):
+    from benchscout.execution import Plan, Run, prepare
+
+    b, r, _ = bench
+    marker = b.state.parent / "must-not-exist"
+    args = plan(b, r, f"from pathlib import Path; Path({str(marker)!r}).touch()")
+    prepared = prepare(args["argv"], [(r["resource"], r["device"], r["address"])], [],
+                       b.state.parent, args["purpose"], 60, False, 1024)
+    run = Run(prepared, b.artifacts, lambda event: None)
+    if during_verification:
+        verify = Plan.verify
+        def cancel_after_verify(self):
+            verify(self)
+            run.cancel.set()
+        monkeypatch.setattr(Plan, "verify", cancel_after_verify)
+    else:
+        run.cancel.set()
+    released = []
+    run.work(lambda: released.append(True), lambda: None)
+    assert run.done.is_set()
+    assert run.status == "cancelled"
+    assert released == [True]
+    assert not marker.exists()
+
+
 
 def test_registration_is_not_selection_and_survives_rescan(bench):
     b, _, _ = bench

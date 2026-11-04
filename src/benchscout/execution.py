@@ -128,7 +128,13 @@ class Run:
     def work(self, release: Callable[[], None], finished: Callable[[], None]) -> None:
         p = None
         try:
+            if self.cancel.is_set():
+                self.status = "cancelled"
+                return
             self.plan.verify()
+            if self.cancel.is_set():
+                self.status = "cancelled"
+                return
             with self.stdout.open("wb") as out, self.stderr.open("wb") as err:
                 p = subprocess.Popen(self.plan.argv, cwd=self.plan.cwd, stdin=subprocess.DEVNULL,
                                      stdout=out, stderr=err, start_new_session=os.name != "nt")
