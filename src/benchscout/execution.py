@@ -61,10 +61,12 @@ def prepare(argv: list[str], ports: list[tuple[str, str, str | None]], files: li
         raise ValueError("files must list input scripts and data files")
     cwd = cwd.resolve()
     candidate = Path(argv[0])
-    exe = str((cwd / candidate).resolve()) if candidate.is_absolute() or "/" in argv[0] or "\\" in argv[0] else shutil.which(argv[0])
+    exe = str((cwd / candidate).absolute()) if candidate.is_absolute() or "/" in argv[0] or "\\" in argv[0] else shutil.which(argv[0])
     if not exe or not Path(exe).is_file():
         raise ValueError("program is not installed; no program is downloaded by this operation")
-    resolved = [str(Path(exe).resolve()), *argv[1:]]
+    # The invocation path is meaningful (a virtual environment's interpreter is
+    # often a symlink). Hash through it, but do not replace it with its target.
+    resolved = [str(Path(exe).absolute()), *argv[1:]]
     inputs = {Path(resolved[0]), *((cwd / f).absolute() for f in files)}
     # Standalone file arguments are included automatically. Embedded options and
     # imported dependencies must be declared in files by the agent.

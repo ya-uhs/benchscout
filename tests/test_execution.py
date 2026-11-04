@@ -68,6 +68,16 @@ def test_changed_script_needs_new_approval(bench):
     assert not b.runs
 
 
+def test_interpreter_keeps_its_virtual_environment(bench):
+    b, r, _ = bench
+    args = plan(b, r, "import sys; print(sys.prefix)")
+    run = start(b, args)
+    result = finish(b, run["job"])
+    assert result["status"] == "completed"
+    assert Path(result["stdout"]).read_text().strip() == sys.prefix
+
+
+
 def test_registration_is_not_selection_and_survives_rescan(bench):
     b, _, _ = bench
     r = b.register_resource("opaque:second", "Another unknown endpoint")
