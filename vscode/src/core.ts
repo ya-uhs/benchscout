@@ -50,6 +50,7 @@ export interface Question {
 }
 
 export interface DeviceEvent {
+  stderr?: string; job?: string;
   port: string; device?: string; device_name?: string;
   kind: "alert" | "vanished" | "returned" | "gone" | "unwatchable" | "watching" | "observation"; what: string; line?: string | null; log?: string; time?: number;
   cause?: "host_sleep"; // the computer had been asleep: the device did not necessarily do anything

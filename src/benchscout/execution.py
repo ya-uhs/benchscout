@@ -140,7 +140,7 @@ class Run:
                     if self.plan.observe and size > seen and now - notified >= 1:
                         self.emit({"event": "device_event", "kind": "observation", "port": self.plan.ports[0][0],
                                    "device": self.plan.ports[0][1], "what": self.plan.purpose,
-                                   "log": str(self.stdout), "time": time.time()})
+                                   "log": str(self.stdout), "stderr": str(self.stderr), "job": self.id, "time": time.time()})
                         seen, notified = size, now
                     if self.cancel.is_set():
                         self.status = "cancelled"

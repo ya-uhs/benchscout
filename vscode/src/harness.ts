@@ -442,6 +442,7 @@ export class Harness extends EventEmitter {
       e.line ? `The line: ${e.line}` : "",
       done ? `Done to this device through benchscout in the two minutes before (benchscout's own record):\n${done.join("\n")}` : "",
       e.log ? `Everything the port printed is in ${e.log} (read the end of it).` : "",
+      e.stderr ? `The program's stderr is in ${e.stderr}; inspect it as well as stdout. Job: ${e.job}.` : "",
       "Find out what happened and why, with evidence from the device's output.",
     ].filter(Boolean).join("\n");
     const recent = Date.now() - (this.lastWake.get(dev) ?? 0) < (this.opts.wakeCooldownMs ?? 60_000);

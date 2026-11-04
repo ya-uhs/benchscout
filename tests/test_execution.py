@@ -102,7 +102,9 @@ def test_observer_stops_before_releasing_ownership(bench, stop):
     deadline = time.monotonic() + 5
     while not any(e.get("kind") == "observation" for e in events) and time.monotonic() < deadline:
         time.sleep(.02)
-    assert any(e.get("kind") == "observation" for e in events)
+    observation = next(e for e in events if e.get("kind") == "observation")
+    assert observation["stderr"] == b.run_state(run["job"])["stderr"]
+    assert observation["job"] == run["job"]
     assert b._run_owns(r["device"])
     if stop == "agent":
         agent_dispatch(b, "run_state", {"job": run["job"], "stop": True})
