@@ -15,7 +15,7 @@ import { AcpDriver, COPILOT } from "./agents/acp";
 import { ClaudeDriver } from "./agents/claude";
 import { AgentDriver, McpRelay, WakeError } from "./agents/types";
 import { Bench, CoreClient, DeviceEvent, deviceViews, MemoryGroup } from "./core";
-import { Card, Harness } from "./harness";
+import { Card, Harness, memoryText } from "./harness";
 import { languageName, pickLanguage, strings } from "./i18n";
 import { DeviceRow, PanelState, html } from "./panel";
 
@@ -175,7 +175,7 @@ function refresh(): void {
   });
   const state: PanelState = { running: !!core?.running, agent: AGENTS[chosenAgent()]?.label ?? "", cards, devices,
     others: views.filter((d) => d.other).length,
-    memory: memoryGroups,
+    memory: memoryGroups.map((g) => ({ ...g, entries: g.entries.map((e) => ({ ...e, text: memoryText(e, s) })) })),
     allowAll: !!core?.running && !!core?.allowAll, autonomy: currentAutonomy(), strings: plain };
   view.webview.postMessage({ type: "state", state });
 }

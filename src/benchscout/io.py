@@ -57,15 +57,9 @@ def run_tool(argv: list[str], timeout: float, cwd: str | Path | None = None) -> 
         out, err = p.communicate(timeout=timeout)
         return (out or "") + (err or ""), p.returncode
     except subprocess.TimeoutExpired:
-        if platform.system() == "Windows":
-            subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], stdin=subprocess.DEVNULL, capture_output=True)
-        else:  # its own process group: the children it started go too (one may hold the port)
-            import signal
+        from .execution import kill_tree
 
-            try:
-                os.killpg(p.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                p.kill()
+        kill_tree(p)
         try:
             out, err = p.communicate(timeout=5)
         except subprocess.TimeoutExpired:

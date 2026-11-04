@@ -51,7 +51,7 @@ export interface Question {
 
 export interface DeviceEvent {
   port: string; device?: string; device_name?: string;
-  kind: "alert" | "vanished" | "returned" | "gone" | "unwatchable" | "watching"; what: string; line?: string | null; log?: string; time?: number;
+  kind: "alert" | "vanished" | "returned" | "gone" | "unwatchable" | "watching" | "observation"; what: string; line?: string | null; log?: string; time?: number;
   cause?: "host_sleep"; // the computer had been asleep: the device did not necessarily do anything
   through_benchscout?: string[]; // what benchscout itself did on this device just before (its own record)
 }
@@ -68,6 +68,7 @@ export interface MemoryEvent { key: string; device?: string; device_name?: strin
 export interface MemoryGroup { device: string; name: string; key: string; file: string; entries: MemoryEntry[] }
 
 export interface CoreEvents {
+  runChanged: [RunEvent];
   ready: [];
   scan: [Bench, Proposal[], string[]];  // the last: knowledge files that could not be read
   selection: [string[], Record<string, { workspace?: string; pid?: number }>];
@@ -87,7 +88,13 @@ export interface CoreEvents {
   exit: [number | null, string];
 }
 
+export interface RunEvent {
+  job: string; status: string; purpose: string; stdout: string; stderr: string; error: string;
+  resources: string[]; observe: boolean;
+}
+
 export class CoreClient extends EventEmitter {
+  stopRun(job: string): Promise<any> { return this.call("run_state", { job, stop: true }); }
   private proc?: ChildProcessWithoutNullStreams;
   private nextId = 1;
   private waiting = new Map<number | string, { resolve: (v: any) => void; reject: (e: Error) => void }>();
@@ -201,6 +208,9 @@ export class CoreClient extends EventEmitter {
         return;
       case "device_event":
         this.emit("deviceEvent", msg as DeviceEvent);
+        return;
+      case "run_changed":
+        this.emit("runChanged", msg as RunEvent);
         return;
       case "bench":  // the bench changed on the agent's side (its scan, a name it proved): the panel shows it now
         this.emit("scan", msg.bench, (msg.proposals ?? []) as Proposal[], (msg.knowledge_errors ?? []) as string[]);

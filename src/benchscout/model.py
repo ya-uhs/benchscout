@@ -60,7 +60,7 @@ def device_id(vid, pid, serial, location) -> str:
     return f"usb:{hex4(vid)}:{hex4(pid)}:{serial or location or 'noserial'}"
 
 
-PORT_KINDS = ("serial", "jtag", "swd", "usbtmc", "lan-scpi")  # what a port is, as the graph knows it
+PORT_KINDS = ("serial", "jtag", "swd", "usbtmc", "lan-scpi", "resource")  # adapter kinds, not a list of supported devices
 PROBE_KINDS = ("jtag", "swd")  # what a debug probe offers
 
 

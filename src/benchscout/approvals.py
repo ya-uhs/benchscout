@@ -184,7 +184,7 @@ class ApprovalBook:
         with self._cond:
             self._grants = [g for g in self._grants if g.port not in ports]
             for a in self._items.values():
-                if a.port in ports and a.status in ("pending", "granted"):
+                if (a.port in ports or ports.intersection(a.impact.get("affected_ports", []))) and a.status in ("pending", "granted"):
                     a.status = "withdrawn"
                     withdrawn.append(a)
             self._cond.notify_all()

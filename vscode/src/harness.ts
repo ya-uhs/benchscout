@@ -10,8 +10,23 @@
 
 import { EventEmitter } from "events";
 import { AgentDriver, AgentEvent, PermissionAsk, WakeError } from "./agents/types";
-import { Approval, Bench, CoreClient, DeviceEvent, DevicesChanged, DownloadEvent, MemoryEvent, Question, ToolProposal, describeArgs, deviceViews } from "./core";
+import { Approval, Bench, CoreClient, DeviceEvent, DevicesChanged, DownloadEvent, MemoryEntry, MemoryEvent, Question, ToolProposal, describeArgs, deviceViews } from "./core";
 import { Strings } from "./i18n";
+
+/** A memory entry in the person's language. What benchscout wrote itself (what it saw when opening a port, a human's
+ *  "always on this device") is worded here, in one place for the inbox's cards and its memory list; what the agent
+ *  wrote stays as written (it writes in the person's language). Older files without the data code are read by text. */
+export function memoryText(e: MemoryEntry, s: Strings): string {
+  const d = e.data ?? {};
+  if (e.source === "human" && e.kind === "command") return s.allowedAlwaysNote;
+  if (e.source !== "benchscout") return e.text;
+  const seen = Number(d.seen ?? e.text.match(/\((\d+) times\)/)?.[1] ?? 2);
+  if (e.kind === "safety" && d.listen_safe === true) return e.status === "pending" ? s.listenSafeAsk(e.target, seen) : s.listenSafeKept(e.target, seen);
+  // it reset when opened as safe (design.md section 6: the newer observation wins)
+  if (e.kind === "safety" && d.listen_safe === false) return s.resetOnOpen(e.target);
+  if (e.kind === "observation" && (d.opened === "stayed" || /own USB port stayed|did not vanish/.test(e.text))) return s.stayedOnOpen(e.target);
+  return e.text;
+}
 
 export type CardKind = "question" | "confirm" | "report" | "notify" | "memory";
 
@@ -73,6 +88,20 @@ export class Harness extends EventEmitter {
     core.on("questionAsked", (q: Question) => this.questionCard(q));
     core.on("questionAnswered", (q: Question) => this.closeRef(`question:${q.id}`, q.choice ?? q.reply ?? ""));
     core.on("deviceEvent", (e: DeviceEvent) => this.deviceEvent(e));
+    core.on("runChanged", (e) => {
+      const ref = `run:${e.job}`;
+      if (e.status === "running") {
+        this.add({ kind: "notify", title: this.s.programRunning, body: e.purpose,
+          detail: `${e.resources.join(", ")}\n${e.stdout}\n${e.stderr}`, freeText: false,
+          options: [{ id: "stop", label: this.s.stop }] },
+          () => this.core.stopRun(e.job), ref);
+      } else {
+        this.closeRef(ref, e.status);
+        this.add({ kind: "notify", title: this.s.programFinished(e.status), body: e.purpose,
+          detail: `${e.error ? e.error + "\n" : ""}${e.stdout}\n${e.stderr}`,
+          options: [], freeText: false, status: "closed" });
+      }
+    });
     core.on("devicesChanged", (c: DevicesChanged) => this.devicesChanged(c));
     core.on("memoryAdded", (m: MemoryEvent) => this.memoryCard(m));
     core.on("memoryDecided", (m: MemoryEvent) => this.closeRef(`memory:${m.entry.id}`, m.entry.status));
@@ -185,8 +214,9 @@ export class Harness extends EventEmitter {
         if (a.text) return this.wake(a.text, a.text.slice(0, 60));
         if (a.option === "*others") {
           return this.wake("Look through the USB devices benchscout has no data for (bench_scan lists them under \"Other USB "
-            + "devices\", with their raw clues): find out what each is. If one is a programmer or debug probe for a part on "
-            + "the bench, find its maker's tool and propose it with bench_define_tool, giving its vid:pid in probes.",
+            + "devices\", with their raw clues): find out what each is and choose its access and observation methods. "
+            + "Use bench_register_resource attached to the device and bench_run for your tool or script. "
+            + "Request human selection before using it. Built-in adapters are optional conveniences.",
           this.s.lookOthers(others.length));
         }
         const ids = a.option === "*all" ? views.map((d) => d.id) : [a.option!];
@@ -314,19 +344,13 @@ export class Harness extends EventEmitter {
   private memoryCard(m: MemoryEvent): void {
     const name = m.device_name ?? m.key;
     const e = m.entry;
-    // benchscout's own proposal is said in the person's language; what the agent wrote stays as written
-    const own = e.source === "benchscout" && e.kind === "safety" && e.data.listen_safe;
-    const seen = Number(e.data.seen ?? e.text.match(/\((\d+) times\)/)?.[1] ?? 2);
     // a command entry says exactly what it lets run, so the human confirms the command, not only the agent's words
     const limits = Array.isArray(e.data.limits) ? (e.data.limits as ({ min?: number; max?: number } | null)[])
       .map((l, i) => (l ? `#${i + 1} ${l.min ?? ""}..${l.max ?? ""}` : "")).filter(Boolean).join(", ") : "";
     const cmd = e.kind === "command" && e.data.command
       ? `\n${this.s.commandAs(String(e.data.command), String(e.data.effect ?? "disruptive"))}${limits ? `\n${this.s.limitsAs(limits)}` : ""}` : "";
-    // benchscout's own: it reset when opened as safe (design.md section 6: the newer observation wins)
-    const reset = e.source === "benchscout" && e.kind === "safety" && e.data.listen_safe === false;
-    const body = (own ? this.s.listenSafeAsk(e.target, seen) : reset ? this.s.resetOnOpen(e.target) : e.text) + cmd
-      + (e.evidence ? `\n"${e.evidence}"` : "");
-    const detail = `${e.kind} · ${e.source} · ${e.time.slice(0, 16).replace("T", " ")}`;
+    const body = memoryText(e, this.s) + cmd + (e.evidence ? `\n"${e.evidence}"` : "");
+    const detail = `${this.s.memoryKinds[e.kind] ?? e.kind} · ${this.s.memorySources[e.source] ?? e.source} · ${e.time.slice(0, 16).replace("T", " ")}`;
     if (e.status === "pending") {
       this.add({ kind: "memory", title: this.s.learnedSafety(name), body, detail, freeText: false,
         options: [{ id: "accept", label: this.s.accept, primary: true }, { id: "reject", label: this.s.reject }] },
@@ -402,17 +426,18 @@ export class Harness extends EventEmitter {
       if (e.kind === "returned") this.closeRef(`left:${dev}`, this.s.pluggedBack);
       if (e.kind === "gone" || e.kind === "returned") return;
     }
-    if (e.kind !== "alert" && e.kind !== "returned") {  // gone, unwatchable, or anything new: say it, do not wake
+    if (e.kind !== "alert" && e.kind !== "returned" && e.kind !== "observation") {
       this.add({ kind: "notify", title: this.s.deviceGone(name), body: e.what, detail: log, options: [], freeText: false });
       return;
     }
-    const title = e.kind === "alert" ? this.s.deviceAlert(name) : this.s.deviceReset(name);
+    const title = e.kind === "observation" ? this.s.observation(name)
+      : e.kind === "alert" ? this.s.deviceAlert(name) : this.s.deviceReset(name);
     // benchscout's own record of what it did on this device just before: said to the person and to the agent
     const done = e.through_benchscout?.length ? e.through_benchscout : undefined;
     const body = (e.kind === "alert" ? `${e.what}${e.line ? `\n> ${e.line}` : ""}` : e.what)
       + (done ? `\n${this.s.throughBenchscout}\n${done.join("\n")}` : "");
     const request = [
-      `benchscout noticed this on ${name} (${e.port}): ${e.kind === "alert" ? e.what
+      `benchscout noticed this on ${name} (${e.port}): ${e.kind !== "returned" ? e.what
         : "its port vanished and came back (a reset, a USB re-enumeration or a loose cable; check the device's own output to tell)"}.`,
       e.line ? `The line: ${e.line}` : "",
       done ? `Done to this device through benchscout in the two minutes before (benchscout's own record):\n${done.join("\n")}` : "",

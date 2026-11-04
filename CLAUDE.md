@@ -37,6 +37,10 @@ load in `bench-session/`, which must look exactly like an end user's workspace.
 - **The agent is the brain.** Identifying what a device is (searching IDs, reading datasheets)
   and interpreting logs (a crash, an RTOS) is the user's agent's job (Copilot, Claude Code,
   OpenAI-compatible APIs incl. local LLMs). benchscout has no LLM features, no agent embedding.
+- **The agent also owns transport, framing, commands and observation methods.** Use `bench_register_resource`
+  and `bench_run` for agent-prepared programs; built-in actions are convenience adapters, never the boundary
+  of supported hardware. The harness owns selection, consent, process lifetime, ownership and raw artifacts.
+  Arbitrary programs are trusted code with user privileges, not sandboxed or proven physically safe. See §12, 2026-11-04.
 - **benchscout does four things only** (design.md section 3):
   1. gets **raw clues** from devices and tools; it keeps **no table of what devices are**
   2. is the **safety gate**: unknown things get cautious defaults; anything not SAFE waits for a

@@ -79,8 +79,9 @@ def render(r: Recon) -> str:
     others = [d for d in b.devices.values() if d.other]
     if others:
         lines.append("")
-        lines.append("Other USB devices (benchscout has no data for them; if one is a programmer or probe for a part on "
-                     "the bench, find its tool and propose it with bench_define_tool, giving this vid:pid in probes):")
+        lines.append("Other USB devices (identity and access method are the agent's to investigate. Register an opaque "
+                     "address attached to this device with bench_register_resource and use bench_run; "
+                     "bench_define_tool is also available for reusable adapter actions):")
         for d in others:
             lines.append(f"  - {d.name}  {_hex(d.vid)}:{_hex(d.pid)}" + (f"  SN {d.serial}" if d.serial else ""))
     from . import fetch

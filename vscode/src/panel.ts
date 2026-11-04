@@ -175,7 +175,7 @@ function render() {
           const ids = ' data-key="' + esc(g.key) + '" data-id="' + esc(e.id) + '"';
           h += '<div class="mem-entry"><span class="muted">' + esc((s.memoryKinds && s.memoryKinds[e.kind]) || e.kind) + "</span>" +
                '<span class="memtext">' + esc(e.text) + "</span>" +
-               '<span class="muted memmeta">' + esc(e.source + " · " + String(e.time || "").slice(0, 10) + (e.device ? " · " + s.memoryHere : "")
+               '<span class="muted memmeta">' + esc(((s.memorySources && s.memorySources[e.source]) || e.source) + " · " + String(e.time || "").slice(0, 10) + (e.device ? " · " + s.memoryHere : "")
                  + (pending ? " · " + s.memoryPending : "")) + "</span>" +
                (pending ? '<button data-memdecide="1"' + ids + ">" + esc(s.accept) + '</button><button data-memdecide="0"' + ids + ">" + esc(s.reject) + "</button>"
                         : '<button data-memforget="1"' + ids + ">" + esc(s.forget) + "</button>") + "</div>";

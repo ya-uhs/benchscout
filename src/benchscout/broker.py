@@ -148,6 +148,11 @@ class Broker:
         self.done: deque[dict] = deque(maxlen=500)
         self._jobs: dict[str, _Job] = {}  # runs that outlasted the call that started them
         self._turns: dict[str, threading.Lock] = {}  # one action at a time on each device
+        from .resources import Resources
+        from .execution import Run
+
+        self.resources = Resources()
+        self.runs: dict[str, Run] = {}
         # how long one agent call may wait in all (the human, a download, the run): under the relay's limit, so the
         # agent gets "running" with a job id rather than a call that timed out (review 7, 21)
         self.call_budget = max(30.0, approval_wait + 50.0)
@@ -171,6 +176,7 @@ class Broker:
             keys: dict[str, str] = {}
 
             def prepare(bench) -> None:
+                self.resources.apply(bench)
                 self._apply_memory(bench)
                 keys.update({d.id: self._key(d) for d in bench.devices.values()})
 
@@ -212,6 +218,7 @@ class Broker:
 
         went_ports = {p for p in before.ports if moved(before, now, p) and before.ports[p].device_id in self.selected}
         if went_ports:
+            self._stop_runs({before.ports[p].device_id for p in went_ports})
             self.approvals.withdraw_ports(went_ports)
         for pid in [p for p, w in self.watches.items() if not w.alive]:  # it gave up waiting for the port
             self.watches.pop(pid)
@@ -274,6 +281,7 @@ class Broker:
                     busy[d] = holder
             new = {d for d in wanted if d not in busy}
             dropped = self.selected - new
+            self._stop_runs(dropped)
             for d in dropped:
                 if self.locks:
                     self.locks.release(d)
@@ -444,6 +452,8 @@ class Broker:
     def _key(self, dev) -> str:
         from .memory import device_key
 
+        if dev.id.startswith("resource:"):
+            return dev.id.replace(":", "-")
         return device_key(dev.vid, dev.pid, dev.serial)
 
     @staticmethod
@@ -538,13 +548,13 @@ class Broker:
         key = self._key(dev)
         self.memory.add(key, Entry(kind="observation", source="benchscout", target=port_id,
                                    text=f"opened {port.path} and the chip's own USB port stayed (did not drop off and come back)",
-                                   time=time.strftime("%Y-%m-%dT%H:%M:%S")), self._header(dev))
+                                   data={"opened": "stayed"}, time=time.strftime("%Y-%m-%dT%H:%M:%S")), self._header(dev))
         entries = self.memory.entries(key)
         # what counts is what was seen since the device last said otherwise (it reset when opened)
         since = max((e.time for e in entries if e.kind == "safety" and e.target == port_id and e.data.get("listen_safe") is False),
                     default="")
         seen = sum(1 for e in entries if e.kind == "observation" and e.target == port_id and e.time > since
-                   and ("did not vanish" in e.text or "own USB port stayed" in e.text))
+                   and (e.data.get("opened") == "stayed" or "did not vanish" in e.text or "own USB port stayed" in e.text))
         if seen >= 2 and not any(e.kind == "safety" and e.target == port_id and e.status in ("pending", "active", "rejected") for e in entries):
             e = self.memory.add(key, Entry(kind="safety", source="benchscout", target=port_id, status="pending",
                                            text=f"Opening {port.path} left the chip's own USB port in place ({seen} times): it did not "
@@ -915,6 +925,11 @@ class Broker:
     def _find_quote(self, target_id: str, quote: str) -> str | None:
         texts: list[tuple[str, str]] = []
         for p in self.bench.ports_reaching(target_id):
+            for run in list(self.runs.values()):
+                if len(run.plan.ports) == 1 and run.plan.ports[0][0] == p.id:
+                    for output in (run.stdout, run.stderr):
+                        if output.exists():
+                            texts.append((str(output), _tail(output, RECENT_FOR_QUOTES)))
             w = self.watches.get(p.id)
             if w:
                 texts.append(("the watched log", w.recent(RECENT_FOR_QUOTES)))
@@ -926,7 +941,7 @@ class Broker:
         for kind, (when, text) in self.observed.get(target_id, {}).items():
             texts.append((f"output seen {when}", text))
         for ev in self.bench.targets[target_id].evidence:
-            if ev.source not in ("learned", "board-knowledge"):  # only what devices and tools printed, never what was written
+            if ev.source not in ("learned", "board-knowledge", "agent-registration"):
                 texts.append((ev.source, ev.detail))
         return next((where for where, text in texts if quote in text), None)
 
@@ -937,6 +952,8 @@ class Broker:
         it notice crashes and resets; the agent does not have to think of it."""
         started = []
         for d in self.selected:
+            if self._run_owns(d):
+                continue
             for p in self.bench.ports_of(d):
                 watch = self._watch_action(p)
                 if not (watch and p.path and p.id not in self.watches):
@@ -1017,6 +1034,8 @@ class Broker:
         from .watch import PortWatch
 
         port = self.bench.ports[port_id]
+        if self._run_owns(port.device_id):
+            return False
         w = PortWatch(self.io, port_id, port.path, self.state / "logs", self._device_event, baud, port.open_lines,
                       patterns=self.bench.devices[port.device_id].line_rules, device_id=port.device_id,
                       may_reopen=self._may_reopen)
@@ -1069,6 +1088,9 @@ class Broker:
             self._offer_watch(ev["port"])  # benchscout asks the human again, as it did the first time
 
     def end_session(self) -> None:
+        with self._lock:
+            self._stop_runs(set(self.selected))
+            self.approvals.withdraw_ports(set(self.bench.ports))
         for pid in list(self.watches):
             self._unwatch(pid)
         with self._lock:
@@ -1076,6 +1098,104 @@ class Broker:
                 self.locks.release_all()
             self.selected = set()
             self.approvals.end_session()
+
+    # ---- agent-owned programs: no protocol or command interpretation -------------------
+    def register_resource(self, address: str, label: str, device: str | None = None) -> dict:
+        with self._lock:
+            if not self.workspace_knowledge:
+                raise ValueError("resource registration requires a trusted workspace")
+            r = self.resources.register(self.bench, address, label, device)
+            self._bench_event()
+            return {"resource": r.id, "device": r.device, "address": r.address, "selected": r.device in self.selected}
+
+    def _run_owns(self, device: str) -> bool:
+        return any(not r.done.is_set() and any(p[1] == device for p in r.plan.ports) for r in self.runs.values())
+
+    def _stop_runs(self, devices: set[str]) -> None:
+        for r in self.runs.values():
+            if not r.done.is_set() and any(p[1] in devices for p in r.plan.ports):
+                r.stop()
+
+    def run_state(self, job: str, stop: bool = False) -> dict:
+        with self._lock:
+            r = self.runs.get(job)
+            if r is None:
+                return {"status": "unknown_job", "job": job}
+            if stop:
+                r.stop()
+            return r.view()
+
+    def run_program(self, resources: list[str], argv: list[str], purpose: str, files: list[str] | None = None,
+                    timeout: float = 60, observe: bool = False, max_bytes: int = 16777216,
+                    approval_id: str | None = None) -> dict:
+        from .execution import Run, prepare
+
+        with self._lock:
+            if not self.workspace_knowledge:
+                return {"status": "untrusted_workspace"}
+            try:
+                if not isinstance(resources, list) or not resources or not all(isinstance(p, str) for p in resources):
+                    raise ValueError("resources must contain at least one registered or discovered port id")
+                ports = [self.bench.ports[self.resolve_port(p)] for p in sorted(set(resources))]
+                for p in ports:
+                    refused = self._outside_session(p.id)
+                    if refused:
+                        return refused
+                plan = prepare(argv, [(p.id, p.device_id, p.path) for p in ports], files or [],
+                               self.state.parent, purpose, timeout, observe, max_bytes)
+            except (ValueError, KeyError, OSError) as e:
+                return {"status": "invalid_plan", "message": str(e)}
+            key = plan.canonical()
+            impact = Impact("program.run", plan.ports[0][0], Effect.DANGEROUS,
+                            "Trusted external program; its physical effects cannot be verified. " + purpose,
+                            affected_ports=sorted({q.id for p in ports for q in self.bench.ports_of(p.device_id)}))
+            if approval_id is None:
+                approval_id = self.approvals.open(impact, key, purpose=purpose).id
+            elif self.approvals.asked_for(approval_id) != (impact.action, impact.port_id, key):
+                return {"status": "approval_mismatch", "approval_id": approval_id}
+        status = self.approvals.wait(approval_id, self.approval_wait)
+        if status == "pending":
+            return {"status": "approval_required", "approval_id": approval_id, "impact": impact.to_dict()}
+        if status != "granted":
+            return {"status": status, "approval_id": approval_id}
+        with self._lock:
+            for pid, dev, address in plan.ports:
+                p = self.bench.ports.get(pid)
+                if not p or (p.device_id, p.path) != (dev, address) or dev not in self.selected:
+                    return {"status": "resource_changed"}
+            turns: list[threading.Lock] = []
+            for dev in sorted({p[1] for p in plan.ports}):
+                turn = self._device_turn(dev)
+                if not turn.acquire(blocking=False):
+                    for held in turns:
+                        held.release()
+                    return {"status": "busy", "device": dev, "approval_id": approval_id}
+                turns.append(turn)
+            def release() -> None:
+                for held in turns:
+                    held.release()
+            try:
+                plan.verify()
+                used = self.approvals.consume(approval_id, impact.action, impact.port_id, key, "dangerous")
+                if used != "ok":
+                    release()
+                    return {"status": used, "approval_id": approval_id}
+                r = Run(plan, self.artifacts, self._emit)
+                self.runs[r.id] = r
+                for p in list(self.watches):
+                    if self.bench.ports[p].device_id in {x[1] for x in plan.ports}:
+                        self._unwatch(p)
+                self.done.append({"at": time.time(), "time": time.strftime("%H:%M:%S"), "action": impact.action,
+                                  "port": impact.port_id, "device": plan.ports[0][1], "args": key,
+                                  "allowed": f"human approval {approval_id}"})
+                def finished() -> None:
+                    with self._lock:
+                        self._autowatch()
+                threading.Thread(target=r.work, args=(release, finished), daemon=True).start()
+            except Exception:
+                release()
+                raise
+        return r.view()
 
     # ---- the one entry point the agent uses -----------------------------------
     def request(self, action: str, port: str, args: dict | None = None, approval_id: str | None = None,
@@ -1104,6 +1224,8 @@ class Broker:
             refused = self._outside_session(port_id)
             if refused:
                 return refused
+            if self._run_owns(self.bench.ports[port_id].device_id):
+                return {"status": "busy", "message": "a managed program owns this device; stop or wait for that job"}
             kind = self.bench.ports[port_id].kind
             if spec.port_kinds and kind not in spec.port_kinds:
                 return {"status": "invalid_args", "message": f"{action} works on {'/'.join(spec.port_kinds)} ports, not on a {kind} port"}
@@ -1177,17 +1299,26 @@ class Broker:
     def _start(self, impact: Impact, args: dict, allowed: str, extra: dict | None = None, started: float = 0.0) -> dict:
         """Run it outside the broker's lock, one at a time on each device. If it outlasts what one call may wait (a flash
         write can take minutes; the agent's call gives up), say it is running and give a job id to collect it with."""
-        dev = self.bench.ports[impact.port_id].device_id
+        with self._lock:
+            if impact.port_id not in self.bench.ports:
+                return {"status": "resource_changed"}
+            refused = self._outside_session(impact.port_id)
+            if refused:
+                return refused
+            dev = self.bench.ports[impact.port_id].device_id
+            turn = self._device_turn(dev)
+            if not turn.acquire(blocking=False):
+                return {"status": "busy", "device": dev}
         job = _Job(impact.action, impact.port_id, extra or {})
 
         def work() -> None:
-            with self._device_turn(dev):
-                try:
-                    job.result = self._run(impact, args, allowed)
-                except Exception as e:  # handed to whoever collects it
-                    job.error = e
-                finally:
-                    job.done.set()
+            try:
+                job.result = self._run(impact, args, allowed)
+            except Exception as e:  # handed to whoever collects it
+                job.error = e
+            finally:
+                turn.release()
+                job.done.set()
 
         threading.Thread(target=work, name=f"run {impact.action}", daemon=True).start()
         return self._collect(job, started or time.monotonic())

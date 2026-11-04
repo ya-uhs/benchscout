@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { once } from "node:events";
 import { CoreClient } from "../out/core.js";
-import { Harness } from "../out/harness.js";
+import { Harness, memoryText } from "../out/harness.js";
 import { ClaudeDriver } from "../out/agents/claude.js";
 import { AcpDriver } from "../out/agents/acp.js";
 import { strings } from "../out/i18n.js";
@@ -120,6 +120,31 @@ test("broker approvals and agent questions become cards; answers go back through
 });
 
 import { writeFileSync, readFileSync } from "node:fs";
+
+test("unknown resource: human approves a program, receives its observation and stops it in the panel", async () => {
+  const { core, h, root, env, done } = await bench((ws, relay) => new ClaudeDriver(ws, relay, join(import.meta.dirname, "fake-claude.mjs")));
+  try {
+    await until(h, (c) => c.kind === "question");
+    const resource = (await agentCall(env, root, "register_resource", { address: "fixture:opaque", label: "Unknown endpoint" })).result;
+    await core.select([resource.device]);
+    const script = join(root, "observe.py");
+    writeFileSync(script, "import time\nprint('raw observation', flush=True)\ntime.sleep(60)\n");
+    const request = agentCall(env, root, "run_program", {
+      resources: [resource.resource], argv: [py, script], purpose: "Observe the fixture", observe: true,
+    });
+    const approval = await until(h, (c) => c.kind === "confirm" && c.title === "program.run");
+    assert.equal(approval.effect, "dangerous");
+    assert.ok(!approval.options.some((o) => o.id === "session"));
+    await h.answer(approval.id, { option: "once" });
+    const started = (await request).result;
+    const running = await until(h, (c) => c.title === s.programRunning);
+    await until(h, (c) => c.title === s.observation(resource.device));
+    await h.answer(running.id, { option: "stop" });
+    const stopped = (await agentCall(env, root, "run_state", { job: started.job })).result;
+    assert.equal(stopped.status, "cancelled");
+    assert.equal(readFileSync(stopped.stdout, "utf8"), "raw observation\n");
+  } finally { done(); }
+});
 
 async function streamingBench(autonomy) {
   const root = mkdtempSync(join(win ? tmpdir() : "/tmp", "bsw"));
@@ -262,6 +287,16 @@ test("benchscout's own safety proposal is said in the person's language; the age
   const [own, agent] = h.cards;
   assert.equal(own.body, strings("ja").listenSafeAsk("serial:usbmodem1101", 2), "benchscout's own words, in the person's language");
   assert.equal(agent.body, "no auto-reset circuit");
+  // the memory list showed benchscout's own entries in English (2026-11-03): the list words them as the cards do
+  const ja = strings("ja");
+  assert.equal(memoryText(entry({ status: "active" }), ja), ja.listenSafeKept("serial:usbmodem1101", 2));
+  assert.equal(memoryText(entry({ data: { listen_safe: false }, status: "active" }), ja), ja.resetOnOpen("serial:usbmodem1101"));
+  assert.equal(memoryText(entry({ kind: "observation", data: { opened: "stayed" }, status: "active" }), ja), ja.stayedOnOpen("serial:usbmodem1101"));
+  assert.equal(memoryText(entry({ kind: "observation", data: {}, text: "opened /dev/cu.x and it did not vanish (no re-enumeration seen)" }), ja),
+    ja.stayedOnOpen("serial:usbmodem1101"), "older observations are localized without claiming the target did not reset");
+  assert.equal(memoryText(entry({ kind: "observation", data: {}, text: "unrecognized observation" }), ja), "unrecognized observation");
+  assert.equal(memoryText(entry({ kind: "command", source: "human", data: { command: "status", effect: "safe" } }), ja), ja.allowedAlwaysNote);
+  assert.equal(memoryText(entry({ source: "agent", text: "no auto-reset circuit" }), ja), "no auto-reset circuit");
 });
 
 test("a port lost while the computer slept is one quiet, counted record; nobody is woken", () => {

@@ -26,6 +26,9 @@ from .runtime import address_family, agent_address
 APPROVAL_WAIT_S = float(os.environ.get("BENCHSCOUT_APPROVAL_WAIT", "100"))
 
 INSTRUCTIONS = """benchscout gives you the hardware bench. Rules that always hold:
+- You own device, transport, framing and command knowledge. Built-in actions are optional conveniences.
+- For anything else, prepare a script/tool and use bench_run; register unknown addresses with bench_register_resource.
+- External programs run with the user's OS privileges, not in a sandbox. Declare every resource and input file.
 - Reach hardware only through these tools. Never open serial ports, run esptool, openocd or SCPI scripts yourself.
 - Never try to approve anything yourself. Approvals and device selection are made by the human in the benchscout panel.
 - Only devices the human selected can be used; if a call returns not_selected, use request_devices to ask for them.
@@ -101,6 +104,42 @@ def build_server(client: CoreClient, language: str = "English") -> MCPServer:
         return await _call("inventory")
 
     catalog = actions_catalog()
+
+    @mcp.tool()
+    async def bench_register_resource(address: str, label: str, device: str | None = None) -> str:
+        """Register an opaque connection address for this session, without opening or probing it.
+        label is a description, not an identification. For an existing device, pass its device id
+        so all its ports share ownership. Otherwise a new resource device is shown for human selection.
+        Exact addresses share ownership; the harness cannot detect aliases for the same physical resource.
+        Use existing port ids when available. Registration grants no permission; request_devices next."""
+        return await _call("register_resource", {"address": address, "label": label, "device": device})
+
+    @mcp.tool()
+    async def bench_run(resources: list[str], argv: list[str], purpose: str, files: list[str] | None = None,
+                        timeout: float = 60, observe: bool = False, max_bytes: int = 16777216,
+                        approval_id: str | None = None) -> str:
+        """Run an agent-prepared program on selected resource/port ids. argv is literal, no implicit shell;
+        cwd is this workspace. purpose explains intent and physical effects. Supply all script/input
+        dependencies in files; executable and standalone file arguments are also hashed. Every execution
+        needs one human approval tied to this exact plan and file hashes. Changes need a new approval.
+        This is trusted code with the user's privileges, NOT a sandbox or a verifier of physical effects.
+        You implement transport, framing, commands and interpretation in your program; no core plugin needed.
+        Returns approval_required (retry the same plan with approval_id) or a job id (poll bench_job,
+        never start again). stdout/stderr are saved as raw bytes in separate artifacts.
+        observe=true notifies the agent when output arrives: emit only observations worth investigating.
+        timeout bounds lifetime (1..86400 seconds). max_bytes stops excessive output (checked periodically,
+        can overshoot). Stop via bench_job; deselection/session end also stops it. Do not daemonize or
+        detach children: process-tree cleanup is best effort, not OS containment."""
+        return await _call("run_program", {"resources": resources, "argv": argv, "purpose": purpose, "files": files,
+                                          "timeout": timeout, "observe": observe, "max_bytes": max_bytes,
+                                          "approval_id": approval_id}, timeout=APPROVAL_WAIT_S + 60)
+
+    @mcp.tool()
+    async def bench_job(job: str, stop: bool = False) -> str:
+        """Read a bench_run job's state and raw artifact paths, or stop it. Stopping grants no further access.
+        Terminal states: completed, failed, timed_out, output_limit, cancelled. An exit code alone does not
+        prove the intended hardware effect. Read stdout/stderr and interpret them yourself."""
+        return await _call("run_state", {"job": job, "stop": stop})
 
     @mcp.tool(description=f"""Explain what an action would disturb before doing it. `port` is a port id
 (serial:usbmodem1101) or its path (/dev/cu.usbmodem1101). `args` are the action's arguments.

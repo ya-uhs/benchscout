@@ -1,5 +1,12 @@
 # benchscout (prototype)
 
+The agent owns device knowledge, transport/framing choices and observation logic. For a device outside the built-in
+adapters, it can register an opaque connection address with `bench_register_resource`, prepare a script and execute
+it with `bench_run` after human selection and approval. The harness manages ownership, lifetime, raw stdout/stderr
+artifacts and observation events; `bench_job` polls or stops the program, and the panel also offers Stop.
+Each run is approved with its arguments and input-file hashes. Programs run with the user's privileges: this is
+a trusted-program boundary, not an OS sandbox or proof of physical safety. Registrations currently last one session.
+
 Open it and it lists what is on the bench with the raw clues (USB VID/PID and the name each
 device reports, JTAG IDCODE, `*IDN?`, console output) and what it remembers from earlier
 sessions. Then it asks which device(s) you want to debug or measure, and your own agent

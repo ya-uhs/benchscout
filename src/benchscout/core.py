@@ -35,10 +35,16 @@ from .report import render
 # ---- agent channel --------------------------------------------------------------
 
 AGENT_METHODS = ("scan", "inventory", "impact", "do", "actions", "ask", "request_devices", "identify", "remember", "recall",
-                 "log", "define_tool")
+                 "log", "define_tool", "register_resource", "run_program", "run_state")
 
 
 def agent_dispatch(broker: Broker, method: str, params: dict) -> Any:
+    if method == "register_resource":
+        return broker.register_resource(params["address"], params["label"], params.get("device"))
+    if method == "run_program":
+        return broker.run_program(**params)
+    if method == "run_state":
+        return broker.run_state(params["job"], params.get("stop", False))
     if method == "scan":
         r = broker.scan()
         return {"text": render(r), "selected": sorted(broker.selected), "watch": broker.watch_state(),
@@ -178,6 +184,8 @@ def parse_shorthand(line: str) -> dict:
 
 
 def control_dispatch(broker: Broker, method: str, params: dict) -> Any:
+    if method == "run_state":
+        return broker.run_state(params["job"], params.get("stop", False))
     if method == "scan":
         r = broker.scan(only_new=bool(params.get("only_new")))
         from . import knowledge as K
