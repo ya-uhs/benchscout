@@ -228,3 +228,38 @@ def test_final_observation_is_not_lost_to_notification_throttle(bench):
     result = finish(b, run["job"])
     assert result["status"] == "completed"
     assert snapshots[-1].splitlines() == [b"first", b"last"]
+
+
+@pytest.mark.parametrize("stop", ["job", "deselect"])
+def test_adapter_tool_uses_managed_stop_and_raw_artifacts(bench, monkeypatch, stop):
+    from concurrent.futures import ThreadPoolExecutor
+    from benchscout import knowledge as K
+
+    b, r, events = bench
+    script = b.state.parent / "adapter.py"
+    script.write_text("import sys,time\nsys.stdout.buffer.write(b'\\x00\\xff'); sys.stdout.flush()\ntime.sleep(60)")
+    monkeypatch.setitem(K.TOOLS, "fixture.observe", {
+        "name": "fixture.observe", "argv": [sys.executable, str(script)], "effect": "dangerous",
+        "reason": "test program", "doc": "fixture observation", "timeout": 60,
+    })
+    asked = b.request("fixture.observe", r["resource"])
+    assert asked["status"] == "approval_required"
+    assert not b.runs
+    b.decide(asked["approval_id"], True)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(b.request, "fixture.observe", r["resource"], approval_id=asked["approval_id"])
+        deadline = time.monotonic() + 5
+        while not any(e.get("event") == "run_changed" for e in events) and time.monotonic() < deadline:
+            time.sleep(.01)
+        event = next(e for e in events if e.get("event") == "run_changed")
+        job = event["job"]
+        while Path(event["stdout"]).stat().st_size < 2 and time.monotonic() < deadline:
+            time.sleep(.01)
+        if stop == "job":
+            b.run_state(job, stop=True)
+        else:
+            b.select([])
+        result = pending.result(timeout=5)["result"]
+    assert result["execution"]["status"] == "cancelled"
+    assert Path(result["execution"]["stdout"]).read_bytes() == b"\x00\xff"
+    assert result["returncode"] is None

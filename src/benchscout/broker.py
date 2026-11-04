@@ -1317,7 +1317,8 @@ class Broker:
             except Exception as e:  # handed to whoever collects it
                 job.error = e
             finally:
-                turn.release()
+                if not self._run_owns(dev):
+                    turn.release()
                 job.done.set()
 
         threading.Thread(target=work, name=f"run {impact.action}", daemon=True).start()
@@ -1453,14 +1454,29 @@ class Broker:
         # hand the device over: the tool opens it itself (design.md section 3); take it back after
         watched = [(p.id, self.watches[p.id].baud) for p in self.bench.ports_of(dev.id) if p.id in self.watches] \
             if spec.releases_device else []
-        for pid, _ in watched:
-            self._unwatch(pid)
+        from .execution import Run, prepare
+
+        with self._lock:
+            current = self.bench.ports.get(port.id)
+            if dev.id not in self.selected or current is None or (current.device_id, current.path) != (dev.id, port.path):
+                return {"status": "resource_changed", "error": "device left the session before launch"}
+            plan = prepare(argv, [(port.id, dev.id, port.path)], [], ws, spec.doc or spec.name,
+                           spec.timeout, False, 16777216)
+            run = Run(plan, self.artifacts, self._emit)
+            self.runs[run.id] = run
+            for pid, _ in watched:
+                self._unwatch(pid)
         try:
-            text, code = run_tool(argv, spec.timeout, cwd=ws)
+            # The adapter already owns the device turn and its action approval.
+            # Process lifetime, raw artifacts and Stop use the same manager as bench_run.
+            run.work(lambda: None, lambda: None)
         finally:
-            for pid, baud in watched:  # back to watching, if the device is still in the session and still there
-                if dev.id in self.selected and pid in self.bench.ports and self.bench.ports[pid].device_id == dev.id:
-                    self._watch(pid, baud)
+            with self._lock:
+                for pid, baud in watched:
+                    if dev.id in self.selected and pid in self.bench.ports and self.bench.ports[pid].device_id == dev.id:
+                        self._watch(pid, baud)
+        text = "".join(_tail(f, RECENT_FOR_QUOTES) for f in (run.stdout, run.stderr) if f.exists())
+        code = run.code if run.status in ("completed", "failed") else None
         res = self._save_artifact(f"{port.id}-{spec.name}.txt", " ".join(argv) + "\n\n" + text, preview=text[-2000:])
         if spec.probe:  # read as its definition says: the parts it named go on the bench (the tool's own database)
             parts = R.read_parts(spec.probe, text)
@@ -1469,7 +1485,7 @@ class Broker:
             self.recon.heard[port.id] = [g for g in self.recon.heard.get(port.id, []) if g["probe"] != "chain"] + [got]
             R._fold(self.bench, self.bench.targets_via(port.id), got, port=port)
             res["parts"] = [dict(p, idcode=f"0x{p['idcode']:08X}") for p in parts]
-        return dict(res, returncode=code, argv=argv)
+        return dict(res, returncode=code, argv=argv, execution=run.view())
 
     @staticmethod
     def _which(exe: str) -> str | None:
