@@ -643,3 +643,4 @@ Claude Code の利用上限で、記憶表示の日本語化と作業メモ更�
 - ESP32とFPGAでSAFEな30秒listenを約1秒後に停止し、両方cancelledと部分出力保存を確認。ESP32は `hb n=28349 uptime_ms=80172418`、FPGAは `hb 00013919`。リセットや書き込みなし。検証コアはshutdown済み。
 - Python全体260成功・1 skip、通常/Windows向けmypy、Ruff成功。最新コアを同梱したdarwin-arm64 VSIXを再生成。凍結コアの拡張38テストと、そのVSIXを使った隔離VS Code E2Eが成功。
 - 制約: 停止は既に送信した命令の取り消しではない。実行中のVISA呼び出しはドライバの完了/タイムアウトを待つ。Windows/Linuxの最新版実動作と配布は、GitHubの支払い/利用上限によるジョブ開始拒否が解消するまで未確認。
+- 04d40f8をmainへpush。CI 42042846703 / quick 127297891348は支払い失敗またはspending limitのため開始前に失敗したことを注記で再確認。ローカル検証成功とは分けて扱い、手動配布の重複起動はしていない。
