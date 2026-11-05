@@ -286,3 +286,59 @@ def test_adapter_approval_rejects_changed_execution_plan(bench, monkeypatch, cha
         b.bench.ports[r["resource"]].path = "another:endpoint"
     assert b.request("fixture.run", r["resource"], approval_id=asked["approval_id"])["status"] == "approval_mismatch"
     assert not b.runs
+
+
+@pytest.mark.parametrize("stop", ["job", "deselect"])
+def test_native_listen_can_be_cancelled_without_releasing_early(bench, stop):
+    from concurrent.futures import ThreadPoolExecutor
+
+    b, _, events = bench
+    port = b.resolve_port("/dev/cu.usbmodem21403")
+    b.select([b.bench.ports[port].device_id])
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(b.request, "serial.listen", port, {"seconds": 30})
+        deadline = time.monotonic() + 5
+        while not any(e.get("event") == "run_changed" for e in events) and time.monotonic() < deadline:
+            time.sleep(.01)
+        job = next(e["job"] for e in events if e.get("event") == "run_changed")
+        if stop == "job":
+            b.run_state(job, stop=True)
+        else:
+            b.select([])
+        result = pending.result(timeout=5)
+    assert result["status"] == "cancelled"
+    assert b.run_state(job)["status"] == "cancelled"
+
+
+def test_recipe_restart_restores_no_selection_or_permission(bench):
+    b, r, _ = bench
+    args = plan(b, r, "print('recipe output')", observe=True)
+    b.recipe("save", "observe", args)
+    b.end_session()
+    other = Broker(b.io, b.state, approval_wait=0)
+    try:
+        assert other.recipe()["recipes"] == ["observe"]
+        assert not other.selected and not other.runs
+        restored = other.recipe("restore", "observe")
+        assert restored["selected"] == []
+        assert other.recipe("run", "observe")["status"] == "not_selected"
+        other.select([r["device"]])
+        asked = other.recipe("run", "observe")
+        assert asked["status"] == "approval_required"
+        other.decide(asked["approval_id"], True)
+        run = other.recipe("run", "observe", approval_id=asked["approval_id"])
+        assert finish(other, run["job"])["status"] == "completed"
+        assert other.recipe("run", "observe")["status"] == "approval_required"
+        other.recipe("delete", "observe")
+        assert other.recipe()["recipes"] == []
+    finally:
+        other.end_session()
+
+
+def test_invalid_recipe_file_is_preserved(bench):
+    b, r, _ = bench
+    path = b.state / "recipes.json"
+    path.write_text("broken")
+    with pytest.raises(ValueError):
+        b.recipe("save", "new", plan(b, r, "print('no')"))
+    assert path.read_text() == "broken"

@@ -21,6 +21,13 @@ The human answers cards in the benchscout inbox; keep them few and clear.
   `bench_run` takes literal argv, all resource ids and input files, purpose and lifetime.
   Each run needs human approval, including file hashes. Poll `bench_job`; never repeat
   a start because it is still running. Read raw stdout/stderr artifacts yourself.
+- Save reusable execution/observation plans with `bench_recipe(operation="save", name=..., plan=...)`.
+  On the next session, list/get/restore recipes, request device selection and run the chosen recipe.
+  Restoring is not approval: every run uses current file hashes and requires fresh human consent.
+  Delete obsolete recipes. Saved registrations do not prove a device's identity or physical availability.
+- Built-in operations also emit job IDs; `bench_job(stop=true)` requests cancellation. Serial waits
+  stop cooperatively; an in-flight instrument I/O may finish or time out first. Cancellation does
+  not undo commands already sent. Ownership stays held until the operation finishes.
 - For ongoing observation use `bench_run(observe=true)` and emit output only when
   something merits investigation. Output events carry no built-in diagnosis. Stop
   unneeded observers with `bench_job(stop=true)`. Programs must not detach children.

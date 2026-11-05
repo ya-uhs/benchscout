@@ -85,17 +85,20 @@ class PortWatch:
         self.alive = False
 
     # ---- use from the broker ----------------------------------------------------------
-    def read_window(self, seconds: float) -> str:
+    def read_window(self, seconds: float, cancel=None) -> str:
         """What arrives during the next `seconds`."""
         with self._cond:
             start = self._total
-        time.sleep(seconds)
+        if cancel is None:
+            time.sleep(seconds)
+        else:
+            cancel.wait(seconds)
         with self._cond:
             new = self._total - start
             data = bytes(self._recent[-new:]) if new else b""
         return data.decode("utf-8", errors="replace")
 
-    def send(self, data: bytes, seconds: float, until=None) -> tuple[str, str]:
+    def send(self, data: bytes, seconds: float, until=None, cancel=None) -> tuple[str, str]:
         """Write `data`; return (what arrived until a line matched `until` or `seconds` passed, what the device had
         printed by itself before: the recent output less what answered earlier commands)."""
         from .codec import ended
@@ -105,6 +108,8 @@ class PortWatch:
             before = self._unprompted(start)
         if not self._stream:
             raise PortGone("not open")
+        if cancel is not None and cancel.is_set():
+            return "", before
         self._stream.write(data)
         from .codec import QUIET_S
 
@@ -118,6 +123,8 @@ class PortWatch:
                 if new != seen:
                     seen, quiet_since = new, now
                 left = end - now
+                if cancel is not None and cancel.is_set():
+                    break
                 if left <= 0 or ended(out, until, settled=now - quiet_since >= QUIET_S):
                     break
                 self._cond.wait(min(left, 0.05))

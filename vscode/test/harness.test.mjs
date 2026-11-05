@@ -436,3 +436,16 @@ test("'always on this device' is offered for a command whatever its protocol (th
   const card = h.cards.find((c) => c.id === "approval:a1");
   assert.ok(card.options.some((o) => o.label === s.allowCommandSession) && card.options.some((o) => o.label === s.allowAlwaysHere));
 });
+
+
+test("the panel can stop a built-in listen without waiting for its full duration", async () => {
+  const { core, h, root, env, done } = await bench((ws, relay) => new ClaudeDriver(ws, relay, join(import.meta.dirname, "fake-claude.mjs")));
+  try {
+    await until(h, (c) => c.kind === "question");
+    await core.select(["/dev/cu.usbmodem21403"]);
+    const request = agentCall(env, root, "do", { action: "serial.listen", port: "/dev/cu.usbmodem21403", args: { seconds: 30 } });
+    const running = await until(h, (c) => c.title === s.programRunning && c.body === "serial.listen");
+    await h.answer(running.id, { option: "stop" });
+    assert.equal((await request).result.status, "cancelled");
+  } finally { done(); }
+});

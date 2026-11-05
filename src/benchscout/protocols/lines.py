@@ -89,14 +89,20 @@ def op_listen(ctx, port, args: dict):
     w = _rewatch_at(ctx, port, args["baud"])
     learned = ctx.bench.devices[port.device_id].line_rules
     if w and w.alive:  # held open: read what the watch hears
-        text = w.read_window(args["seconds"])
+        text = w.read_window(args["seconds"], ctx.cancel_event)
+        if ctx.cancel_event is not None and ctx.cancel_event.is_set():
+            return {"cancelled": True, **ctx._save_artifact(f"{port.id}-listen-cancelled.txt", text or "",
+                                                           preview=(text or "")[-2000:])}
         R.apply_log(ctx.bench.targets_via(port.id), text, learned=learned)
         ctx.recon.proposals = R.propose(ctx.bench)
         ctx._remember(port.id, text)
         return dict(ctx._save_artifact(f"{port.id}-listen-{args['baud']}.txt", text, preview=text[-2000:]),
                     watched_log=str(w.log.resolve()))
     text = R.listen_into(ctx.io, port.path, ctx.bench.targets_via(port.id), args["seconds"],
-                         exclusive=True, baud=args["baud"], lines=port.open_lines)
+                         exclusive=True, baud=args["baud"], lines=port.open_lines, cancel=ctx.cancel_event)
+    if ctx.cancel_event is not None and ctx.cancel_event.is_set():
+        return {"cancelled": True, **ctx._save_artifact(f"{port.id}-listen-cancelled.txt", text or "",
+                                                           preview=(text or "")[-2000:])}
     ctx.recon.proposals = R.propose(ctx.bench)  # what was heard may change the next steps
     ctx._remember(port.id, text)
     ctx._observe_open(port.id, text)
@@ -114,10 +120,10 @@ def op_send(ctx, port, args: dict):
     until = until_pattern(args.get("until"))
     data = (args["data"] + (args["eol"] if args.get("eol") is not None else "\n")).encode()
     if w and w.alive:
-        text, before = w.send(data, args["seconds"], until)
+        text, before = w.send(data, args["seconds"], until, ctx.cancel_event)
     else:  # opened for this call: nothing it printed before to tell its own lines by
         text, before = ctx.io.serial_listen(port.path, args["seconds"], args["baud"], True, port.open_lines,
-                                            send=data, until=until), None
+                                            send=data, until=until, cancel=ctx.cancel_event), None
     R.apply_log(ctx.bench.targets_via(port.id), text, learned=ctx.bench.devices[port.device_id].line_rules)
     ctx.recon.proposals = R.propose(ctx.bench)
     ctx._remember(port.id, text)

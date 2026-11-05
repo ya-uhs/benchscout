@@ -468,11 +468,11 @@ def _fold(b: Bench, targets: list[Target], got: dict, earlier: bool = False, por
 
 
 def listen_into(io: Io, path: str, targets: list[Target], seconds: float, exclusive: bool = False,
-                baud: int = 115200, lines: str = "low") -> str | None:
+                baud: int = 115200, lines: str = "low", cancel=None) -> str | None:
     """Listen and fold what was heard into the targets. A port that vanishes mid-read
     (USB re-enumeration, usually a reset) is recorded as a fact, not a crash."""
     try:
-        text = io.serial_listen(path, seconds, baud, exclusive, lines)
+        text = io.serial_listen(path, seconds, baud, exclusive, lines, **({"cancel": cancel} if cancel is not None else {}))
     except Exception as e:  # serial.SerialException / OSError: device went away
         _fold_listen(targets, None, str(e))
         return None

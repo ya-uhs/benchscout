@@ -48,6 +48,8 @@ class _Job:
         self.id, self.action, self.port, self.extra = uuid.uuid4().hex[:6], action, port, extra
         self.t0 = time.monotonic()
         self.done = threading.Event()
+        self.cancel = threading.Event()
+        self.device = ""
         self.result: dict | None = None
         self.error: Exception | None = None
 
@@ -147,6 +149,8 @@ class Broker:
 
         self.done: deque[dict] = deque(maxlen=500)
         self._jobs: dict[str, _Job] = {}  # runs that outlasted the call that started them
+        self._native_jobs: dict[str, _Job] = {}
+        self._operation = threading.local()
         self._turns: dict[str, threading.Lock] = {}  # one action at a time on each device
         from .resources import Resources
         from .execution import Run
@@ -1100,6 +1104,58 @@ class Broker:
             self.approvals.end_session()
 
     # ---- agent-owned programs: no protocol or command interpretation -------------------
+    def recipe(self, operation: str = "list", name: str = "", plan: dict | None = None,
+               approval_id: str | None = None) -> dict:
+        from dataclasses import asdict
+        from .recipes import Recipes
+
+        with self._lock:
+            if not self.workspace_knowledge:
+                return {"status": "untrusted_workspace"}
+            store = Recipes(self.state / "recipes.json")
+            items = store.read()
+            if operation == "list":
+                return {"recipes": sorted(items), "file": str(store.path)}
+            if not name or len(name) > 128:
+                raise ValueError("name must be 1..128 characters")
+            if operation == "save":
+                allowed = {"resources", "argv", "purpose", "files", "timeout", "observe", "max_bytes"}
+                if not isinstance(plan, dict) or set(plan) - allowed:
+                    raise ValueError("recipe must contain only bench_run plan fields, never approval_id")
+                from .execution import prepare
+                ports = [self.bench.ports[self.resolve_port(p)] for p in plan.get("resources", [])]
+                if not ports:
+                    raise ValueError("recipe needs at least one resource")
+                prepare(plan.get("argv", []), [(p.id, p.device_id, p.path) for p in ports], plan.get("files", []),
+                        self.state.parent, plan.get("purpose", ""), plan.get("timeout", 60),
+                        plan.get("observe", False), plan.get("max_bytes", 16777216))
+                items[name] = {"plan": dict(plan, resources=[p.id for p in ports]),
+                               "registrations": [asdict(self.resources.items[p.id]) for p in ports
+                                                 if p.id in self.resources.items]}
+                store.write(items)
+                return {"status": "saved", "name": name, "file": str(store.path)}
+            if name not in items:
+                return {"status": "unknown_recipe", "name": name}
+            if operation == "delete":
+                del items[name]
+                store.write(items)
+                return {"status": "deleted", "name": name}
+            record = items[name]
+            if operation == "get":
+                return {"name": name, **record}
+            if operation not in ("restore", "run"):
+                raise ValueError("operation: list, save, get, restore, run, delete")
+            for resource in record["registrations"]:
+                self.register_resource(resource["address"], resource["label"],
+                                       resource["device"] if resource["attached"] else None)
+            saved = record["plan"]
+            if set(saved) - {"resources", "argv", "purpose", "files", "timeout", "observe", "max_bytes"}:
+                raise ValueError("invalid saved execution fields")
+            if operation == "restore":
+                return {"status": "restored", "plan": saved, "selected": sorted(self.selected)}
+        # Never wait for approval while holding the broker lock.
+        return self.run_program(**saved, approval_id=approval_id)
+
     def register_resource(self, address: str, label: str, device: str | None = None) -> dict:
         with self._lock:
             if not self.workspace_knowledge:
@@ -1111,13 +1167,33 @@ class Broker:
     def _run_owns(self, device: str) -> bool:
         return any(not r.done.is_set() and any(p[1] == device for p in r.plan.ports) for r in self.runs.values())
 
+    @property
+    def cancel_event(self):
+        return getattr(self._operation, "cancel", None)
+
+    def _native_view(self, j: _Job) -> dict:
+        status = "running" if not j.done.is_set() else "cancelled" if j.cancel.is_set() else "failed" if j.error else "completed"
+        return {"job": j.id, "status": status, "purpose": j.action, "resources": [j.port],
+                "stdout": "", "stderr": "", "error": str(j.error or ""), "observe": False, "result": j.result}
+
     def _stop_runs(self, devices: set[str]) -> None:
+        pending = [j for j in self._native_jobs.values() if j.device in devices and not j.done.is_set()]
+        for j in pending:
+            j.cancel.set()
+        for j in pending:
+            if not j.done.wait(20):
+                raise RuntimeError("operation shutdown not confirmed; ownership retained")
         for r in self.runs.values():
             if not r.done.is_set() and any(p[1] in devices for p in r.plan.ports):
                 r.stop()
 
     def run_state(self, job: str, stop: bool = False) -> dict:
         with self._lock:
+            native = self._native_jobs.get(job)
+            if native:
+                if stop and not native.done.is_set():
+                    native.cancel.set()
+                return self._native_view(native)
             r = self.runs.get(job)
             if r is None:
                 return {"status": "unknown_job", "job": job}
@@ -1342,17 +1418,33 @@ class Broker:
             turn = self._device_turn(dev)
             if not turn.acquire(blocking=False):
                 return {"status": "busy", "device": dev}
-        job = _Job(impact.action, impact.port_id, extra or {})
+            job = _Job(impact.action, impact.port_id, extra or {})
+            native = not A.get(impact.action).argv
+            job.device = dev
+            if native:
+                self._native_jobs[job.id] = job
 
         def work() -> None:
             try:
-                job.result = self._run(impact, args, allowed, tool_snapshot)
+                self._operation.cancel = job.cancel
+                if native:
+                    self._emit({"event": "run_changed", **self._native_view(job)})
+                job.result = ({"status": "cancelled"} if job.cancel.is_set()
+                              else self._run(impact, args, allowed, tool_snapshot))
+                if job.cancel.is_set():
+                    job.result["status"] = "cancelled"
             except Exception as e:  # handed to whoever collects it
-                job.error = e
+                if job.cancel.is_set():
+                    job.result = {"status": "cancelled", "message": str(e)}
+                else:
+                    job.error = e
             finally:
                 if not self._run_owns(dev):
                     turn.release()
                 job.done.set()
+                if native:
+                    self._emit({"event": "run_changed", **self._native_view(job)})
+                self._operation.cancel = None
 
         threading.Thread(target=work, name=f"run {impact.action}", daemon=True).start()
         return self._collect(job, started or time.monotonic())

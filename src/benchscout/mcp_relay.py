@@ -106,6 +106,19 @@ def build_server(client: CoreClient, language: str = "English") -> MCPServer:
     catalog = actions_catalog()
 
     @mcp.tool()
+    async def bench_recipe(operation: str = "list", name: str = "", plan: dict | None = None,
+                           approval_id: str | None = None) -> str:
+        """Save and reuse an execution/observation recipe in this workspace. Operations: list, save,
+        get, restore, run, delete. save takes the same plan fields as bench_run (no approval_id).
+        Registration metadata is saved too. restore only restores registrations and returns the plan;
+        ask the human to select its devices before run. run uses fresh file hashes and the current
+        selection and requires human approval, even if this recipe ran before. Retry run with the
+        approval_id while the plan is unchanged. Nothing auto-starts when a workspace opens.
+        The file is .benchscout/recipes.json; unreadable files are preserved, not overwritten."""
+        return await _call("recipe", {"operation": operation, "name": name, "plan": plan,
+                                      "approval_id": approval_id}, timeout=APPROVAL_WAIT_S + 60)
+
+    @mcp.tool()
     async def bench_register_resource(address: str, label: str, device: str | None = None) -> str:
         """Register an opaque connection address for this session, without opening or probing it.
         label is a description, not an identification. For an existing device, pass its device id
@@ -136,7 +149,7 @@ def build_server(client: CoreClient, language: str = "English") -> MCPServer:
 
     @mcp.tool()
     async def bench_job(job: str, stop: bool = False) -> str:
-        """Read a bench_run job's state and raw artifact paths, or stop it. Stopping grants no further access.
+        """Read a bench_run or built-in operation job's state and raw artifact paths, or stop it. Stopping grants no further access.
         Terminal states: completed, failed, timed_out, output_limit, cancelled. An exit code alone does not
         prove the intended hardware effect. Read stdout/stderr and interpret them yourself."""
         return await _call("run_state", {"job": job, "stop": stop})

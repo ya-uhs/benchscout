@@ -54,7 +54,7 @@ export interface AgentDriver {
 // Kept in sync with mcp_relay.py by tests/test_relay_tools.py.
 export const BENCHSCOUT_TOOLS = ["bench_scan", "bench_inventory_json", "bench_impact", "bench_do", "bench_log",
   "bench_identify", "bench_remember", "bench_define_tool", "bench_recall", "ask_user", "request_devices",
-  "bench_register_resource", "bench_run", "bench_job"];
+  "bench_register_resource", "bench_run", "bench_job", "bench_recipe"];
 
 export function isBenchscoutTool(name: string): boolean {
   const n = name.replace(/^mcp__benchscout__/, "").replace(/^benchscout[-_]/, "");

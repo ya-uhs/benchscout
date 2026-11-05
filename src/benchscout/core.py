@@ -35,10 +35,12 @@ from .report import render
 # ---- agent channel --------------------------------------------------------------
 
 AGENT_METHODS = ("scan", "inventory", "impact", "do", "actions", "ask", "request_devices", "identify", "remember", "recall",
-                 "log", "define_tool", "register_resource", "run_program", "run_state")
+                 "log", "define_tool", "register_resource", "run_program", "run_state", "recipe")
 
 
 def agent_dispatch(broker: Broker, method: str, params: dict) -> Any:
+    if method == "recipe":
+        return broker.recipe(**params)
     if method == "register_resource":
         return broker.register_resource(params["address"], params["label"], params.get("device"))
     if method == "run_program":

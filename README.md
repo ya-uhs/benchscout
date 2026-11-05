@@ -5,7 +5,11 @@ adapters, it can register an opaque connection address with `bench_register_reso
 it with `bench_run` after human selection and approval. The harness manages ownership, lifetime, raw stdout/stderr
 artifacts and observation events; `bench_job` polls or stops the program, and the panel also offers Stop.
 Each run is approved with its arguments and input-file hashes. Programs run with the user's privileges: this is
-a trusted-program boundary, not an OS sandbox or proof of physical safety. Registrations currently last one session.
+a trusted-program boundary, not an OS sandbox or proof of physical safety. Registrations last one session; `bench_recipe` can save a plan and its registrations in
+`.benchscout/recipes.json` for explicit reuse. Restoring a recipe neither selects devices nor restores approval;
+running it requires current selection and fresh plan approval. Nothing starts automatically on restart.
+Built-in operations also expose job state and Stop. Serial waits can be interrupted; an in-flight driver call
+may finish or time out first. Stopping cannot undo commands already sent.
 
 Open it and it lists what is on the bench with the raw clues (USB VID/PID and the name each
 device reports, JTAG IDCODE, `*IDN?`, console output) and what it remembers from earlier
