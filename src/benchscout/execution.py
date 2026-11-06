@@ -137,14 +137,20 @@ class Run:
                 self.status = "cancelled"
                 return
             with self.stdout.open("wb") as out, self.stderr.open("wb") as err:
-                p = subprocess.Popen(self.plan.argv, cwd=self.plan.cwd, stdin=subprocess.DEVNULL,
-                                     stdout=out, stderr=err, start_new_session=os.name != "nt")
+                if sys.platform == "win32":
+                    from .winjob import WindowsJob
+
+                    p = WindowsJob(self.plan.argv, self.plan.cwd, out, err)
+                else:
+                    p = subprocess.Popen(self.plan.argv, cwd=self.plan.cwd, stdin=subprocess.DEVNULL,
+                                         stdout=out, stderr=err, start_new_session=True)
                 self.status = "running"
                 self.emit({"event": "run_changed", **self.view()})
                 end = time.monotonic() + self.plan.timeout
                 seen, notified = 0, 0.0
                 while True:
-                    exited = p.poll() is not None
+                    exit_code = p.poll()
+                    exited = exit_code is not None
                     size = self.stdout.stat().st_size + self.stderr.stat().st_size
                     now = time.monotonic()
                     if self.plan.observe and size > seen and (exited or now - notified >= 1):
@@ -162,25 +168,23 @@ class Run:
                         self.status = "timed_out"
                         break
                     if exited:
-                        self.status = "completed" if p.returncode == 0 else "failed"
+                        self.status = "completed" if exit_code == 0 else "failed"
                         break
                     self.cancel.wait(0.05)
-                # Also stop children of a parent that has already exited.
-                kill_tree(p)
-                self.code = p.wait(timeout=5)
         except Exception as e:
             self.error, self.status = str(e), "failed"
+        finally:
             if p is not None:
                 try:
-                    kill_tree(p)
-                    p.wait(timeout=5)
+                    if sys.platform == "win32":
+                        self.code = p.stop()
+                    else:
+                        kill_tree(p)
+                        self.code = p.wait(timeout=5)
                 except Exception as cleanup:
-                    self.error += f"; shutdown failed: {cleanup}"
-        finally:
-            if p is not None and p.poll() is None:
-                self.status = "stop_failed"
-                self.emit({"event": "run_changed", **self.view()})
-                return  # do not release ownership without confirming the parent stopped
+                    self.error, self.status = f"shutdown failed: {cleanup}", "stop_failed"
+                    self.emit({"event": "run_changed", **self.view()})
+                    return  # keep ownership until shutdown is confirmed
             try:
                 (self.directory / "result.json").write_text(json.dumps(self.view()), encoding="utf-8")
             except OSError as e:

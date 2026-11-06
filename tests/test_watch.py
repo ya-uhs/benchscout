@@ -44,6 +44,7 @@ def select(br, path):
 def test_safe_port_is_watched_on_selection_and_a_crash_is_noticed_once(tmp_path):
     io, br, events = bench(tmp_path, {VCP: [{"after": 0.05, "text": "boot ok\n"}, {"after": 0.15, "text": CRASH},
                                             {"after": 0.2, "text": CRASH}]})
+    br.remember(VCP, "interpretation", "abort marker", data={"pattern": "abort", "alert": "abort marker"})
     out = select(br, VCP)
     assert out["watching"] == ["serial:usbmodem21403"]
     assert events[0]["kind"] == "watching", "the human is told the port is watched"
@@ -52,7 +53,7 @@ def test_safe_port_is_watched_on_selection_and_a_crash_is_noticed_once(tmp_path)
     alerts = [e for e in events if e["kind"] == "alert"]
     assert len(alerts) == 1, "the same alert is reported once per cooldown"
     a = alerts[0]
-    assert a["what"].startswith("crash: abort()") and a["line"] == CRASH.strip()
+    assert a["what"] == "abort marker" and a["line"] == CRASH.strip()
     assert a["device_name"] == "STMicroelectronics STLINK-V3"
     assert CRASH in Path(a["log"]).read_text()
     br.end_session()
@@ -208,6 +209,7 @@ def test_a_crash_right_after_a_command_sent_through_benchscout_comes_with_that_c
     benchscout knew, and did not say. Its own record now comes with the event and with bench_log."""
     panic = (Path(__file__).parent.parent / "fixtures" / "real" / "esp32s3-testfw-panic.txt").read_text(encoding="utf-8")
     io, br, events = bench(tmp_path, {VCP: [{"after": 0.05, "text": "hb n=1 uptime_ms=1306\n"}]})
+    br.remember(VCP, "interpretation", "abort marker", data={"pattern": "abort", "alert": "abort marker"})
     io.data["replies"] = {VCP: {"panic\n": panic}}
     select(br, VCP)
     port = br.resolve_port(VCP)

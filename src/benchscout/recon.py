@@ -75,8 +75,8 @@ def build(io: Io) -> Bench:
         # identifies). One with a serial port, described in the data (a debug probe), or that the OS has no driver
         # for is bench hardware; any other (a keyboard, a camera, or a programmer benchscout has no data for) is
         # listed apart, so the agent still sees it. Hubs carry nothing: USB device class 09 where the OS says it (a
-        # Linux root hub is "xHCI Host Controller"), else the name.
-        if u.get("device_class") == 0x09 or "hub" in (u.get("name") or "").lower():
+        # Linux root hub is "xHCI Host Controller").
+        if u.get("device_class") == 0x09:
             continue
         other = (u["vid"], u["pid"]) not in K.USB_IDS and (u["vid"], u["pid"]) not in with_serial and not u.get("no_driver")
         unique = seen[(u["vid"], u["pid"], u.get("serial"))] == 1
@@ -137,7 +137,10 @@ def build(io: Io) -> Bench:
 
     for did, dev in list(b.devices.items()):
         info = K.USB_IDS.get((dev.vid, dev.pid), {"role": "unknown"}) if dev.vid is not None and dev.pid is not None else {"role": "unknown"}
-        serials = sorted(by_dev.get(did, []), key=lambda s: (s.get("channel", 99), s["device"]))
+        serials = sorted(by_dev.get(did, []), key=lambda s: (s.get("channel") or 0, s["device"]))
+        if seen[(dev.vid, dev.pid, dev.serial)] > 1:
+            # A serial-based cable selector cannot distinguish these physical units.
+            info = {"role": "unknown"}
         _apply_usb_knowledge(b, dev, info, serials, raw_usb.get(did, {"serial": dev.serial}))
 
     _libusb_interfaces(b)
@@ -229,19 +232,15 @@ def _serial_port(b: Bench, dev: Device, s: dict, kind: str = "serial", may_reset
 
 
 def _tool_args(info: dict, dev: Device, port: Port) -> dict[str, list[str]]:
-    """The usb entry's `tools`, filled in for this port. An argument whose value is unknown (no serial
-    number) is dropped together with the option that introduces it."""
+    """Omit an adapter when its selector cannot address this particular interface."""
     out = {}
     for tool, template in info.get("tools", {}).items():
-        args: list[str] = []
-        for a in template:
-            v = a.replace("{device.serial}", dev.serial or "").replace("{port.interface}", str(port.interface or 0))
-            if not v:
-                if args and args[-1].startswith("-"):
-                    args.pop()
-                continue
-            args.append(v)
-        out[tool] = args
+        if any("{device.serial}" in arg for arg in template) and not dev.serial:
+            continue
+        if any("{port.interface}" in arg for arg in template) and port.interface is None:
+            continue
+        out[tool] = [arg.replace("{device.serial}", dev.serial or "").replace("{port.interface}", str(port.interface))
+                     for arg in template]
     return out
 
 
@@ -285,11 +284,11 @@ def _apply_usb_knowledge(b: Bench, dev: Device, info: dict, serials: list[dict],
                                      evidence=[ev]))
                 jp.tools = _tool_args(info, dev, jp)
                 b.link(jp.id, reached[ch].id, "jtag", ev)
-            for i, s in enumerate(serials):
-                ch = s.get("channel", i)
-                if board["channels"].get(ch) == "uart":
+            for s in serials:
+                ch = s.get("channel")
+                if ch is not None and board["channels"].get(ch) == "uart":
                     reached[ch] = target(ch, "a UART, as the shipped wiring assumes (for safety; it names nothing)")
-                    p = _serial_port(b, dev, s)
+                    p = _serial_port(b, dev, s, may_reset=True)
                     b.link(p.id, reached[ch].id, "uart", ev)
             for ch, host in board["inside"].items():
                 if ch in reached and host in reached:
@@ -342,11 +341,14 @@ def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] 
             continue
         if port.device_id in keep:
             for got in (heard or {}).get(port.id, []):
+                if got.get("device") != port.device_id:
+                    continue
                 r.heard.setdefault(port.id, []).append(got)
                 _fold(b, targets, got, earlier=True, port=port)
             continue
 
         for got in _probe(io, b, port, listen_seconds, r.ran):
+            got["device"] = port.device_id
             got["time"] = time.strftime("%Y-%m-%d %H:%M")
             r.heard.setdefault(port.id, []).append(got)
             _fold(b, targets, got, port=port)

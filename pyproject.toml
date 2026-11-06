@@ -3,7 +3,7 @@ name = "benchscout"
 version = "0.1.0"
 description = "Bench recon broker: finds what is plugged in, says what it is (with evidence), and gates what an agent may do to it."
 requires-python = ">=3.11"
-dependencies = ["pyserial>=3.5"]
+dependencies = ["pyserial>=3.5", "pywin32>=312; sys_platform == 'win32'"]
 
 [project.optional-dependencies]
 mcp = ["mcp>=2.3"]

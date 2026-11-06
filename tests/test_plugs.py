@@ -102,7 +102,7 @@ def test_a_scan_does_not_open_what_the_session_is_using(bench):
     assert ("serial_listen", path) not in io.calls and ("serial_stream", path) not in io.calls
     kept = [f for t in br.bench.targets_via(br.resolve_port(path)) for f in t.facts if f.startswith("earlier log:")]
     assert kept, "what the first scan heard is still shown, marked as earlier"
-    assert ("serial_listen", "/dev/cu.usbserial-210319A8C7D11") in io.calls, "devices not in the session are probed again"
+    assert ("serial_listen", "/dev/cu.usbserial-210319A8C7D11") not in io.calls, "assumed wiring cannot authorize an open"
 
     # after a plug only the new device is probed
     io.calls.clear()

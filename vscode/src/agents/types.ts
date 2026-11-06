@@ -57,6 +57,6 @@ export const BENCHSCOUT_TOOLS = ["bench_scan", "bench_inventory_json", "bench_im
   "bench_register_resource", "bench_run", "bench_job", "bench_recipe"];
 
 export function isBenchscoutTool(name: string): boolean {
-  const n = name.replace(/^mcp__benchscout__/, "").replace(/^benchscout[-_]/, "");
-  return BENCHSCOUT_TOOLS.includes(n);
+  const prefix = "mcp__benchscout__";
+  return name.startsWith(prefix) && BENCHSCOUT_TOOLS.includes(name.slice(prefix.length));
 }

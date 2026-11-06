@@ -78,8 +78,12 @@ const DEVICE = "STMicroelectronics STLINK-V3";  // its console (fixtures/bench_e
 const DEVICE_ID = "/dev/cu.usbmodem21403";  // its port: the agent names the device by it
 const BENCH = join(mkdtempSync(join(tmpdir(), "benchscout-e2e-")), "bench.json");  // a copy: plugging in writes to it
 copyFileSync(join(repo, "fixtures", "bench_e2e.json"), BENCH);
+const workspace = join(BENCH, "..", "workspace");
+const knowledge = join(workspace, ".benchscout", "knowledge");
+mkdirSync(knowledge, { recursive: true });
+writeFileSync(join(knowledge, "fixture.toml"), '[[log]]\npattern = "HardFault"\nignore_case = true\nalert = "Matched HardFault"\n');
 let failed = false;
-ui("start", ...(flag("--vsix") ? ["--vsix", flag("--vsix")] : []), "--fixture", BENCH,
+ui("start", ...(flag("--vsix") ? ["--vsix", flag("--vsix")] : []), "--fixture", BENCH, "--workspace", workspace,
   "--core", core, "--language", "en");
 try {
   const step = (s) => console.log(`- ${s}`);

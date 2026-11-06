@@ -48,7 +48,7 @@ def broker(tmp_path):
 
 @pytest.mark.parametrize("cmd,expected", [
     # the standard's status and identity queries: SAFE, in any spelling
-    ("*IDN?", Effect.SAFE), (":syst:err?", Effect.SAFE), ("SYSTem:ERRor:NEXT?", Effect.SAFE), ("*IDN?;*OPC?", Effect.SAFE),
+    ("*IDN?", Effect.SAFE), (":syst:err?", Effect.DISRUPTIVE), ("SYSTem:ERRor:NEXT?", Effect.DISRUPTIVE), ("*ESR?", Effect.DISRUPTIVE), ("*IDN?;*OPC?", Effect.SAFE),
     # anything else asks; what the human allows covers that command only
     ("MEAS:CURR? CH1", Effect.DISRUPTIVE), ("READ?", Effect.DISRUPTIVE), ("*CLS", Effect.DISRUPTIVE),
     (":TRIG:MODE SING", Effect.DISRUPTIVE), ("DISP:BRIG 5", Effect.DISRUPTIVE), ("SYST:BEEP", Effect.DISRUPTIVE),

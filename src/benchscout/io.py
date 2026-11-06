@@ -114,7 +114,8 @@ def _exclusive(s) -> None:
     try:
         fcntl.ioctl(s.fileno(), termios.TIOCEXCL)
     except (OSError, AttributeError, ValueError):
-        pass  # (a fixture or a port without a tty: nothing to hold)
+        s.close()
+        raise
 
 
 class LiveIo:

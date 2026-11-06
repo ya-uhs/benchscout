@@ -75,7 +75,7 @@ load in `bench-session/`, which must look exactly like an end user's workspace.
   code are out of scope.
 - What exists today and what is next: docs/notes.md (現状, 次にやること). Shipped data is limited to
   how USB interfaces behave when opened, what they carry and how a tool reaches them, board
-  wiring, generic crash markers (across SDKs, not one vendor's), and external-tool actions; do not
+  wiring assumptions for impact warnings, and external-tool actions; do not
   grow it. `test_without_any_shipped_data_benchscout_only_gets_stricter` guards the rule that
   deleting it only makes benchscout stricter; `tests/test_unseen.py` keeps a bench of devices it
   ships nothing about (other MCUs, an unknown FPGA board, a probe, instruments) honest and cautious.

@@ -19,7 +19,7 @@ const en = {
   allowAllOff: "Turn off",
   autonomyAuto: "Autonomy: investigates on its own",
   autonomySuggest: "Autonomy: only suggests",
-  autonomyHint: "Press to switch. On its own: when a chosen device crashes or resets, benchscout wakes the agent to look. Only suggests: it asks you first. Anything that changes a device still waits for your OK either way.",
+  autonomyHint: "Press to switch. On its own: when a chosen device reconnects or matches an observation rule, benchscout wakes the agent to look. Only suggests: it asks you first. Anything that changes a device still waits for your OK either way.",
   toolTitle: (name: string) => `The agent wants to add a tool: ${name}`,
   toolBody: (cmd: string, effect: string, reason: string, evidence: string, probes: string) =>
     `Runs: \`${cmd}\`\nWhat it does: ${reason} (${effect})\nThe agent's source: ${evidence}`
@@ -135,7 +135,7 @@ const en = {
   noAgentFix: "Install GitHub Copilot CLI (npm install -g @github/copilot) or Claude Code, sign in to it, then press Rescan.",
   noAgentYet: "no agent chosen yet",
   offerWatch: (name: string) => `Watch ${name}?`,
-  offerWatchWhy: "Keeping its serial port open lets benchscout see everything it prints and notice crashes and resets.",
+  offerWatchWhy: "Keeping its serial port open lets benchscout see everything it prints and notice reconnections and matching log lines.",
   watchIt: "Watch it",
   notNow: "Not now",
   watching: (name: string) => `Watching ${name}`,
@@ -175,7 +175,7 @@ const ja: typeof en = {
   allowAllOff: "解除",
   autonomyAuto: "自律:自動で調べる",
   autonomySuggest: "自律:提案だけ",
-  autonomyHint: "押すと切り替わります。自動で調べる:選んだ機器がクラッシュやリセットをしたら、エージェントを起こして調べさせます。提案だけ:先にあなたに聞きます。どちらでも、機器の状態を変える操作はあなたの許可を待ちます。",
+  autonomyHint: "押すと切り替わります。自動で調べる:選んだ機器が再接続したり、登録した条件にログが一致したら、エージェントを起こして調べさせます。提案だけ:先にあなたに聞きます。どちらでも、機器の状態を変える操作はあなたの許可を待ちます。",
   toolTitle: (name: string) => `エージェントが道具の使い方を追加したいと言っています: ${name}`,
   toolBody: (cmd: string, effect: string, reason: string, evidence: string, probes: string) =>
     `実行する命令: \`${cmd}\`\nすること: ${reason}(${effect})\nエージェントが示した根拠: ${evidence}`
@@ -291,7 +291,7 @@ const ja: typeof en = {
   noAgentFix: "GitHub Copilot CLI(npm install -g @github/copilot)か Claude Code を入れてサインインし、再スキャンを押してください。",
   noAgentYet: "エージェント未選択",
   offerWatch: (name: string) => `${name} を見張りますか?`,
-  offerWatchWhy: "シリアルポートを開いたままにすると、出力をすべて記録し、クラッシュやリセットに気づけます。",
+  offerWatchWhy: "シリアルポートを開いたままにすると、出力をすべて記録し、再接続や登録した条件に一致するログを通知できます。",
   watchIt: "見張る",
   notNow: "今はしない",
   watching: (name: string) => `${name} を見張っています`,

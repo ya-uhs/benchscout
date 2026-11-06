@@ -426,3 +426,41 @@ def test_a_port_is_watched_at_the_rate_learned_for_it(tmp_path):
     br.select([br.bench.ports[port].device_id])
     assert br.watches[port].baud == 9600 and 9600 in br.io.bauds
     br.end_session()
+
+
+def test_duplicate_cable_serial_disables_ambiguous_tool_and_sensorhub_remains_visible():
+    from benchscout.recon import build
+
+    io = FixtureIo(FIXTURE)
+    cable = io.data["usb"][0]
+    io.data.update(usb=[cable, dict(cable, location="0x01190000"),
+                        dict(cable, name="SensorHub", vid="0x1234", pid="0x5678", device_class=255)],
+                   serial=[], visa={})
+    inventory = build(io)
+    assert len(inventory.devices) == 3
+    assert not any(p.tools for p in inventory.ports.values())
+
+
+def test_host_artifact_cannot_supply_a_device_quote(tmp_path):
+    br = bench(tmp_path, select=[VCP])
+    port = br.resolve_port(VCP)
+    br._save_artifact(f"{port}0-command.txt", "HOST-ONLY-MARKER", preview="")
+    assert br.identify(port, "incorrect", "HOST-ONLY-MARKER")["status"] == "unverified"
+    br.end_session()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX exclusive tty ioctl")
+def test_exclusive_open_failure_closes_the_port(monkeypatch):
+    import fcntl
+    from unittest.mock import Mock
+
+    from benchscout.io import LiveIo
+
+    port = Mock()
+    monkeypatch.setattr("serial.Serial", lambda: port)
+    def refused(*args):
+        raise OSError("exclusive access unavailable")
+    monkeypatch.setattr(fcntl, "ioctl", refused)
+    with pytest.raises(OSError, match="exclusive"):
+        LiveIo().serial_stream("fixture", exclusive=True)
+    port.close.assert_called_once()

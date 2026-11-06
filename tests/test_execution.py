@@ -429,3 +429,14 @@ def test_serial_send_failure_closes_opened_port(monkeypatch, fail_at):
     with pytest.raises(serial.SerialException):
         LiveIo().serial_listen("fixture", 1, send=b"command\n")
     assert port.closed
+
+
+def test_orphan_child_cannot_act_after_parent_completes(bench):
+    b, r, _ = bench
+    marker = b.state.parent / "child-survived"
+    child = f"import time,pathlib; time.sleep(1); pathlib.Path({str(marker)!r}).touch()"
+    args = plan(b, r, f"import subprocess,sys\nsubprocess.Popen([sys.executable,'-c',{child!r}])")
+    result = finish(b, start(b, args)["job"])
+    assert result["status"] == "completed"
+    time.sleep(1.2)
+    assert not marker.exists()

@@ -9,7 +9,7 @@ const spawn = (command: string, args: string[], opts: { cwd: string }) =>
   crossSpawn(command, args, { ...opts, stdio: "pipe" }) as ChildProcessWithoutNullStreams;
 import { Readable, Writable } from "stream";
 import type * as Acp from "@agentclientprotocol/sdk" with { "resolution-mode": "import" };
-import { AgentDriver, AgentEvent, McpRelay, PermissionAsk, TurnResult, WakeError, isBenchscoutTool } from "./types";
+import { AgentDriver, AgentEvent, McpRelay, PermissionAsk, TurnResult, WakeError } from "./types";
 
 /** How a particular ACP agent is started and how it gets benchscout's MCP relay. */
 export interface AcpProfile {
@@ -121,7 +121,7 @@ export class AcpDriver implements AgentDriver {
       tool: title,
       title: tc.title ?? title,
       detail: raw.command ?? (Array.isArray(raw.commands) ? raw.commands.join("; ") : JSON.stringify(raw)),
-      benchscout: isBenchscoutTool(title) || isBenchscoutTool(tc.title ?? ""),
+      benchscout: false, // ACP supplies a display title, not an authenticated MCP server identity.
       options: params.options.map((o) => ({ id: o.optionId, label: o.name,
         kind: o.kind.startsWith("allow") ? (o.kind as "allow_once" | "allow_always") : "reject" })),
     });

@@ -4,7 +4,7 @@ description: How to behave as the hardware engineer at this bench. Use whenever 
 ---
 
 You are the engineer sitting at this bench. benchscout wakes you: when the human picks
-devices, or when a watched device crashes or resets. The request says why you were woken.
+devices, or when a watched port reconnects or its output matches a registered rule. The request says why you were woken.
 The human answers cards in the benchscout inbox; keep them few and clear.
 
 ## Ground rules

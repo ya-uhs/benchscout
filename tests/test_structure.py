@@ -23,7 +23,7 @@ HOMES = {
                          {"actions.py", "protocols/lines.py", "protocols/scpi.py", "mcp_relay.py"}),
     "an external tool": (r"openFPGALoader|esptool|openocd|probe-rs", {"mcp_relay.py"}),
     "an operating system": (r"\bWindows\b|\bLinux\b|Darwin|win32|platform\.system",
-                            {"execution.py", "io.py", "winusb_strings.py", "runtime.py", "cli.py", "fetch.py", "locks.py", "memory.py",
+                            {"winjob.py", "execution.py", "io.py", "winusb_strings.py", "runtime.py", "cli.py", "fetch.py", "locks.py", "memory.py",
                              "knowledge.py", "report.py"}),
     "a branch on a port's kind": (r"\.kind\s*(==|!=|in)\s*[(\"]",
                                   {"protocols/lines.py", "protocols/scpi.py", "protocols/__init__.py", "recon.py"}),
@@ -48,13 +48,16 @@ def test_concrete_names_appear_only_in_their_home():
     for path in sorted(SRC.rglob("*.py")):
         rel = path.relative_to(SRC).as_posix()
         code = _code(path)
-        text = "\n".join(s for _, s in code)
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for what, (pattern, homes) in HOMES.items():
             if rel in homes:
                 continue
             lines = sorted({ln for ln, s in code if re.search(pattern, s)})
             if what == "a branch on a port's kind":  # (spans tokens: look at the joined code)
-                lines = [1] if re.search(pattern, text) else []
+                kinds = {"jtag", "swd", "serial", "resource", "lan-scpi", "usbtmc"}
+                lines = [node.lineno for node in ast.walk(tree) if isinstance(node, ast.Compare)
+                         and any(isinstance(n, ast.Attribute) and n.attr == "kind" for n in ast.walk(node))
+                         and any(isinstance(n, ast.Constant) and n.value in kinds for n in ast.walk(node))]
             if lines:
                 misplaced.append(f"{rel}: {what} at line(s) {lines}")
     assert not misplaced, "\n".join(misplaced)

@@ -311,13 +311,14 @@ def test_crash_without_guru_meditation_is_an_alert_that_survives_a_quiet_answer(
     br = Broker(FixtureIo(f), tmp_path / "s")
     br.scan()
     br.select([br.bench.ports["serial:usbmodem1101"].device_id])
+    br.remember("serial:usbmodem1101", "interpretation", "abort marker", data={"pattern": "abort", "alert": "abort marker"})
     for cmd in ("panic", "hang 3"):
         aid = br.request("serial.send", "serial:usbmodem1101", {"data": cmd})["approval_id"]
         br.decide(aid, True)
         br.request("serial.send", "serial:usbmodem1101", {"data": cmd}, approval_id=aid)
     br.scan()
     esp = esp_target(br.bench)
-    assert any(f.startswith("ALERT: crash: abort() at PC 0x42001c85") for f in esp.facts)
+    assert any(f.startswith("ALERT: abort marker") for f in esp.facts)
 
 
 def test_every_reason_has_a_code_the_panel_can_translate(tmp_path):

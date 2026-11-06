@@ -24,8 +24,8 @@ from .base import Judged, Protocol, Values
 # The last row is a list, and a list misses things (a generator's BSWV AMP). It only adds caution on top of a
 # default that is acceptable alone: a missed one still asks, shows the command, and its grant covers only it.
 SCPI_PORTS = ("usbtmc", "lan-scpi")  # the port kinds that carry SCPI
-_SCPI_SAFE = {"*IDN?", "*OPC?", "*ESR?", "*STB?", "*ESE?", "*SRE?", "*OPT?", "*LRN?", "*PSC?", "*PRE?",
-              "SYST:ERR?", "SYST:ERR:NEXT?", "SYST:ERR:COUN?", "SYST:ERR:ALL?", "SYST:VERS?"}
+_SCPI_SAFE = {"*IDN?", "*OPC?", "*STB?", "*ESE?", "*SRE?", "*OPT?", "*LRN?", "*PSC?", "*PRE?",
+              "SYST:ERR:COUN?", "SYST:VERS?"}
 _SCPI_STATUS_WRITES = {"*CLS", "*ESE", "*SRE", "*WAI", "*OPC"}
 _SCPI_PROCEDURES = {"*TST?", "*CAL?"}
 _SCPI_WHOLE_STATE = {"*RST", "*RCL", "*SAV", "*PUD"}

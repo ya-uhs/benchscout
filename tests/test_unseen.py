@@ -53,6 +53,7 @@ def test_a_crash_on_an_unseen_board_is_noticed_once_it_is_watched(tmp_path):
     br.on_event = events.append
     br.scan()
     br.select([br.bench.ports["serial:usbmodem14201"].device_id])
+    br.remember(PICO, "interpretation", "traceback", data={"pattern": "Traceback", "alert": "traceback"})
     offer = next(e["approval"] for e in events if e["event"] == "approval_requested")
     assert offer["by"] == "benchscout" and offer["action"] == "serial.watch", "watching an unknown board is asked first"
     br.decide(offer["id"], True)
@@ -60,7 +61,7 @@ def test_a_crash_on_an_unseen_board_is_noticed_once_it_is_watched(tmp_path):
     while not any(e.get("kind") == "alert" for e in events) and time.monotonic() < end:
         time.sleep(0.05)
     alert = next(e for e in events if e.get("kind") == "alert")
-    assert alert["what"] == "exception: Python traceback printed" and alert["device_name"] == "MicroPython Board in FS mode"
+    assert alert["what"] == "traceback" and alert["device_name"] == "MicroPython Board in FS mode"
     br.end_session()
 
 

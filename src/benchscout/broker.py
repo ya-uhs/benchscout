@@ -203,6 +203,12 @@ class Broker:
             later = {d for d, dev in self.last.bench.devices.items() if self._key(dev) != keys.get(d)}
             if later:
                 self._apply_memory(self.last.bench, only=later)
+            if before:
+                for tid in list(self.observed):
+                    old = {(p.id, p.device_id) for p in before.ports_reaching(tid)}
+                    new = {(p.id, p.device_id) for p in self.last.bench.ports_reaching(tid)}
+                    if not new or old != new:
+                        del self.observed[tid]
             for tid, kept in self.observed.items():
                 if tid not in self.last.bench.targets:
                     continue
@@ -949,23 +955,16 @@ class Broker:
     def _find_quote(self, target_id: str, quote: str) -> str | None:
         texts: list[tuple[str, str]] = []
         for p in self.bench.ports_reaching(target_id):
-            for run in list(self.runs.values()):
-                if len(run.plan.ports) == 1 and run.plan.ports[0][0] == p.id:
-                    for output in (run.stdout, run.stderr):
-                        if output.exists():
-                            texts.append((str(output), _tail(output, RECENT_FOR_QUOTES)))
             w = self.watches.get(p.id)
             if w:
                 texts.append(("the watched log", w.recent(RECENT_FOR_QUOTES)))
-            log = self.state / "logs" / (p.id.replace(":", "_") + ".log")
-            if log.exists():
-                texts.append((log.name, _tail(log, RECENT_FOR_QUOTES)))
-            for f in sorted(self.artifacts.glob(f"*{p.id.replace(':', '_')}*"))[-20:]:
-                texts.append((f.name, f.read_text(encoding="utf-8", errors="replace")))
+            for probe in self.recon.heard.get(p.id, []):
+                if probe.get("probe") in ("identity", "output") and probe.get("result"):
+                    texts.append(("device response", str(probe["result"])))
         for kind, (when, text) in self.observed.get(target_id, {}).items():
             texts.append((f"output seen {when}", text))
         for ev in self.bench.targets[target_id].evidence:
-            if ev.source not in ("learned", "board-knowledge", "agent-registration"):
+            if ev.source == "usb-descriptor":
                 texts.append((ev.source, ev.detail))
         return next((where for where, text in texts if quote in text), None)
 

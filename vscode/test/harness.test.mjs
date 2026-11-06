@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 
 /** Temp folders are best-effort: on Windows a core or agent that is still exiting keeps its folder busy. */
 function rmrf(dir) {
@@ -70,9 +70,13 @@ for (const [name, make] of [
       void h.answer(first.id, { option: ch340.id });
       const watch = await until(h, (c) => c.kind === "confirm" && /^Watch QinHeng USB Serial\?/.test(c.title));
       assert.deepEqual(watch.options.map((o) => o.id), ["once", "deny"], "benchscout offers to watch the device it cannot open safely");
-      const confirm = await until(h, (c) => c.kind === "confirm" && c.status === "open" && c !== watch);
+      if (name === "ACP agent") {
+        const scan = await until(h, (c) => c.kind === "confirm" && /bench_scan/.test(c.title));
+        await h.answer(scan.id, { option: "allow_once" });
+      }
+      const confirm = await until(h, (c) => c.kind === "confirm" && c.status === "open" && c !== watch && /rm -rf build/.test(c.detail));
       assert.match(confirm.detail, /rm -rf build/);   // the shell command reached the human
-      assert.ok(!h.cards.some((c) => c.kind === "confirm" && /bench_scan/.test(c.title)), "benchscout's own tool was not put to the human");
+      if (name !== "ACP agent") assert.ok(!h.cards.some((c) => c.kind === "confirm" && /bench_scan/.test(c.title)), "benchscout's own tool was not put to the human");
       assert.deepEqual(core.selected.length, 1);
       void h.answer(confirm.id, { option: confirm.options.find((o) => /deny/i.test(o.label)).id });
       const report = await until(h, (c) => c.kind === "report" && c.status === "open");
@@ -150,6 +154,9 @@ async function streamingBench(autonomy) {
   const root = mkdtempSync(join(win ? tmpdir() : "/tmp", "bsw"));
   const data = JSON.parse(readFileSync(join(repo, "fixtures", "bench_example.json"), "utf8"));
   data.streams = { "/dev/cu.usbmodem21403": [{ after: 0.5, text: "boot ok\n" }, { after: 1.0, text: "abort() was called at PC 0x42001c85 on core 1\n" }] };
+  const knowledge = join(root, ".benchscout", "knowledge");
+  mkdirSync(knowledge, { recursive: true });
+  writeFileSync(join(knowledge, "fixture.toml"), '[[log]]\npattern = "abort"\nalert = "Matched abort marker"\n');
   const fx = join(root, "bench.json");
   writeFileSync(fx, JSON.stringify(data));
   const env = { ...process.env, BENCHSCOUT_FIXTURE: fx, BENCHSCOUT_RUNTIME: root, BENCHSCOUT_MEMORY: join(root, "memory") };
@@ -213,7 +220,7 @@ test("an offered watch, once allowed, starts watching and says so", async () => 
     const first = await until(h, (c) => c.kind === "question");
     await core.select([first.options.find((o) => o.label.includes("USB Serial")).id]);  // as the panel does, without waking anyone
     const watch = await until(h, (c) => c.kind === "confirm" && /^Watch /.test(c.title));
-    assert.match(watch.body, /notice crashes and resets/);
+    assert.match(watch.body, /notice reconnections and matching log lines/);
     assert.match(watch.body, /\nOpening this port can reset the device/, "English: the core's own words, capitalised");
     void h.answer(watch.id, { option: "once" });
     const on = await until(h, (c) => c.kind === "notify" && /^Watching /.test(c.title));

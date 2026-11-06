@@ -118,6 +118,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "pyserial" },
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
 ]
 
 [package.optional-dependencies]
@@ -144,6 +145,7 @@ requires-dist = [
     { name = "pyserial", specifier = ">=3.5" },
     { name = "pyvisa", marker = "extra == 'visa'", specifier = ">=1.13" },
     { name = "pyvisa-py", marker = "extra == 'visa'", specifier = ">=0.7" },
+    { name = "pywin32", marker = "sys_platform == 'win32'", specifier = ">=312" },
 ]
 provides-extras = ["mcp", "visa"]
 
