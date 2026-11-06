@@ -449,3 +449,19 @@ test("the panel can stop a built-in listen without waiting for its full duration
     assert.equal((await request).result.status, "cancelled");
   } finally { done(); }
 });
+
+test("a failed answer stays available for retry and the panel shows why", async () => {
+  const { h, done } = await bench(() => { throw new Error("unexpected wake"); });
+  try {
+    let attempts = 0;
+    const card = h.ask("Use device?", "", [{ id: "allow", label: "Allow" }], () => {
+      if (++attempts === 1) throw new Error("device is busy");
+    });
+    await h.answer(card.id, { option: "allow" });
+    assert.equal(card.status, "open");
+    assert.ok(h.cards.some(c => c.title === s.answerFailed && c.body.includes("device is busy")));
+    await h.answer(card.id, { option: "allow" });
+    assert.equal(card.status, "closed");
+    assert.equal(attempts, 2);
+  } finally { done(); }
+});

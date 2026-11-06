@@ -99,7 +99,8 @@ def op_listen(ctx, port, args: dict):
         return dict(ctx._save_artifact(f"{port.id}-listen-{args['baud']}.txt", text, preview=text[-2000:]),
                     watched_log=str(w.log.resolve()))
     text = R.listen_into(ctx.io, port.path, ctx.bench.targets_via(port.id), args["seconds"],
-                         exclusive=True, baud=args["baud"], lines=port.open_lines, cancel=ctx.cancel_event)
+                         exclusive=True, baud=args["baud"], lines=port.open_lines, cancel=ctx.cancel_event,
+                         may_reopen=ctx.read_reopen_guard(port))
     if ctx.cancel_event is not None and ctx.cancel_event.is_set():
         return {"cancelled": True, **ctx._save_artifact(f"{port.id}-listen-cancelled.txt", text or "",
                                                            preview=(text or "")[-2000:])}
@@ -123,7 +124,8 @@ def op_send(ctx, port, args: dict):
         text, before = w.send(data, args["seconds"], until, ctx.cancel_event)
     else:  # opened for this call: nothing it printed before to tell its own lines by
         text, before = ctx.io.serial_listen(port.path, args["seconds"], args["baud"], True, port.open_lines,
-                                            send=data, until=until, cancel=ctx.cancel_event), None
+                                            send=data, until=until, cancel=ctx.cancel_event,
+                                            may_reopen=ctx.read_reopen_guard(port)), None
     R.apply_log(ctx.bench.targets_via(port.id), text, learned=ctx.bench.devices[port.device_id].line_rules)
     ctx.recon.proposals = R.propose(ctx.bench)
     ctx._remember(port.id, text)

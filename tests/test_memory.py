@@ -340,3 +340,43 @@ def test_a_memory_file_that_cannot_be_read_is_left_as_it_is(tmp_path):
         m.add("dev", Entry(kind="observation", text="x", source="benchscout"))
     assert f.read_text() == "[[entry]\nkind = 'observation'\n", "the person's file, as they left it"
     M.PROBLEMS.clear()
+
+
+def test_memory_lock_timeout_preserves_existing_file(tmp_path, monkeypatch):
+    import pytest
+    from benchscout import locks, memory
+
+    m = memory.Memory(tmp_path, root=tmp_path / "shared")
+    m.add("device", memory.Entry(kind="observation", text="already saved", source="agent"))
+    path = m.device_file("device").path
+    before = path.read_bytes()
+    monkeypatch.setattr(locks, "_try_lock", lambda f: False)
+    ticks = iter([0, 11])
+    from types import SimpleNamespace
+    monkeypatch.setattr(memory, "time", SimpleNamespace(monotonic=lambda: next(ticks), strftime=time.strftime))
+    with pytest.raises(TimeoutError, match="not writing without its lock"):
+        m.add("device", memory.Entry(kind="observation", text="must not overwrite", source="agent"))
+    assert path.read_bytes() == before
+
+
+def test_unrestricted_command_limits_round_trip_and_can_be_updated(tmp_path):
+    b = session(tmp_path, FIXTURE, VCP)
+    try:
+        args = {"command": "status", "effect": "disruptive", "limits": [None, {"min": 0, "max": 2}]}
+        assert b.remember(VCP, "command", "first", data=args)["status"] == "remembered"
+        entry = next(e for e in b.recall(VCP)[0]["entries"] if e["kind"] == "command")
+        assert entry["data"]["limits"] == args["limits"]
+        # Comparing against the saved None formerly raised AttributeError.
+        assert b.remember(VCP, "command", "second", data=dict(args, limits=[None, {"min": 0, "max": 1}]))["status"] == "remembered"
+    finally:
+        b.end_session()
+
+
+def test_command_limits_reject_nonfinite_bounds(tmp_path):
+    b = session(tmp_path, FIXTURE, VCP)
+    try:
+        for value in (float("nan"), float("inf"), float("-inf")):
+            assert b.remember(VCP, "command", "invalid", data={"command": "status", "effect": "safe",
+                              "limits": [{"max": value}]})["status"] == "rejected"
+    finally:
+        b.end_session()

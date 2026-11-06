@@ -74,11 +74,16 @@ class QuestionBook:
         try:
             if self.on_answer:  # e.g. select the devices first, so the agent's call returns the new selection
                 self.on_answer(q)
-        finally:
+        except Exception:
             with self._cond:
                 self._answering.discard(question_id)
-                q.status = "answered"
+                q.choice, q.reply = None, None
                 self._cond.notify_all()
+            raise
+        with self._cond:
+            self._answering.discard(question_id)
+            q.status = "answered"
+            self._cond.notify_all()
         self._emit({"event": "question_answered", "question": asdict(q)})
         return q
 

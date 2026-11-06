@@ -143,3 +143,20 @@ def test_a_port_handed_to_a_vm_is_noticed_though_its_device_stays_listed(bench):
     br.scan(only_new=True)
     assert ESP in br.bench.devices and port not in br.bench.ports
     assert not br.approvals.covered("serial.listen", port, Effect.DISRUPTIVE), "nothing allowed carries over"
+
+
+@pytest.mark.parametrize("release", ["unplug", "deselect"])
+def test_watch_reopen_permission_leaves_with_port(bench, release):
+    br, _, b = bench
+    br.select([ESP])
+    port = br.resolve_port(ESP_PORT)
+    req = br.request("serial.watch", port)
+    br.decide(req["approval_id"], True)
+    br.request("serial.watch", port, approval_id=req["approval_id"])
+    assert port in br.watch_approved and br.watches[port].alive
+    if release == "unplug":
+        b.unplug("0x303a")
+        br.scan(only_new=True)
+    else:
+        br.select([])
+    assert port not in br.watch_approved and port not in br.watches

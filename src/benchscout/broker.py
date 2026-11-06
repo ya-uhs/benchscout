@@ -11,6 +11,7 @@ Approvals live in memory (`ApprovalBook`); nothing on disk grants anything.
 from __future__ import annotations
 
 import json
+import math
 import re
 import threading
 import time
@@ -142,6 +143,10 @@ class Broker:
         # quiet answer does not wipe them (real bench: `hang` after `panic` lost the ESP32-S3).
         self.observed: dict[str, dict[str, tuple[str, str]]] = {}  # target id -> kind -> (time, text)
         self._lock = threading.RLock()
+        # Selection/scan/shutdown stay serialized while a worker finishes under _lock.
+        self._session_lock = threading.RLock()
+        self._jobs_changed = threading.Condition(self._lock)
+        self._stopping: set[str] = set()
         self.last: R.Recon | None = None
         # what benchscout itself did on the bench this session (action, port, args, who allowed it): a raw clue the agent
         # otherwise has to ask the human for (real bench, 2026-11-03: "did anyone send something just before the crash?")
@@ -170,6 +175,15 @@ class Broker:
         """Look at the bench again. A device in the session is never probed again (its watch and the agent's
         actions are using it; what its probes got before is kept). `only_new`: probe only devices that were not
         there at the last scan (a plug noticed by the core; design.md section 17)."""
+        with self._lock:
+            if self.last is None:
+                # Lazy first scan can be called with _lock already held. No
+                # previous inventory or running operation can need draining yet.
+                return self._scan(only_new)
+        with self._session_lock:
+            return self._scan(only_new)
+
+    def _scan(self, only_new: bool) -> R.Recon:
         from . import knowledge as K
 
         with self._lock:
@@ -224,6 +238,9 @@ class Broker:
         if went_ports:
             self._stop_runs({before.ports[p].device_id for p in went_ports})
             self.approvals.withdraw_ports(went_ports)
+            self.watch_approved.difference_update(went_ports)
+            for pid in went_ports:
+                self._unwatch(pid)
         for pid in [p for p, w in self.watches.items() if not w.alive]:  # it gave up waiting for the port
             self.watches.pop(pid)
         if any(moved(now, before, p) and now.ports[p].device_id in self.selected for p in now.ports):
@@ -273,7 +290,7 @@ class Broker:
     # ---- session (human, control channel) --------------------------------------
     def select(self, device_ids: list[str]) -> dict:
         """Set the session to exactly these devices. Each must be free in every other window."""
-        with self._lock:
+        with self._session_lock, self._lock:
             b = self.bench
             wanted = [self._resolve_device(d) for d in device_ids]
             busy: dict[str, dict] = {}
@@ -286,12 +303,14 @@ class Broker:
             new = {d for d in wanted if d not in busy}
             dropped = self.selected - new
             self._stop_runs(dropped)
+            ports = {p.id for d in dropped for p in b.ports_of(d)}
+            self.approvals.withdraw_ports(ports)
+            self.watch_approved.difference_update(ports)
+            for pid in ports:
+                self._unwatch(pid)
             for d in dropped:
                 if self.locks:
                     self.locks.release(d)
-            self.approvals.withdraw_ports({p.id for d in dropped for p in b.ports_of(d)})
-            for p in [p for d in dropped for p in b.ports_of(d)]:
-                self._unwatch(p.id)
             self.selected = new
             started = self._autowatch()
         out = {"selected": sorted(self.selected), "busy": busy, "watching": started}
@@ -678,7 +697,8 @@ class Broker:
         limits = data.get("limits")
         if limits is not None and (not isinstance(limits, list) or len(limits) > 16 or not all(
                 x is None or isinstance(x, dict) and x and set(x) <= {"min", "max"}
-                and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in x.values()) for x in limits)):
+                and all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                        and (not isinstance(v, float) or math.isfinite(v)) for v in x.values()) for x in limits)):
             return {"status": "rejected", "message": 'limits: a list, one item per value after the command: null (any value) '
                                                      'or {"min": number, "max": number} (either may be left out)'}
         if "eol" in data and data["eol"] not in LINE_ENDINGS:
@@ -956,7 +976,7 @@ class Broker:
         it notice crashes and resets; the agent does not have to think of it."""
         started = []
         for d in self.selected:
-            if self._run_owns(d):
+            if d in self._stopping or self._run_owns(d):
                 continue
             for p in self.bench.ports_of(d):
                 watch = self._watch_action(p)
@@ -1038,7 +1058,7 @@ class Broker:
         from .watch import PortWatch
 
         port = self.bench.ports[port_id]
-        if self._run_owns(port.device_id):
+        if port.device_id in self._stopping or self._run_owns(port.device_id):
             return False
         w = PortWatch(self.io, port_id, port.path, self.state / "logs", self._device_event, baud, port.open_lines,
                       patterns=self.bench.devices[port.device_id].line_rules, device_id=port.device_id,
@@ -1051,11 +1071,29 @@ class Broker:
         self.watches[port_id] = w
         return True
 
+    def read_reopen_guard(self, port):
+        # One direct operation can span re-enumeration. Keep its original open
+        # conditions and check the current selection and port before every retry.
+        allowed_risky_open = port.may_reset_on_open
+        cancel = self.cancel_event
+
+        def allowed(gone_after: float) -> bool:
+            with self._lock:
+                current = self.bench.ports.get(port.id)
+                if (current is None or current.device_id != port.device_id or current.path != port.path
+                        or port.device_id not in self.selected or port.device_id in self._stopping
+                        or cancel is not None and cancel.is_set()):
+                    return False
+                return allowed_risky_open or (not current.may_reset_on_open and gone_after >= OPEN_RESET_S)
+        return allowed
+
     def _may_reopen(self, w) -> tuple[bool, str]:
         """Asked by a watch before it opens its port again (design.md section 3: the broker decides every open). Read
         without the broker's lock: the session may be stopping the watch while it asks."""
         last = self.last
         port = last.bench.ports.get(w.port_id) if last else None
+        if w.device_id in self._stopping:
+            return False, "the device is stopping"
         if port is None or port.device_id != w.device_id:
             return False, "its port now belongs to another device, or is gone"
         if w.device_id not in self.selected:
@@ -1092,16 +1130,19 @@ class Broker:
             self._offer_watch(ev["port"])  # benchscout asks the human again, as it did the first time
 
     def end_session(self) -> None:
-        with self._lock:
-            self._stop_runs(set(self.selected))
-            self.approvals.withdraw_ports(set(self.bench.ports))
-        for pid in list(self.watches):
-            self._unwatch(pid)
-        with self._lock:
-            if self.locks:
-                self.locks.release_all()
-            self.selected = set()
-            self.approvals.end_session()
+        with self._session_lock:
+            with self._lock:
+                self._stop_runs(set(self.selected))
+                self.approvals.withdraw_ports(set(self.bench.ports))
+                # Deny new calls before dropping the lock to close watches.
+                self.selected = set()
+                self.watch_approved.clear()
+            for pid in list(self.watches):
+                self._unwatch(pid)
+            with self._lock:
+                if self.locks:
+                    self.locks.release_all()
+                self.approvals.end_session()
 
     # ---- agent-owned programs: no protocol or command interpretation -------------------
     def recipe(self, operation: str = "list", name: str = "", plan: dict | None = None,
@@ -1172,20 +1213,27 @@ class Broker:
         return getattr(self._operation, "cancel", None)
 
     def _native_view(self, j: _Job) -> dict:
-        status = "running" if not j.done.is_set() else "cancelled" if j.cancel.is_set() else "failed" if j.error else "completed"
+        result = (j.result or {}).get("result")
+        error = j.error or (result.get("error") if isinstance(result, dict) else None)
+        status = "running" if not j.done.is_set() else "cancelled" if j.cancel.is_set() else "failed" if error else "completed"
         return {"job": j.id, "status": status, "purpose": j.action, "resources": [j.port],
-                "stdout": "", "stderr": "", "error": str(j.error or ""), "observe": False, "result": j.result}
+                "stdout": "", "stderr": "", "error": str(error or ""), "observe": False, "result": j.result}
 
     def _stop_runs(self, devices: set[str]) -> None:
-        pending = [j for j in self._native_jobs.values() if j.device in devices and not j.done.is_set()]
-        for j in pending:
-            j.cancel.set()
-        for j in pending:
-            if not j.done.wait(20):
+        # Called under _lock. Waiting must release it: a native operation may be
+        # recording a safety observation under that same lock before it finishes.
+        self._stopping.update(devices)
+        try:
+            pending = [j for j in self._native_jobs.values() if j.device in devices and not j.done.is_set()]
+            for j in pending:
+                j.cancel.set()
+            if not self._jobs_changed.wait_for(lambda: all(j.done.is_set() for j in pending), timeout=20):
                 raise RuntimeError("operation shutdown not confirmed; ownership retained")
-        for r in self.runs.values():
-            if not r.done.is_set() and any(p[1] in devices for p in r.plan.ports):
-                r.stop()
+            for r in list(self.runs.values()):
+                if not r.done.is_set() and any(p[1] in devices for p in r.plan.ports):
+                    r.stop()
+        finally:
+            self._stopping.difference_update(devices)
 
     def run_state(self, job: str, stop: bool = False) -> dict:
         with self._lock:
@@ -1237,7 +1285,7 @@ class Broker:
         with self._lock:
             for pid, dev, address in plan.ports:
                 p = self.bench.ports.get(pid)
-                if not p or (p.device_id, p.path) != (dev, address) or dev not in self.selected:
+                if not p or (p.device_id, p.path) != (dev, address) or dev not in self.selected or dev in self._stopping:
                     return {"status": "resource_changed"}
             turns: list[threading.Lock] = []
             for dev in sorted({p[1] for p in plan.ports}):
@@ -1439,9 +1487,11 @@ class Broker:
                 else:
                     job.error = e
             finally:
-                if not self._run_owns(dev):
-                    turn.release()
-                job.done.set()
+                with self._jobs_changed:
+                    if not self._run_owns(dev):
+                        turn.release()
+                    job.done.set()
+                    self._jobs_changed.notify_all()
                 if native:
                     self._emit({"event": "run_changed", **self._native_view(job)})
                 self._operation.cancel = None
@@ -1468,6 +1518,8 @@ class Broker:
 
     def _outside_session(self, port_id: str) -> dict | None:
         dev = self.bench.ports[port_id].device_id
+        if dev in self._stopping:
+            return {"status": "stopping", "device": dev}
         if dev in self.selected:
             return None
         return {"status": "not_selected", "device": dev,
@@ -1583,7 +1635,7 @@ class Broker:
 
         with self._lock:
             current = self.bench.ports.get(port.id)
-            if dev.id not in self.selected or current is None or (current.device_id, current.path) != (dev.id, port.path):
+            if dev.id not in self.selected or dev.id in self._stopping or current is None or (current.device_id, current.path) != (dev.id, port.path):
                 return {"status": "resource_changed", "error": "device left the session before launch"}
             if tool_snapshot is not None and tool_snapshot != self._tool_snapshot(A.get(spec.name), port.id, args):
                 return {"status": "approval_mismatch", "error": "tool or inputs changed before launch"}

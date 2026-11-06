@@ -210,10 +210,12 @@ def _add_visa(b, res: str, names: dict | None = None) -> None:
 def op_message(ctx, port, args: dict):
     """A query or a command, by what the line is: an answer is read only when it asks for one."""
     if not any(h[0].endswith("?") for h in scpi_headers(args["command"])):
-        return {"sent": ctx.io.visa_write(port.path, args["command"])}
+        sent = ctx.io.visa_write(port.path, args["command"])
+        return {"sent": True} if sent else {"sent": False, "error": "could not send the command to the instrument"}
     if args.get("save"):
         return _save_capture(ctx, port, args["command"], args["save"])
-    return ctx.io.visa_query(port.path, args["command"])
+    answer = ctx.io.visa_query(port.path, args["command"])
+    return answer if answer is not None else {"error": "no answer from the instrument"}
 
 
 def _save_capture(ctx, port, command: str, kind: str) -> dict:

@@ -1,0 +1,21 @@
+{
+  "source": "bench-session product core, 30 second serial.listen stopped after approximately one second",
+  "results": [
+    {
+      "port": "serial:usbmodem1101",
+      "action": "serial.listen",
+      "effect": "safe",
+      "status": "cancelled",
+      "artifact": "20261106-094600-serial_usbmodem1101-listen-cancelled.txt",
+      "partial_output": "hb n=28381 uptime_ms=118305225"
+    },
+    {
+      "port": "serial:usbserial-101",
+      "action": "serial.listen",
+      "effect": "safe",
+      "status": "cancelled",
+      "artifact": "20261106-094601-serial_usbserial-101-listen-cancelled.txt",
+      "partial_output": "hb 0001ce0d"
+    }
+  ]
+}

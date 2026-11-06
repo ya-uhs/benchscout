@@ -103,3 +103,11 @@ test("control characters in args stay visible", () => {
 test("flash maps read as offset:file in hex", () => {
   assert.equal(describeArgs('{"images": [[0, "boot.bin"], [65536, "/fw/firmware.bin"]]}'), "images 0x0:boot.bin 0x10000:/fw/firmware.bin");
 });
+
+test("approval cards show nested arguments, tool definitions and input hashes", () => {
+  const plan = { args: { image: "firmware.bin", offset: 4096 },
+    definition: { argv: ["programmer", "--write", "{image}"] }, files: { "firmware.bin": "0123456789abcdef" } };
+  const text = describeArgs(JSON.stringify(plan));
+  for (const value of Object.values(plan)) assert.ok(text.includes(JSON.stringify(value)));
+  assert.ok(!text.includes("[object Object]"));
+});

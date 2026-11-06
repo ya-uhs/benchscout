@@ -306,6 +306,7 @@ export function describeArgs(args: string): string {
       if (Array.isArray(v) && v.length && v.every((p) => Array.isArray(p) && p.length === 2 && typeof p[0] === "number")) {
         return v.map(([o, f]) => `0x${(o as number).toString(16)}:${f}`).join(" ");
       }
+      if (v !== null && typeof v === "object") return JSON.stringify(v);
       // control characters (a "\n" line ending) are shown escaped, not as a real line break
       return typeof v === "string" && /[\x00-\x1f]/.test(v) ? JSON.stringify(v) : String(v);
     };

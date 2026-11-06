@@ -524,3 +524,22 @@ def test_a_tool_that_overruns_is_stopped_with_what_it_printed():
     assert code is None and "started" in text and "stopped after 1 s" in text
     text, code = run_tool([sys.executable, "-c", "import sys; print(sys.stdin.read() == '')"], timeout=10)
     assert (text.strip(), code) == ("True", 0), "its stdin is empty, not ours"
+
+
+def test_failed_device_selection_does_not_answer_question():
+    from benchscout.questions import QuestionBook
+
+    events = []
+    book = QuestionBook(on_event=events.append)
+    q = book.ask("Use the device?", ["allow", "deny"], kind="devices")
+    def fail(_):
+        raise RuntimeError("device shutdown not confirmed")
+    book.on_answer = fail
+    import pytest
+    with pytest.raises(RuntimeError):
+        book.answer(q.id, "allow")
+    assert book.wait(q.id, 0).status == "pending"
+    assert q.choice is None
+    assert not any(e["event"] == "question_answered" for e in events)
+    book.on_answer = None
+    assert book.answer(q.id, "deny").status == "answered"

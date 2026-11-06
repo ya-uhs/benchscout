@@ -10,6 +10,7 @@ optionally limits on its values), else by the protocol's default; the strongest 
 from __future__ import annotations
 
 import re
+import math
 from typing import Callable
 
 from ..policy_types import Effect
@@ -61,7 +62,8 @@ def _number(text: str) -> float | None:
     """A plain number (3.3, -1, 2e-3). A value with a unit suffix or a keyword (MAX, DEF) is not one: it asks."""
     if not re.fullmatch(r"[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?", text.strip()):
         return None
-    return float(text)
+    value = float(text)
+    return value if math.isfinite(value) else None
 
 
 def outside(limits: list, args: list[str]) -> str:

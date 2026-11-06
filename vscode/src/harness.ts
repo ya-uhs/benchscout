@@ -116,7 +116,16 @@ export class Harness extends EventEmitter {
     card.status = "closed";
     card.answer = a.text ?? card.options.find((o) => o.id === a.option)?.label ?? a.option;
     this.changed();
-    await h(a);
+    try {
+      await h(a);
+    } catch (error) {
+      if (this.cards.includes(card)) {
+        card.status = "open";
+        card.answer = undefined;
+        this.handlers.set(card.id, h);
+      }
+      this.notify(this.s.answerFailed, String(error));
+    }
   }
 
   /** Free text typed into the box at the top: always a way to say what you want. */
@@ -233,7 +242,7 @@ export class Harness extends EventEmitter {
         kind: "confirm", title: this.s.offerWatch(a.subject || a.port), body: `${this.s.offerWatchWhy}\n${this.reason(a)}`,
         detail: a.port, effect: a.effect, freeText: false,
         options: [{ id: "once", label: this.s.watchIt, primary: true }, { id: "deny", label: this.s.notNow }],
-      }, (ans) => this.core.decide(a.id, ans.option === "once", "once").catch(() => undefined), `approval:${a.id}`);
+      }, (ans) => this.core.decide(a.id, ans.option === "once", "once"), `approval:${a.id}`);
       return;
     }
     const fetch = a.fetch ? `\n${this.s.fetchFirst}: ${a.fetch}` : "";
@@ -254,7 +263,7 @@ export class Harness extends EventEmitter {
       detail: `${a.port} · ${describeArgs(a.args)}${a.impact.affected_ports.length ? ` · ${this.s.alsoAffects}: ${a.impact.affected_ports.join(", ")}` : ""}`,
       effect: a.effect, options, freeText: false,
     }, (ans) => this.core.decide(a.id, ans.option !== "deny",
-      ans.option === "session" || ans.option === "always" || ans.option === "all" ? ans.option : "once").catch(() => undefined),
+      ans.option === "session" || ans.option === "always" || ans.option === "all" ? ans.option : "once"),
     `approval:${a.id}`);
   }
 
@@ -299,7 +308,7 @@ export class Harness extends EventEmitter {
       kind: "confirm", title: this.s.toolTitle(p.tool.name), effect: p.tool.effect, freeText: false,
       body: this.s.toolBody(p.tool.argv.join(" "), this.s.effect[p.tool.effect] ?? p.tool.effect, p.tool.reason, p.evidence, probes),
       options: [{ id: "accept", label: this.s.toolAccept, primary: true }, { id: "reject", label: this.s.toolReject }],
-    }, (a) => this.core.toolDecide(p.id, a.option === "accept").catch(() => undefined), `tool:${p.id}`);
+    }, (a) => this.core.toolDecide(p.id, a.option === "accept"), `tool:${p.id}`);
   }
 
   /** One card per tool download, updated in place as it goes, like VS Code's own download notices. */
@@ -330,13 +339,13 @@ export class Harness extends EventEmitter {
       this.add({
         kind: "question", title: this.s.agentWantsDevices(names), body: q.data.reason ?? "",
         options: [{ id: "allow", label: this.s.allowDevices, primary: true }, { id: "deny", label: this.s.denyDevices }], freeText: true,
-      }, (a) => this.core.answer(q.id, a.text ? null : a.option!, a.text).catch(() => undefined), `question:${q.id}`);
+      }, (a) => this.core.answer(q.id, a.text ? null : a.option!, a.text), `question:${q.id}`);
       return;
     }
     this.add({
       kind: "question", title: this.s.agentAsks, body: q.text,
       options: q.options.map((o, i) => ({ id: o, label: o, primary: i === 0 })), freeText: true,
-    }, (a) => this.core.answer(q.id, a.text ? null : a.option!, a.text).catch(() => undefined), `question:${q.id}`);
+    }, (a) => this.core.answer(q.id, a.text ? null : a.option!, a.text), `question:${q.id}`);
   }
 
   // ---- memory: written without asking; only what loosens safety waits for the human ---------
@@ -354,13 +363,13 @@ export class Harness extends EventEmitter {
     if (e.status === "pending") {
       this.add({ kind: "memory", title: this.s.learnedSafety(name), body, detail, freeText: false,
         options: [{ id: "accept", label: this.s.accept, primary: true }, { id: "reject", label: this.s.reject }] },
-        (a) => this.core.memoryDecide(m.key, e.id, a.option === "accept").catch(() => undefined), `memory:${e.id}`);
+        (a) => this.core.memoryDecide(m.key, e.id, a.option === "accept"), `memory:${e.id}`);
       return;
     }
     // remembered: shown as a record; "forget" removes it (the human can always edit the file too)
     this.add({ kind: "memory", title: this.s.learned(name), body, detail, freeText: false,
       options: [{ id: "forget", label: this.s.forget }] },
-      (a) => (a.option === "forget" ? this.core.memoryDelete(m.key, e.id).catch(() => undefined) : undefined), `memory:${e.id}`);
+      (a) => (a.option === "forget" ? this.core.memoryDelete(m.key, e.id) : undefined), `memory:${e.id}`);
   }
 
   // ---- noticing: plugs and unplugs, and events from the watched devices ------------------------

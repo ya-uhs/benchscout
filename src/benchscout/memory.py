@@ -82,7 +82,12 @@ def dump(entries: list[Entry], header: dict) -> str:
         out.append(f"{k} = {_toml_value(v)}")
     for e in entries:
         out.append("\n[[entry]]")
-        for k, v in asdict(e).items():
+        values = asdict(e)
+        # TOML has no null. Empty tables represent unrestricted argument slots;
+        # decode them back to None before policy compares old and new limits.
+        if e.kind == "command" and isinstance(e.data.get("limits"), list):
+            values["data"]["limits"] = [{} if x is None else x for x in e.data["limits"]]
+        for k, v in values.items():
             if v in ("", {}, None) and k not in ("text", "kind"):
                 continue
             out.append(f"{k} = {_toml_value(v)}")
@@ -109,6 +114,10 @@ class MemoryFile:
                 return
             PROBLEMS.pop(str(self.path), None)
             self.header = {k: v for k, v in data.items() if k != "entry"} or self.header
+            for entry in entries:
+                if entry.kind == "command" and isinstance(entry.data.get("limits"), list):
+                    # "None" was written by older versions; keep those files usable.
+                    entry.data["limits"] = [None if x == {} or x == "None" else x for x in entry.data["limits"]]
             self.entries = entries
 
     def save(self) -> None:
@@ -134,7 +143,8 @@ class _FileLock:
         end = time.monotonic() + 10
         while not _try_lock(self.f):
             if time.monotonic() > end:
-                break  # another core stuck: write anyway rather than lose what was learned
+                self.f.close()
+                raise TimeoutError(f"memory is busy; not writing without its lock: {self.path}")
             time.sleep(0.01)
         return self
 

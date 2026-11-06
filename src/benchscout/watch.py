@@ -184,7 +184,8 @@ class PortWatch:
     def _reopen(self) -> tuple[bool, str]:
         deadline = time.monotonic() + REAPPEAR_S
         while time.monotonic() < deadline and not self._stop.is_set():
-            time.sleep(0.1)
+            if self._stop.wait(0.1):
+                break
             if not self.io.port_present(self.path):
                 continue
             if self.may_reopen:

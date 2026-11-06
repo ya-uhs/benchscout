@@ -351,3 +351,21 @@ def test_an_instrument_found_through_visa_is_bench_hardware_even_without_data_fo
     came from the VISA list, and it vanished from the first question."""
     scope = next(d for d in r.bench.devices.values() if d.vid == 0x1AB1)
     assert not scope.other and any(p.kind == "usbtmc" for p in r.bench.ports_of(scope.id))
+
+
+def test_safe_direct_read_does_not_reopen_after_an_unexpected_reset(tmp_path):
+    path = "/dev/cu.usbmodem21403"
+    io = _variant(tmp_path, lambda d: d["listen"].update({path: {"then": "must not be read"}}))
+    br = Broker(io, tmp_path / "s")
+    br.scan()
+    port = br.bench.ports[br.resolve_port(path)]
+    br.select([port.device_id])
+    try:
+        br._unwatch(port.id)  # exercise a one-shot read, not an existing watch
+        assert not port.may_reset_on_open
+        response = br.request("serial.listen", port.id)
+        assert response["result"].get("error")
+        assert port.may_reset_on_open
+        assert all("must not be read" not in f for t in br.bench.targets_via(port.id) for f in t.facts)
+    finally:
+        br.end_session()

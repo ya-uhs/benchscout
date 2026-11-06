@@ -29,6 +29,7 @@ const en = {
   toolReject: "Do not add",
   downloading: (tool: string) => `Downloading ${tool}`,
   downloaded: (tool: string) => `Downloaded ${tool}`,
+  answerFailed: "Could not apply your answer",
   downloadFailed: (tool: string) => `Could not download ${tool}`,
   downloadBody: (got: string, total: string | null) => (total ? `${got} of ${total} MB` : `${got} MB so far`) +
     " · from its official release, checked against its pinned SHA-256. The agent's request goes on when it is done.",
@@ -184,6 +185,7 @@ const ja: typeof en = {
   toolReject: "追加しない",
   downloading: (tool: string) => `${tool} をダウンロード中`,
   downloaded: (tool: string) => `${tool} をダウンロードしました`,
+  answerFailed: "回答を反映できませんでした",
   downloadFailed: (tool: string) => `${tool} をダウンロードできませんでした`,
   downloadBody: (got: string, total: string | null) => (total ? `${got} / ${total} MB` : `${got} MB`) +
     " · 公式のリリースから取得し、固定した SHA-256 で確かめます。終わるとエージェントの依頼が続きます。",

@@ -342,3 +342,90 @@ def test_invalid_recipe_file_is_preserved(bench):
     with pytest.raises(ValueError):
         b.recipe("save", "new", plan(b, r, "print('no')"))
     assert path.read_text() == "broken"
+
+
+@pytest.mark.parametrize("stop", ["deselect", "shutdown"])
+def test_shutdown_allows_native_safety_recording_but_rejects_new_work(bench, monkeypatch, stop):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from benchscout import protocols
+
+    b, _, events = bench
+    port = b.resolve_port("/dev/cu.usbmodem21403")
+    device = b.bench.ports[port].device_id
+    b.select([device])
+    entered, recorded, finish_record = Event(), Event(), Event()
+
+    def operation(ctx, p, args):
+        entered.set()
+        assert ctx.cancel_event.wait(5)
+        # The real reset observation takes this lock too. Shutdown must let it
+        # finish, while retaining selection/ownership and rejecting new work.
+        ctx._reset_on_open(p.id, "vanished during the operation")
+        recorded.set()
+        assert finish_record.wait(5)
+        return {}
+
+    monkeypatch.setitem(protocols.OPERATIONS, "serial.listen", operation)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        call = pool.submit(b.request, "serial.listen", port, {"seconds": 30})
+        assert entered.wait(5)
+        stopping = pool.submit(b.select, []) if stop == "deselect" else pool.submit(b.end_session)
+        try:
+            assert recorded.wait(5), "shutdown held the lock needed to record the safety observation"
+            assert device in b.selected
+            assert not stopping.done()
+            assert b.request("serial.listen", port)["status"] == "stopping"
+            assert b.run_program([port], [sys.executable, "-c", "pass"], "must not start")["status"] == "stopping"
+        finally:
+            finish_record.set()
+        stopping.result(timeout=5)
+        assert call.result(timeout=5)["status"] == "cancelled"
+    assert not b.selected
+    assert b.bench.ports[port].may_reset_on_open
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), "nan", "1e999"])
+def test_nonfinite_native_duration_is_rejected_before_start(bench, value):
+    b, _, events = bench
+    result = b.request("serial.listen", "/dev/cu.usbmodem21403", {"seconds": value})
+    assert result["status"] == "invalid_args"
+    assert not any(e.get("event") == "run_changed" for e in events)
+
+
+def test_native_operation_error_is_a_failed_job(bench, monkeypatch):
+    from benchscout import protocols
+
+    b, _, events = bench
+    port = b.resolve_port("/dev/cu.usbmodem21403")
+    b.select([b.bench.ports[port].device_id])
+    monkeypatch.setitem(protocols.OPERATIONS, "serial.listen", lambda *_: {"error": "port disappeared"})
+    b.request("serial.listen", port)
+    job = next(e["job"] for e in events if e.get("event") == "run_changed")
+    assert b.run_state(job)["status"] == "failed"
+    assert b.run_state(job)["error"] == "port disappeared"
+
+
+@pytest.mark.parametrize("fail_at", ["write", "flush"])
+def test_serial_send_failure_closes_opened_port(monkeypatch, fail_at):
+    import serial
+    from benchscout.io import LiveIo
+
+    class Port:
+        closed = False
+        def open(self):
+            pass
+        def write(self, data):
+            if fail_at == "write":
+                raise serial.SerialException("send failed")
+        def flush(self):
+            if fail_at == "flush":
+                raise serial.SerialException("flush failed")
+        def close(self):
+            self.closed = True
+
+    port = Port()
+    monkeypatch.setattr(serial, "Serial", lambda: port)
+    with pytest.raises(serial.SerialException):
+        LiveIo().serial_listen("fixture", 1, send=b"command\n")
+    assert port.closed

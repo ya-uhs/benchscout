@@ -285,3 +285,13 @@ def test_an_ieee_block_is_taken_apart_and_anything_else_is_kept():
     assert ieee_block(b"#0raw bytes to the end\n") == b"raw bytes to the end"
     assert ieee_block(b"1.23E-3\n") == b"1.23E-3\n", "not a block: as it came"
     assert ieee_block(b"#x") == b"#x" and ieee_block(b"#9123") == b"#9123"
+
+
+def test_failed_instrument_io_is_an_operation_error():
+    from types import SimpleNamespace
+    from benchscout.protocols.scpi import op_message
+
+    ctx = SimpleNamespace(io=SimpleNamespace(visa_write=lambda *_: False, visa_query=lambda *_: None))
+    port = SimpleNamespace(path="fixture")
+    assert op_message(ctx, port, {"command": "*CLS"})["error"]
+    assert op_message(ctx, port, {"command": "*IDN?"})["error"]

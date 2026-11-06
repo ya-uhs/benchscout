@@ -39,7 +39,7 @@ class Io(Protocol):
     def visa_query_raw(self, resource: str, command: str) -> bytes | None: ...  # the answer's bytes (a block, an image)
     def visa_write(self, resource: str, command: str) -> bool: ...  # True once sent
     def serial_listen(self, path: str, seconds: float, baud: int, exclusive: bool = False, lines: str = "low",
-                      send: bytes | None = None, until: re.Pattern | None = None, cancel=None) -> str: ...
+                      send: bytes | None = None, until: re.Pattern | None = None, cancel=None, may_reopen=None) -> str: ...
     # `send` is written once, right after opening; a whole line matching `until` ends the read early (codec.py)
     def run_probe(self, argv: list[str], timeout: float) -> str | None: ...  # a probe tool's output (tools.toml `probe`)
 
@@ -294,7 +294,7 @@ class LiveIo:
             return False
 
     def serial_listen(self, path: str, seconds: float, baud: int = 115200, exclusive: bool = False,
-                      lines: str = "low", send: bytes | None = None, until: re.Pattern | None = None, cancel=None) -> str:
+                      lines: str = "low", send: bytes | None = None, until: re.Pattern | None = None, cancel=None, may_reopen=None) -> str:
         """Read for `seconds` (after writing `send`, if given), or until a whole line matches `until`. If the port vanishes (a native-USB chip resets on open and
         re-enumerates; real bench 2026-10-31), wait for it to come back and keep reading, so
         the boot log is caught. Reopening can reset the chip again, so at most REOPENS times."""
@@ -323,11 +323,11 @@ class LiveIo:
         if cancel is not None and cancel.is_set():
             return ""
         s = open_port()
-        if send and not (cancel is not None and cancel.is_set()):
-            s.write(send)
-            s.flush()
         reopens = 0
         try:
+            if send and not (cancel is not None and cancel.is_set()):
+                s.write(send)
+                s.flush()
             from .codec import ended
 
             while time.monotonic() < end and not (cancel is not None and cancel.is_set()):
@@ -341,8 +341,9 @@ class LiveIo:
                     s.close()
                     gone_at = time.monotonic() - start
                     s = None
-                    if reopens < REOPENS:
-                        s = self._wait_reopen(open_port, max(end, time.monotonic() + REAPPEAR_S), cancel)
+                    if reopens < REOPENS and may_reopen is not None:
+                        s = self._wait_reopen(open_port, max(end, time.monotonic() + REAPPEAR_S),
+                                              cancel, lambda: may_reopen(gone_at))
                     if s is None:
                         why = f"vanished again after {reopens} reopen(s)" if reopens >= REOPENS else "did not come back"
                         if not buf.strip():
@@ -359,13 +360,15 @@ class LiveIo:
         return buf.decode("utf-8", errors="replace")
 
     @staticmethod
-    def _wait_reopen(open_port, deadline: float, cancel=None):
+    def _wait_reopen(open_port, deadline: float, cancel, allowed):
         while time.monotonic() < deadline:
             if cancel is not None:
                 if cancel.wait(0.1):
                     return None
             else:
                 time.sleep(0.1)
+            if not allowed():
+                return None
             try:
                 return open_port()
             except Exception:
@@ -603,7 +606,7 @@ class FixtureIo:
         return resource in self.data.get("visa", {})
 
     def serial_listen(self, path: str, seconds: float, baud: int = 115200, exclusive: bool = False,
-                      lines: str = "low", send: bytes | None = None, until: re.Pattern | None = None, cancel=None) -> str:
+                      lines: str = "low", send: bytes | None = None, until: re.Pattern | None = None, cancel=None, may_reopen=None) -> str:
         if send is not None:  # what a device answers is recorded per sent text in "replies"
             self.calls.append(("serial_send", path, send))
             return self.data.get("replies", {}).get(path, {}).get(send.decode(errors="replace"), "")
@@ -614,6 +617,8 @@ class FixtureIo:
         self.bauds.append(baud)
         v = self.data.get("listen", {}).get(path, "")
         if isinstance(v, dict) and "then" in v:  # vanishes, comes back, keeps printing
+            if may_reopen is None or not may_reopen(0.1):
+                raise PortGone("port vanished; reopening was not authorized")
             return f"\n{VANISHED_MARK} at 0.1 s; reopened at 0.9 s\n" + v["then"]
         if isinstance(v, dict) and "error" in v:  # simulate a port that vanishes for good
             raise OSError(6, v["error"])

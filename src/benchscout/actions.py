@@ -8,6 +8,7 @@ means, so the policy, the broker and the MCP tool descriptions cannot drift apar
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 
 from .policy_types import Effect
@@ -74,6 +75,8 @@ class Param:
         return self._range(v)
 
     def _range(self, v):
+        if isinstance(v, float) and not math.isfinite(v):
+            raise ArgError(f"{self.name} must be a finite number")
         if self.min is not None and v < self.min or self.max is not None and v > self.max:
             raise ArgError(f"{self.name}={v} is out of range [{self.min}, {self.max}]")
         return v
