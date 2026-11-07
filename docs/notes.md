@@ -687,4 +687,5 @@ Codex の監査(docs/audit-2026-11-07.md、基準 fc2cefc)を引き継ぎ、判�
 実機(SAFE だけ):ESP32-S3 はリセットなし、Tang Nano は openFPGALoader で GW1N(R)-9C。**macOS の FTDI のポート名は「USB の場所 >> 16
 の 16 進 + チャネル番号」**(`usbserial-100` / `-101`、場所 0x00100000、fixtures/real/macos_locations_2026-11-03.json)で、名前にシリアル
 番号が無いとチャネルが読めない。11-06 の変更以降は一覧から消えていた。今は不明なポートとして出て、開く前に確認する(監査 #33、macOS は対象外の方針で残り)。
-検査:Python 306 件成功・1 skip、mypy(通常と win32)、ruff、拡張 40 件、e2e。残りは監査メモの「残り」。
+報告の前に Codex の検証待ちの所見と照合し、記憶を ID だけで当てはめていた件(Linux の ttyUSB0 のように名前が挿した順で変わると、別の個体の「開いても安全」が効いた)を見つけて直した(#34)。
+検査:Python 307 件成功・1 skip、mypy(通常と win32)、ruff、拡張 40 件、e2e。残りは監査メモの「残り」。

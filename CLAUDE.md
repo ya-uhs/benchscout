@@ -133,7 +133,8 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
   means "may reset". A tool argument naming the unit (`{device.serial}`, `{port.path}`) is filled only where it singles
   the unit out (`recon.unit_args`); otherwise the tool does not run. A name remembered for a unit that cannot be told
   apart is shown as a maybe. A quote is checked against the device's output less what benchscout sent (echoes).
-  A call that waited for the human is judged again before it runs (docs/audit-2026-11-07.md).
+  A call that waited for the human is judged again before it runs. A unit's memory applies only to the ports and
+  targets it has now (ids follow the OS's names, which another unit may have) (docs/audit-2026-11-07.md).
 - Runtime contracts (design.md §3, review 7): every open or reopen of a device port is decided by the broker on the current
   state (selected, same unit, safe to open now); an approval binds to the resolved content (bytes, argv, definition); an
   operation's effect is the strongest of its steps (open, settings, content, tool); "loosening" is judged against the

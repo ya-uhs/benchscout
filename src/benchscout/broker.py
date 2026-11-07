@@ -519,6 +519,8 @@ class Broker:
             for e in self.memory.entries(self._key(dev)):
                 if e.status != "active" and not (e.kind == "command" and e.status == "pending"):
                     continue  # (a command waiting for the human is still usable, gated like serial.send)
+                if not self._owns(bench, dev, e.target):
+                    continue  # that name is another unit's now (port names follow the OS: /dev/ttyUSB0 by plug order)
                 when = f"{e.time[:10]}, {e.source}"
                 if e.kind == "identity" and e.target in bench.targets:
                     t = bench.targets[e.target]
@@ -816,10 +818,20 @@ class Broker:
                     and self._command_key(port, old.data.get("command", "")) == same):
                 self.memory.set_status(key, old.id, "superseded")
 
-    def _load_command(self, bench, dev, e) -> None:
+    @staticmethod
+    def _owns(bench, dev, target: str) -> bool:
+        """The port or target an entry of this unit's memory is about is this unit's now (or it is about the unit
+        itself). Ids follow the OS's names, which another unit may have now (audit 2026-11-07, 34)."""
+        if not target:
+            return True
+        port = bench.ports.get(target)
+        if port is not None:
+            return port.device_id == dev.id
+        return any(p.device_id == dev.id for p in bench.ports_reaching(target)) if target in bench.targets else False
 
+    def _load_command(self, bench, dev, e) -> None:
         port = bench.ports.get(e.target)
-        if not port or e.status not in ("active", "pending"):
+        if not port or port.device_id != dev.id or e.status not in ("active", "pending"):
             return
         effect = e.data.get("effect", "disruptive")
         key = self._command_key(port, e.data["command"])
@@ -841,8 +853,8 @@ class Broker:
             e = next((x for x in self.memory.entries(key) if x.id == entry_id), None)
             self.memory.delete(key, entry_id)
             self._emit({"event": "memory_forgotten", "key": key, "id": entry_id})
-            if e and self.last and e.target in self.last.bench.ports:
-                port = self.last.bench.ports[e.target]
+            port = self._port_of_key(key, e.target) if e else None
+            if e and port:
                 if e.kind == "command":
                     self._reload_command(key, port, e.data.get("command", ""))
                 if e.kind == "safety" and e.data.get("listen_safe"):
@@ -852,6 +864,13 @@ class Broker:
                     if self._key(dev) == key:
                         self._refresh_patterns(dev)
         return {"deleted": entry_id}
+
+    def _port_of_key(self, key: str, port_id: str):
+        """The port, if it is the unit's whose memory `key` is (another unit may have that port name now)."""
+        if self.last is None:
+            return None
+        port = self.last.bench.ports.get(port_id)
+        return port if port is not None and self._key(self.last.bench.devices[port.device_id]) == key else None
 
     def recall(self, ref: str | None = None) -> list[dict]:
         from dataclasses import asdict
@@ -886,12 +905,12 @@ class Broker:
         if waiting.status != "pending":  # decided, contradicted or replaced since its card was shown
             raise ValueError(f"memory entry {entry_id} is {waiting.status}, not waiting for a decision")
         e = self.memory.set_status(key, entry_id, "active" if accept else "rejected")
-        if accept and e.kind == "safety" and self.last and e.target in self.last.bench.ports and e.data.get("listen_safe"):
-            port = self.last.bench.ports[e.target]
-            if self._one_unit(self.last.bench, self.last.bench.devices[port.device_id]):  # as it is applied after a restart
-                port.may_reset_on_open = False
-        if e.kind == "command" and self.last and e.target in self.last.bench.ports:
-            port = self.last.bench.ports[e.target]
+        mine = self._port_of_key(key, e.target)
+        if accept and e.kind == "safety" and mine and e.data.get("listen_safe"):
+            if self._one_unit(self.bench, self.bench.devices[mine.device_id]):  # as it is applied after a restart
+                mine.may_reset_on_open = False
+        if e.kind == "command" and mine:
+            port = mine
             if accept:
                 self._supersede_command(key, port, e.data.get("command", ""), keep=e.id)
             # what is in force for this command, from memory again: a rejected weaker entry leaves the stronger one

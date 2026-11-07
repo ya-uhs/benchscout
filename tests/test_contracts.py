@@ -829,3 +829,23 @@ def test_an_instrument_that_cannot_be_reached_says_why(tmp_path, monkeypatch):
     monkeypatch.setattr(io, "_visa", lambda: Broken())
     with pytest.raises(OSError, match="RSRC_NFOUND"):
         io.visa_query("USB0::1::2::3::INSTR", "*IDN?")
+
+
+def test_memory_applies_only_to_the_ports_and_targets_of_the_unit_it_is_about(tmp_path):
+    """Audit 34 (Codex's pending finding 1): memory was applied by port or target id alone. Port ids follow the OS's
+    names (Linux: /dev/ttyUSB0 by plug order), so what was learned about one unit landed on whichever unit has that
+    name now: its 'safe to open', its commands and its name."""
+    from benchscout.memory import Entry
+
+    br = bench(tmp_path)
+    esp, _ = _memory_of(br, "/dev/cu.usbmodem1101")  # a unit of its own, opening may reset it
+    _, other = _memory_of(br, VCP)  # another unit, with a serial of its own
+    tid = br.bench.targets_via(esp)[0].id
+    for e in (Entry(kind="safety", text="safe to open", source="benchscout", target=esp, data={"listen_safe": True}),
+              Entry(kind="command", text="erase", source="agent", target=esp, data={"command": "erase", "effect": "safe"}),
+              Entry(kind="identity", text="STM32F4", source="agent", evidence="STM32F4 boot", target=tid)):
+        br.memory.add(other, e)  # remembered for the other unit, under a name the first one has now
+    br.scan()
+    assert br.bench.ports[esp].may_reset_on_open, "another unit's 'safe to open' loosened this one"
+    assert "erase" not in br.bench.ports[esp].commands
+    assert br.bench.targets[tid].name != "STM32F4"
