@@ -362,7 +362,7 @@ def test_safe_direct_read_does_not_reopen_after_an_unexpected_reset(tmp_path):
     port = br.bench.ports[br.resolve_port(path)]
     br.select([port.device_id])
     try:
-        br._unwatch(port.id)  # exercise a one-shot read, not an existing watch
+        br.unwatch_port(port.id)  # exercise a one-shot read, not an existing watch
         assert not port.may_reset_on_open
         response = br.request("serial.listen", port.id)
         assert response["result"].get("error")

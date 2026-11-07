@@ -17,6 +17,8 @@ import time
 from pathlib import Path
 from typing import Protocol
 
+from .model import DEFAULT_BAUD
+
 # A listen that loses its port (reset, re-enumeration) waits for it and reads on.
 VANISHED_MARK = "[benchscout] port vanished (device reset or re-enumerated)"
 REOPENS = 2
@@ -66,6 +68,19 @@ def run_tool(argv: list[str], timeout: float, cwd: str | Path | None = None) -> 
         except subprocess.TimeoutExpired:
             out, err = "", ""
         return (out or "") + (err or "") + f"\n(stopped after {timeout:g} s)", None
+
+
+LISTING_S = 60.0  # how long the OS's USB list may take before a scan says it did not answer
+
+
+def _listing(argv: list[str]) -> str:
+    """The OS's own USB list (it opens nothing). One that does not answer stops the scan with that said, instead of
+    holding the session (and the human's selections) forever, or passing for an empty bench."""
+    try:
+        return subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=LISTING_S).stdout
+    except subprocess.TimeoutExpired:
+        raise OSError(f"{os.path.basename(argv[0])} did not list the USB devices within {LISTING_S:g} s") from None
 
 
 class PortGone(OSError):
@@ -119,7 +134,7 @@ def _exclusive(s) -> None:
 
 
 class LiveIo:
-    def serial_stream(self, path: str, baud: int = 115200, exclusive: bool = False, lines: str = "low") -> _LiveStream:
+    def serial_stream(self, path: str, baud: int = DEFAULT_BAUD, exclusive: bool = False, lines: str = "low") -> _LiveStream:
         import serial
 
         s = serial.Serial()
@@ -146,8 +161,7 @@ class LiveIo:
         if system == "Linux":
             return linux_usb_devices(Path("/sys/bus/usb/devices"))
         if system == "Windows":
-            out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_PNP_QUERY],
-                                 stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
+            out = _listing(["powershell", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_PNP_QUERY])
             from .winusb_strings import usb_strings
 
             try:
@@ -157,9 +171,7 @@ class LiveIo:
             return parse_windows_pnp(out, strings)
         if system != "Darwin":
             return []
-        out = subprocess.run(
-            ["/usr/sbin/system_profiler", "SPUSBHostDataType", "-json"], stdin=subprocess.DEVNULL, capture_output=True, text=True
-        ).stdout
+        out = _listing(["/usr/sbin/system_profiler", "SPUSBHostDataType", "-json"])
         try:
             root = json.loads(out).get("SPUSBHostDataType", [])
         except json.JSONDecodeError:
@@ -261,40 +273,35 @@ class LiveIo:
 
         return {t: find(t) for t in K.tool_names()}  # also the ones shipped with benchscout or fetched before
 
-    def visa_query(self, resource: str, command: str) -> str | None:
+    def _visa_call(self, resource: str, timeout_ms: int, use):
+        """Open `resource`, use it, close it. A failure (no VISA library, a resource busy or gone, a time-out) raises
+        OSError with VISA's own words: "no answer" would lose why (a raw clue for the agent and the person)."""
         try:
-            inst = self._visa().open_resource(resource, timeout=1500)
+            inst = self._visa().open_resource(resource, timeout=timeout_ms)
             try:
-                return inst.query(command).strip()
+                return use(inst)
             finally:
                 inst.close()
-        except Exception:
-            return None
+        except Exception as e:
+            raise OSError(f"VISA {resource}: {type(e).__name__}: {e}") from e
+
+    def visa_query(self, resource: str, command: str) -> str | None:
+        return self._visa_call(resource, 1500, lambda inst: inst.query(command).strip())
 
     def visa_query_raw(self, resource: str, command: str) -> bytes | None:
         """The whole answer as bytes, for a screen capture or a waveform (seconds, and megabytes, on some scopes)."""
-        try:
-            inst = self._visa().open_resource(resource, timeout=15000)
-            try:
-                inst.write(command)
-                return bytes(inst.read_raw())
-            finally:
-                inst.close()
-        except Exception:
-            return None
+        def use(inst):
+            inst.write(command)
+            return bytes(inst.read_raw())
+        return self._visa_call(resource, 15000, use)
 
     def visa_write(self, resource: str, command: str) -> bool:
-        try:
-            inst = self._visa().open_resource(resource, timeout=1500)
-            try:
-                inst.write(command)
-                return True
-            finally:
-                inst.close()
-        except Exception:
-            return False
+        def use(inst):
+            inst.write(command)
+            return True
+        return self._visa_call(resource, 1500, use)
 
-    def serial_listen(self, path: str, seconds: float, baud: int = 115200, exclusive: bool = False,
+    def serial_listen(self, path: str, seconds: float, baud: int = DEFAULT_BAUD, exclusive: bool = False,
                       lines: str = "low", send: bytes | None = None, until: re.Pattern | None = None, cancel=None, may_reopen=None) -> str:
         """Read for `seconds` (after writing `send`, if given), or until a whole line matches `until`. If the port vanishes (a native-USB chip resets on open and
         re-enumerates; real bench 2026-10-31), wait for it to come back and keep reading, so
@@ -377,8 +384,11 @@ class LiveIo:
         return None
 
     def run_probe(self, argv: list[str], timeout: float) -> str | None:
+        """Its output, with its exit code when it failed; None if it did not finish in time."""
         text, code = run_tool(argv, timeout)
-        return text if code is not None else None
+        if code is None:
+            return None
+        return text if code == 0 else f"{text}\n(exit code {code})"
 
 
 WINDOWS_PNP_QUERY = (  # UTF-8 out: Windows PowerShell would print a device's name in the console's code page
@@ -538,7 +548,7 @@ class FixtureIo:
         self.unplugged: set[str] = set()  # serial ports taken out of the file since it was first read
         self.streams_opened: list[str] = []
 
-    def serial_stream(self, path: str, baud: int = 115200, exclusive: bool = False, lines: str = "low") -> _FixtureStream:
+    def serial_stream(self, path: str, baud: int = DEFAULT_BAUD, exclusive: bool = False, lines: str = "low") -> _FixtureStream:
         if not self.port_present(path):
             raise PortGone("not present (fixture)")
         self.calls.append(("serial_stream", path))
@@ -606,17 +616,19 @@ class FixtureIo:
         self.calls.append(("visa_write", resource, command))
         return resource in self.data.get("visa", {})
 
-    def serial_listen(self, path: str, seconds: float, baud: int = 115200, exclusive: bool = False,
+    def serial_listen(self, path: str, seconds: float, baud: int = DEFAULT_BAUD, exclusive: bool = False,
                       lines: str = "low", send: bytes | None = None, until: re.Pattern | None = None, cancel=None, may_reopen=None) -> str:
+        v = self.data.get("listen", {}).get(path, "")
         if send is not None:  # what a device answers is recorded per sent text in "replies"
             self.calls.append(("serial_send", path, send))
+            if isinstance(v, dict) and "error" in v:  # gone as soon as it was opened
+                raise OSError(6, v["error"])
             return self.data.get("replies", {}).get(path, {}).get(send.decode(errors="replace"), "")
         self.calls.append(("serial_listen", path))
         self.lines.append(lines)
         if exclusive:
             self.exclusive_opens.append(path)
         self.bauds.append(baud)
-        v = self.data.get("listen", {}).get(path, "")
         if isinstance(v, dict) and "then" in v:  # vanishes, comes back, keeps printing
             if may_reopen is None or not may_reopen(0.1):
                 raise PortGone("port vanished; reopening was not authorized")

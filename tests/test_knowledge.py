@@ -19,7 +19,6 @@ SRC = Path(K.__file__)
 def clean_user_layer(tmp_path, monkeypatch):
     monkeypatch.setenv("BENCHSCOUT_KNOWLEDGE", str(tmp_path / "user-knowledge"))
     yield
-    monkeypatch.delenv("BENCHSCOUT_KNOWLEDGE", raising=False)
     K.load()
 
 
@@ -154,8 +153,8 @@ def test_without_any_shipped_data_benchscout_only_gets_stricter(tmp_path, monkey
         K.load()
 
 
-# What crashing firmware prints on different platforms. A device benchscout has never seen should still
-# wake the agent when it goes down, whatever its SDK (design.md section 17, "noticing").
+# What crashing firmware prints on different platforms. Reading it is the agent's (design.md 2026-11-06): benchscout
+# ships no crash markers, so none of these raises an alert by itself; a rule the agent or the user registers does.
 CRASHES = {
     "Cortex-M (STM32Cube)": "HardFault_Handler: PC=0x08001234",
     "nRF / CMSIS": "Fault: Usage Fault, CFSR=0x00010000",

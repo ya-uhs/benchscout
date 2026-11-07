@@ -43,10 +43,16 @@ def render(r: Recon) -> str:
     lines: list[str] = []
     for dev in b.devices.values():
         ports = b.ports_of(dev.id)
-        if dev.other or not ports and not dev.access:
+        if dev.other:
             continue
         sn = f"  SN {dev.serial}" if dev.serial else ""
         lines.append(f"■ {dev.name}{sn}")
+        if not ports and not dev.access:  # known to the data, but nothing of it to open now: still a raw clue
+            lines.append(f"  · {_hex(dev.vid)}:{_hex(dev.pid)} is on USB, but the OS lists no serial port or other "
+                         "interface of it that benchscout can reach now (its port may be missing a driver, taken by "
+                         "another program, or handed to a VM)")
+            lines.append("")
+            continue
         for a in dev.access:  # why something cannot open it yet: one form for every OS
             lines.append(f"  · {access_text(a)}")
         targets: dict[str, list] = {}

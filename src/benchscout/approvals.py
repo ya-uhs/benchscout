@@ -38,6 +38,8 @@ class Approval:
     subject: str = ""  # the device's name, for the card
     purpose: str = ""  # what it is for, when benchscout asks itself
     fetch: str = ""  # a tool that will be downloaded first (official release, pinned), if any
+    # "always on this device" can be kept: the commands asked about can be remembered as this unit's (the broker says)
+    always: bool = False
 
 
 @dataclass
@@ -62,9 +64,10 @@ class ApprovalBook:
         self.allow_all = False
 
     # ---- agent side (via the broker) ------------------------------------------
-    def open(self, impact: Impact, args: str, by: str = "agent", subject: str = "", purpose: str = "", fetch: str = "") -> Approval:
+    def open(self, impact: Impact, args: str, by: str = "agent", subject: str = "", purpose: str = "", fetch: str = "",
+             always: bool = False) -> Approval:
         a = Approval(uuid.uuid4().hex[:6], impact.action, impact.port_id, args, impact.effect.name.lower(), impact.to_dict(),
-                     by=by, subject=subject, purpose=purpose, fetch=fetch)
+                     by=by, subject=subject, purpose=purpose, fetch=fetch, always=always)
         with self._cond:
             self._items[a.id] = a
         self._log("requested", a)

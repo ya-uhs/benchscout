@@ -23,10 +23,10 @@ from . import recon as R
 from .approvals import ApprovalBook, Scope
 from .io import Io, run_tool
 from .locks import DeviceLocks
+from .model import DEFAULT_BAUD
 from . import protocols
 from .policy import Effect, Impact, classify
 
-DEFAULT_BAUD = 115200  # what a watch opens a port at when no rate was learned for it
 LINE_ENDINGS = ("\n", "\r\n", "\r", "")
 OPEN_RESET_S = 3.0  # a port that vanishes this soon after being opened was reset (or re-enumerated) by the open
 RECENT_FOR_QUOTES = 2 * 1024 * 1024  # how much recent output a quote is checked against
@@ -136,7 +136,7 @@ class Broker:
         self._pending_shown: set[str] = set()  # memory entries waiting for the human that the panel was given
         from .memory import Memory
 
-        self.memory = Memory(self.state.parent)  # design.md section 6
+        self.memory = Memory(self.state.parent if workspace_knowledge else None)  # design.md section 6
         # Output heard from each target, kept across re-scans so what was learned is not lost
         # when the graph is rebuilt (docs/notes.md, 実機で学んだこと). Per target: the latest output, plus
         # the latest one that named the part and the latest one that raised an alert, so a later
@@ -157,6 +157,8 @@ class Broker:
         self._native_jobs: dict[str, _Job] = {}
         self._operation = threading.local()
         self._turns: dict[str, threading.Lock] = {}  # one action at a time on each device
+        self._sent: dict[str, list[str]] = {}  # port id -> what benchscout sent to it this session (record_sent)
+        self._versions: dict[tuple, str | None] = {}  # (program, its mtime and size, the rule) -> why too old, or None
         from .resources import Resources
         from .execution import Run
 
@@ -246,7 +248,7 @@ class Broker:
             self.approvals.withdraw_ports(went_ports)
             self.watch_approved.difference_update(went_ports)
             for pid in went_ports:
-                self._unwatch(pid)
+                self.unwatch_port(pid)
         for pid in [p for p, w in self.watches.items() if not w.alive]:  # it gave up waiting for the port
             self.watches.pop(pid)
         if any(moved(now, before, p) and now.ports[p].device_id in self.selected for p in now.ports):
@@ -313,7 +315,7 @@ class Broker:
             self.approvals.withdraw_ports(ports)
             self.watch_approved.difference_update(ports)
             for pid in ports:
-                self._unwatch(pid)
+                self.unwatch_port(pid)
             for d in dropped:
                 if self.locks:
                     self.locks.release(d)
@@ -420,14 +422,20 @@ class Broker:
         a = self.approvals.get(approval_id)
         if a is None or not granted:
             return self.decide(approval_id, granted, "once")
-        if not (A.get(a.action).protocol and a.impact.get("subjects")) or a.effect != Effect.DISRUPTIVE.name.lower():
-            raise ValueError(f"only a command that asks once can be allowed always; this is {a.action} ({a.effect.upper()})")
+        if not a.always:
+            raise ValueError(f"{a.action} on {a.port} cannot be allowed always: only a command that asks once, on a unit "
+                             "its serial number singles out (its memory may be another unit's otherwise)")
         with self._lock:
-            dev = self.bench.devices[self.bench.ports[a.port].device_id]
+            port = self.bench.ports.get(a.port)
+            if port is None:
+                raise ValueError(f"{a.port} is not on the bench any more")
+            dev = self.bench.devices[port.device_id]
+            # the card first: one no longer waiting (decided, withdrawn) raises here, before anything is remembered
+            decided = self.approvals.decide(approval_id, True, "once")
             for h in a.impact.get("subjects") or []:
                 self._remember_command(dev, a.port, "allowed always on this device, in the benchscout inbox", "",
                                        {"command": h, "effect": "safe"}, "human", confirmed=True)
-        return asdict(self.approvals.decide(approval_id, True, "once"))
+        return asdict(decided)
 
     # ---- tools the agent proposes (proposals.py, design.md section 4) ---------------------------
     def define_tool(self, tool: dict | None = None, evidence: str = "", probes: list[dict] | None = None,
@@ -487,15 +495,11 @@ class Broker:
 
     @staticmethod
     def _one_unit(bench, dev) -> bool:
-        """Memory is kept by model and serial number. It is about this very unit only if the serial is the unit's own: it
-        has one, the model does not share one serial across units, and no other unit plugged in carries it. Memory that
-        loosens safety applies only then (design.md section 3, runtime contracts; notes.md review 7: a second board
-        without a serial took on the first's 'safe to open')."""
+        """Memory is about this very unit (model.Bench.one_unit; notes.md review 7: a second board without a serial took
+        on the first's 'safe to open')."""
         from . import knowledge as K
 
-        if not dev.serial or dev.serial in K.SHARED_SERIALS:
-            return False
-        return sum(1 for d in bench.devices.values() if (d.vid, d.pid, d.serial) == (dev.vid, dev.pid, dev.serial)) == 1
+        return bench.one_unit(dev, K.SHARED_SERIALS)
 
     def _header(self, dev) -> dict:
         from . import knowledge as K
@@ -518,6 +522,10 @@ class Broker:
                 when = f"{e.time[:10]}, {e.source}"
                 if e.kind == "identity" and e.target in bench.targets:
                     t = bench.targets[e.target]
+                    if shared:  # memory of this model and serial may be another unit's: what it says, not its name
+                        t.facts.append(f"remembered for a unit of this model, which may be another one: {e.text} "
+                                       f"(quoting \"{e.evidence}\", {when})")
+                        continue
                     if t.confidence != Confidence.IDENTIFIED:
                         t.name, t.confidence = e.text, Confidence.IDENTIFIED
                     t.evidence.append(Evidence("learned", f"{e.text}: \"{e.evidence}\" ({when})"))
@@ -552,7 +560,7 @@ class Broker:
                     for t in ([bench.targets[e.target]] if e.target in bench.targets else targets[:1]):
                         t.facts.append(f"remembered: {e.text} ({when})")
 
-    def _observe_open(self, port_id: str, text: str | None) -> None:
+    def observe_open(self, port_id: str, text: str | None) -> None:
         """benchscout's own observation, written without asking: opening a port that may reset did
         not make it vanish. After two, propose (pending the human) treating listening as SAFE. A port opened as safe
         that vanished at once says the opposite (_reset_on_open)."""
@@ -655,9 +663,15 @@ class Broker:
                 if not port:
                     return {"status": "rejected", "message": "a safety entry is about one port: give its id or path"}
                 target = port
+            loosens = kind == "safety" and (data or {}).get("listen_safe") is not False
             e = Entry(kind=kind, text=text, source=source, evidence=evidence, target=target or "",
-                      status="pending" if kind == "safety" else "active", data=data or {})
-            e = self.memory.add(self._key(dev), e, self._header(dev))
+                      status="pending" if loosens else "active", data=data or {})
+            try:
+                e = self.memory.add(self._key(dev), e, self._header(dev))
+            except ValueError as err:  # (the folder's setup, in a folder that is not trusted)
+                return {"status": "rejected", "message": str(err)}
+            if kind == "safety" and not loosens:
+                self.bench.ports[target].may_reset_on_open = True  # stricter: in effect now
             if kind == "interpretation":
                 self._refresh_patterns(dev)  # the running watch looks for it from now on
             if kind == "config" and inside and self.bench.targets[target].hosted_on is None:
@@ -866,6 +880,11 @@ class Broker:
         """Control channel only: the human confirms (or rejects) a safety-loosening entry."""
         from dataclasses import asdict
 
+        waiting = next((x for x in self.memory.entries(key) if x.id == entry_id), None)
+        if waiting is None:
+            raise KeyError(f"no memory entry {entry_id!r} for {key}")
+        if waiting.status != "pending":  # decided, contradicted or replaced since its card was shown
+            raise ValueError(f"memory entry {entry_id} is {waiting.status}, not waiting for a decision")
         e = self.memory.set_status(key, entry_id, "active" if accept else "rejected")
         if accept and e.kind == "safety" and self.last and e.target in self.last.bench.ports and e.data.get("listen_safe"):
             port = self.last.bench.ports[e.target]
@@ -966,7 +985,15 @@ class Broker:
         for ev in self.bench.targets[target_id].evidence:
             if ev.source == "usb-descriptor":
                 texts.append((ev.source, ev.detail))
-        return next((where for where, text in texts if quote in text), None)
+        # a shell echoes what it is sent: those words are the host's, not the device's (design.md 2026-11-06)
+        sent = sorted({s for p in self.bench.ports_reaching(target_id) for s in self._sent.get(p.id, [])}, key=len, reverse=True)
+
+        def own(text: str) -> str:
+            for s in sent:
+                text = text.replace(s, "\n")
+            return text
+
+        return next((where for where, text in texts if quote in own(text)), None)
 
     # ---- watching (design.md section 17) -------------------------------------------------
     def _autowatch(self) -> list[str]:
@@ -982,7 +1009,7 @@ class Broker:
                 if not (watch and p.path and p.id not in self.watches):
                     continue
                 if classify(self.bench, watch, p.id).effect == Effect.SAFE:
-                    if self._watch(p.id, p.baud or DEFAULT_BAUD):
+                    if self.watch_port(p.id, p.baud or DEFAULT_BAUD):
                         started.append(p.id)
                         self._watching_event(p.id)  # the human sees which ports are watched
                 else:
@@ -1030,7 +1057,7 @@ class Broker:
         def settled() -> None:  # it did not vanish when opened: benchscout's own observation (design.md 6)
             now = self.watches.get(port_id)
             if now is not None and now is w and now.alive and now.vanishes == 0:
-                self._observe_open(port_id, "")
+                self.observe_open(port_id, "")
 
         threading.Timer(3.0, settled).start()
 
@@ -1053,7 +1080,7 @@ class Broker:
                     out[p.id] = "not watched"
         return out
 
-    def _watch(self, port_id: str, baud: int) -> bool:
+    def watch_port(self, port_id: str, baud: int) -> bool:
         from .watch import PortWatch
 
         port = self.bench.ports[port_id]
@@ -1104,7 +1131,7 @@ class Broker:
                 return False, "it dropped off right after it was opened: opening it resets the device, so benchscout asks again"
         return True, ""
 
-    def _unwatch(self, port_id: str) -> None:
+    def unwatch_port(self, port_id: str) -> None:
         w = self.watches.pop(port_id, None)
         if w:
             w.stop()
@@ -1137,7 +1164,7 @@ class Broker:
                 self.selected = set()
                 self.watch_approved.clear()
             for pid in list(self.watches):
-                self._unwatch(pid)
+                self.unwatch_port(pid)
             with self._lock:
                 if self.locks:
                     self.locks.release_all()
@@ -1307,7 +1334,7 @@ class Broker:
                 self.runs[r.id] = r
                 for p in list(self.watches):
                     if self.bench.ports[p].device_id in {x[1] for x in plan.ports}:
-                        self._unwatch(p)
+                        self.unwatch_port(p)
                 self.done.append({"at": time.time(), "time": time.strftime("%H:%M:%S"), "action": impact.action,
                                   "port": impact.port_id, "device": plan.ports[0][1], "args": key,
                                   "allowed": f"human approval {approval_id}"})
@@ -1336,9 +1363,13 @@ class Broker:
         for word in spec.argv[1:]:
             if "{" not in word and (self.state.parent / word).is_file():
                 paths.add(word)
-        exe = self._which(spec.argv[0])
+        from .fetch import cached
+
+        # the program that will run: one already here is bound by its content; a pinned download (fetched before, or
+        # to be fetched after the OK) by the pinned hash in `download`
+        exe = self._usable_tool(spec)[0]
         download = fetch_plan(spec.argv[0])
-        if exe and not download:
+        if exe and exe != cached(spec.argv[0]):
             paths.add(exe)
         files = {str((self.state.parent / f).absolute()): digest(self.state.parent / f) for f in sorted(paths)}
         return json.dumps({"args": args, "definition": asdict(spec), "files": files, "download": download,
@@ -1400,7 +1431,10 @@ class Broker:
             if go:
                 pass  # runs below, outside the lock: nothing to ask
             elif approval_id is None:
-                approval_id = self.approvals.open(impact, key, fetch=fetch).id
+                dev = self.bench.devices[self.bench.ports[port_id].device_id]
+                always = bool(spec.protocol and impact.subjects and impact.effect == Effect.DISRUPTIVE
+                              and self._one_unit(self.bench, dev))
+                approval_id = self.approvals.open(impact, key, fetch=fetch, always=always).id
             else:
                 # an id for another call: say so now, not after waiting on a card that shows something else
                 asked = self.approvals.asked_for(approval_id)
@@ -1443,7 +1477,14 @@ class Broker:
             if snapshot is not None and snapshot != self._tool_snapshot(A.get(action), port_id, args):
                 return {"status": "approval_mismatch", "approval_id": approval_id,
                         "message": "tool, input or connection changed; request approval for the current plan"}
+            # judged again now: memory, the port or its watch may have changed while the human decided, and their OK was
+            # for the call as it was judged on the card (design.md section 3, runtime contracts)
+            impact = classify(self.bench, action, port_id, args, port_open=self._held_open(port_id, args))
             used = self.approvals.consume(approval_id, action, port_id, key, impact.effect.name.lower())
+            if used == "approval_mismatch":
+                return {"status": used, "approval_id": approval_id,
+                        "message": f"this call is judged {impact.effect.name} now ({impact.reason}), not as the human saw "
+                                   "it; call without approval_id to ask again"}
             if used != "ok":
                 return {"status": used, "approval_id": approval_id}
         # say so, or the agent reports a long call as "ran without approval" (real bench, S5)
@@ -1619,7 +1660,13 @@ class Broker:
                     for off, f in args[a[1:-2]]:
                         argv += [hex(off), path(f)]
                     continue
-                val = a.replace("{port.path}", port.path or "").replace("{device.serial}", dev.serial or "")
+                filled = R.unit_args(self.bench, dev, port, [a])  # what names this unit: only if it singles it out
+                if filled is None:
+                    return {"error": f"{spec.name} names the unit ({a}), but nothing singles {dev.name} out among the "
+                                     "devices plugged in (no serial number or port, or another unit may carry the same "
+                                     "serial); it was not started, so it could not reach another unit",
+                            "fix": "unplug the other unit of this model, or reach it with bench_run and a way of your own"}
+                val = filled[0]
                 for p in spec.params:
                     if "{" + p.name + "}" in val:
                         v = args.get(p.name)
@@ -1643,7 +1690,7 @@ class Broker:
             run = Run(plan, self.artifacts, self._emit)
             self.runs[run.id] = run
             for pid, _ in watched:
-                self._unwatch(pid)
+                self.unwatch_port(pid)
         try:
             # The adapter already owns the device turn and its action approval.
             # Process lifetime, raw artifacts and Stop use the same manager as bench_run.
@@ -1652,14 +1699,14 @@ class Broker:
             with self._lock:
                 for pid, baud in watched:
                     if dev.id in self.selected and pid in self.bench.ports and self.bench.ports[pid].device_id == dev.id:
-                        self._watch(pid, baud)
+                        self.watch_port(pid, baud)
         text = "".join(_tail(f, RECENT_FOR_QUOTES) for f in (run.stdout, run.stderr) if f.exists())
         code = run.code if run.status in ("completed", "failed") else None
-        res = self._save_artifact(f"{port.id}-{spec.name}.txt", " ".join(argv) + "\n\n" + text, preview=text[-2000:])
+        res = self.save_artifact(f"{port.id}-{spec.name}.txt", " ".join(argv) + "\n\n" + text, preview=text[-2000:])
         if spec.probe:  # read as its definition says: the parts it named go on the bench (the tool's own database)
-            parts = R.read_parts(spec.probe, text)
-            got = {"probe": "chain", "result": parts, "source": spec.probe.get("source", spec.argv[0]),
-                   "time": time.strftime("%Y-%m-%d %H:%M")}
+            got = dict(R.chain_result(spec, text if run.status != "timed_out" else None),
+                       time=time.strftime("%Y-%m-%d %H:%M"))
+            parts = got["result"]
             self.recon.heard[port.id] = [g for g in self.recon.heard.get(port.id, []) if g["probe"] != "chain"] + [got]
             R._fold(self.bench, self.bench.targets_via(port.id), got, port=port)
             res["parts"] = [dict(p, idcode=f"0x{p['idcode']:08X}") for p in parts]
@@ -1672,9 +1719,24 @@ class Broker:
         return find(exe)  # the person's own, then shipped with benchscout, then fetched before
 
     def _version_problem(self, v: dict, exe: str | None = None) -> str | None:
+        """Why this program is too old, or None. Asked once per program file as it is (the approval binds it, so it is
+        asked several times per call)."""
+        exe = exe or self._which(v["argv"][0])
+        try:
+            st = Path(exe).stat() if exe else None
+        except OSError:
+            st = None
+        seen = (exe, st.st_mtime_ns, st.st_size, json.dumps(v, sort_keys=True)) if st else None
+        if seen and seen in self._versions:
+            return self._versions[seen]
+        problem = self._check_version(v, exe)
+        if seen:
+            self._versions[seen] = problem
+        return problem
+
+    def _check_version(self, v: dict, exe: str | None) -> str | None:
         import re
 
-        exe = exe or self._which(v["argv"][0])
         try:
             text, code = run_tool([exe or v["argv"][0], *v["argv"][1:]], timeout=30)
         except OSError as e:
@@ -1690,7 +1752,22 @@ class Broker:
             return f"{v['argv'][0]} {'.'.join(map(str, have))} is too old; need {v['min']} or newer: {v.get('why', '')}"
         return None
 
-    def _remember(self, port_id: str, text: str | None) -> None:
+    # ---- what an operation (protocols/) may use besides io, bench, watches, cancel_event, read_reopen_guard and
+    # new_artifact: the protocol's operations call nothing else of the broker (tests/test_structure.py) ----------------
+    def fold_output(self, port_id: str, text: str | None, error: str | None = None) -> None:
+        """What a port printed (or that it went away while it was read: `text` None), into the targets it reaches, the
+        next steps and what is kept of its output."""
+        port = self.bench.ports[port_id]
+        R._fold_listen(self.bench.targets_via(port_id), text, error, learned=self.bench.devices[port.device_id].line_rules)
+        self.recon.proposals = R.propose(self.bench)
+        self.record_output(port_id, text)
+
+    def record_sent(self, port_id: str, text: str) -> None:
+        """What benchscout sent to a port this session: a device that echoes it back did not say it (_find_quote)."""
+        if text.strip():
+            self._sent.setdefault(port_id, []).append(text.strip())
+
+    def record_output(self, port_id: str, text: str | None) -> None:
         if not (text and text.strip()):
             return
         import time
@@ -1718,7 +1795,7 @@ class Broker:
             p = self.artifacts / f"{time.strftime('%Y%m%d-%H%M%S')}-{stem}-{n}.{ext}"
         return p
 
-    def _save_artifact(self, name: str, content: str, preview: str) -> dict:
+    def save_artifact(self, name: str, content: str, preview: str) -> dict:
         stem, _, ext = name.rpartition(".")
         p = self.new_artifact(stem, ext)
         p.write_text(content, encoding="utf-8")

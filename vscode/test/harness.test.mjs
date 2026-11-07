@@ -26,7 +26,7 @@ const s = strings("en");
 
 async function bench(makeDriver) {
   const root = mkdtempSync(join(win ? tmpdir() : "/tmp", "bsh"));
-  const env = { ...process.env, BENCHSCOUT_FIXTURE: join(repo, "fixtures", "bench_example.json"), BENCHSCOUT_RUNTIME: root, BENCHSCOUT_MEMORY: join(root, "memory") };
+  const env = { ...process.env, BENCHSCOUT_FIXTURE: join(repo, "fixtures", "bench_example.json"), BENCHSCOUT_RUNTIME: root, BENCHSCOUT_MEMORY: join(root, "memory"), BENCHSCOUT_KNOWLEDGE: join(repo, "fixtures", "knowledge") };
   const core = new CoreClient(bin, root, env);
   const relay = { command: bin, args: ["mcp", "--workspace", root], env: { BENCHSCOUT_RUNTIME: root } };
   const h = new Harness(core, () => makeDriver(root, relay), s, { language: "English", maxTurnsPerHour: 5 });
@@ -159,7 +159,7 @@ async function streamingBench(autonomy) {
   writeFileSync(join(knowledge, "fixture.toml"), '[[log]]\npattern = "abort"\nalert = "Matched abort marker"\n');
   const fx = join(root, "bench.json");
   writeFileSync(fx, JSON.stringify(data));
-  const env = { ...process.env, BENCHSCOUT_FIXTURE: fx, BENCHSCOUT_RUNTIME: root, BENCHSCOUT_MEMORY: join(root, "memory") };
+  const env = { ...process.env, BENCHSCOUT_FIXTURE: fx, BENCHSCOUT_RUNTIME: root, BENCHSCOUT_MEMORY: join(root, "memory"), BENCHSCOUT_KNOWLEDGE: join(repo, "fixtures", "knowledge") };
   const core = new CoreClient(bin, root, env);
   const relay = { command: bin, args: ["mcp", "--workspace", root], env: { BENCHSCOUT_RUNTIME: root } };
   process.env.FAKE_QUIET = "1";
@@ -271,7 +271,7 @@ test("each turn's progress goes to its own card, one line per tool call, updated
 test("approval reasons are shown in the person's language by the core's code", async () => {
   const ja = strings("ja");
   const root = mkdtempSync(join(win ? tmpdir() : "/tmp", "bsj"));
-  const env = { ...process.env, BENCHSCOUT_FIXTURE: join(repo, "fixtures", "bench_example.json"), BENCHSCOUT_RUNTIME: root, BENCHSCOUT_MEMORY: join(root, "memory") };
+  const env = { ...process.env, BENCHSCOUT_FIXTURE: join(repo, "fixtures", "bench_example.json"), BENCHSCOUT_RUNTIME: root, BENCHSCOUT_MEMORY: join(root, "memory"), BENCHSCOUT_KNOWLEDGE: join(repo, "fixtures", "knowledge") };
   const core = new CoreClient(bin, root, env);
   const h = new Harness(core, () => { throw new Error("not woken here"); }, ja, { language: "Japanese", maxTurnsPerHour: 5 });
   core.start();
@@ -279,8 +279,8 @@ test("approval reasons are shown in the person's language by the core's code", a
     const first = await until(h, (c) => c.kind === "question");
     await core.select([first.options.find((o) => o.label.includes("QinHeng")).id]);
     const watch = await until(h, (c) => c.kind === "confirm");
-    assert.match(watch.title, /QinHeng USB Serial を見張りますか/);
-    assert.match(watch.body, /このポートを開くと機器がリセットされることがあります/);
+    assert.equal(watch.title, ja.offerWatch("QinHeng USB Serial"));
+    assert.ok(watch.body.includes(ja.reasons.reset_on_open.slice(1)), "the core's reason, said in the panel's words");
   } finally { core.stop(); rmrf(root); }
 });
 
@@ -314,7 +314,7 @@ test("a port lost while the computer slept is one quiet, counted record; nobody 
   for (let i = 0; i < 2; i++) { core.emit("deviceEvent", ev("vanished")); core.emit("deviceEvent", ev("returned")); }
   assert.equal(h.cards.length, 1);
   assert.equal(h.cards[0].status, "closed");
-  assert.match(h.cards[0].title, /Mac のスリープで SIPEED JTAG Debugger のポートが切れ、開き直しました\(2 回\)/);
+  assert.equal(h.cards[0].title, strings("ja").hostSlept("SIPEED JTAG Debugger", 2));
   assert.equal(woken, 0);
 });
 
@@ -324,7 +324,7 @@ test("an approval that downloads a tool first says so on the card", () => {
   core.emit("approvalRequested", { id: "a1", action: "esptool.write_flash", port: "serial:usbmodem1101", args: "{}", effect: "dangerous",
     status: "pending", impact: { reason: "overwrites flash", affected_ports: [], disturbs: [], code: "action:esptool.write_flash" },
     by: "agent", fetch: "esptool 5.6.0 from github.com (official release, SHA-256 checked, about 63 MB)" });
-  assert.match(h.cards[0].body, /先にダウンロードするもの: esptool 5\.6\.0 from github\.com/);
+  assert.ok(h.cards[0].body.includes(`${strings("ja").fetchFirst}: esptool 5.6.0 from github.com`));
 });
 
 test("a SCPI command's card allows that command for the session or always, and says that is all it covers", () => {
@@ -333,7 +333,7 @@ test("a SCPI command's card allows that command for the session or always, and s
   core.decide = async (...a) => { decided.push(a); return {}; };
   const h = new Harness(core, () => { throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 1 });
   const ask = (id, effect, subjects) => core.emit("approvalRequested", { id, action: "scpi.write", port: "visa:TCPIP0::192.168.1.50::INSTR",
-    args: JSON.stringify({ command: "DISP:BRIG 5" }), effect, status: "pending", by: "agent",
+    args: JSON.stringify({ command: "DISP:BRIG 5" }), effect, status: "pending", by: "agent", always: true,
     impact: { reason: "x", affected_ports: [], disturbs: [], code: subjects ? "scpi_command" : "energizing", subjects } });
   ask("a1", "disruptive", ["DISP:BRIG"]);
   const card = h.cards.find((c) => c.id === "approval:a1");
@@ -434,14 +434,19 @@ test("with only devices benchscout has no data for, the first question still off
 });
 
 
-test("'always on this device' is offered for a command whatever its protocol (the core keeps it for any)", () => {
+test("'always on this device' is offered for a command whatever its protocol, where the core says it can keep it", () => {
+  // audit 2026-11-07 (23): it was offered for a unit whose memory may be another's, and the next call asked again
   const core = new CoreClient("/nonexistent", tmpdir());
   const s = strings("en");
   const h = new Harness(core, () => { throw new Error("not woken"); }, s, { language: "English", maxTurnsPerHour: 1 });
-  core.emit("approvalRequested", { id: "a1", action: "serial.send", port: "serial:x", args: '{"data": "status"}', effect: "disruptive",
-    status: "pending", by: "agent", impact: { reason: "sends bytes", affected_ports: [], disturbs: [], subjects: ["status"] } });
-  const card = h.cards.find((c) => c.id === "approval:a1");
-  assert.ok(card.options.some((o) => o.label === s.allowCommandSession) && card.options.some((o) => o.label === s.allowAlwaysHere));
+  const ask = (id, always) => core.emit("approvalRequested", { id, action: "serial.send", port: "serial:x", args: '{"data": "status"}',
+    effect: "disruptive", status: "pending", by: "agent", always,
+    impact: { reason: "sends bytes", affected_ports: [], disturbs: [], subjects: ["status"] } });
+  ask("a1", true);
+  ask("a2", false);
+  const labels = (id) => h.cards.find((c) => c.id === `approval:${id}`).options.map((o) => o.label);
+  assert.ok(labels("a1").includes(s.allowCommandSession) && labels("a1").includes(s.allowAlwaysHere));
+  assert.ok(labels("a2").includes(s.allowCommandSession) && !labels("a2").includes(s.allowAlwaysHere));
 });
 
 

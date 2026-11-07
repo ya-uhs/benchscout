@@ -67,7 +67,9 @@ class CoreClient:
                 return {"error": "the benchscout core closed the connection"}
 
 
-def build_server(client: CoreClient, language: str = "English") -> MCPServer:
+def build_server(client: CoreClient, language: str = "English", catalog: str | None = None) -> MCPServer:
+    """`catalog`: the actions as the core describes them (it reads the folder's knowledge only where VS Code trusts the
+    folder); without one, the shipped and the person's own actions."""
     mcp = MCPServer("benchscout", instructions=INSTRUCTIONS)
 
     async def _call(method: str, params: dict | None = None, timeout: float = 30.0) -> str:
@@ -103,7 +105,7 @@ def build_server(client: CoreClient, language: str = "English") -> MCPServer:
         """Full bench graph (devices, ports, targets, links) as JSON from the last scan."""
         return await _call("inventory")
 
-    catalog = actions_catalog()
+    catalog = catalog or actions_catalog()
 
     @mcp.tool()
     async def bench_recipe(operation: str = "list", name: str = "", plan: dict | None = None,
@@ -202,8 +204,9 @@ Actions:
     async def bench_identify(target: str, name: str, quote: str) -> str:
         """Name a part, quoting the device's own output that proves it (e.g. a ROM banner line).
         `target` is a port id/path or target id from bench_scan. benchscout checks the quote is
-        really in what it captured from that device; if so the part is identified and remembered
-        for next time, otherwise it is kept only as a guess. Never name a part without this."""
+        really in what it captured from that device, not counting what was sent to it and echoed
+        back; if so the part is identified and remembered for next time, otherwise it is kept only
+        as a guess. Never name a part without this."""
         return await _call("identify", {"target": target, "name": name, "quote": quote})
 
     @mcp.tool()
@@ -272,6 +275,13 @@ def main(workspace: str | None = None) -> None:
 
     from . import knowledge as K
 
-    K.load(Path(workspace or os.getcwd()))  # so the action list includes the folder's own tools
     address = os.environ.get("BENCHSCOUT_ADDRESS") or agent_address(Path(workspace or os.getcwd()))[0]
-    build_server(CoreClient(address), user_language()).run()
+    client = CoreClient(address)
+    # the actions the core offers, the folder's own tools among them where the folder is trusted: the core decides
+    # (design.md section 3, S2). The relay does not read the folder's files itself: in a folder VS Code does not trust,
+    # their words would reach the agent as tool descriptions although the core leaves them out.
+    reply = client.call("actions", timeout=5)
+    catalog = reply.get("result") if isinstance(reply.get("result"), str) else None
+    if catalog is None:
+        K.load(None)  # no core yet: what is shipped and the person's own
+    build_server(client, user_language(), catalog).run()

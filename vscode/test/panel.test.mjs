@@ -88,8 +88,8 @@ test("the Japanese inbox renders with its own words", () => {
   const w = webview();
   const out = w.render({ running: true, agent: "", strings: plainStrings("ja"), cards: [],
     devices: [{ id: "d1", label: "x", selected: false, watched: false, busy: false }] });
-  assert.match(out, /エージェント未選択/);
-  assert.match(out, /つながっている機器/);
+  const ja = plainStrings("ja");
+  assert.ok(out.includes(ja.noAgentYet) && out.includes(ja.devicesTitle));
 });
 
 test("language: the setting, else VS Code's language when it has one, else the OS language", async () => {
@@ -108,16 +108,18 @@ test("each device can be released for the person's own tools, or used again", ()
     { id: "fpga", label: "SIPEED JTAG Debugger", selected: false, watched: false, busy: false },
     { id: "other", label: "held elsewhere", selected: false, watched: false, busy: true },
   ] });
-  assert.match(out, /ESP32-S3<\/span><span class="state muted">見張り中<\/span><button data-dev="esp" data-use="0">手放す<\/button>/);
-  assert.match(out, /SIPEED JTAG Debugger<\/span><span class="state muted">使っていない<\/span><button data-dev="fpga" data-use="1">使う<\/button>/);
-  assert.match(out, /held elsewhere<\/span><span class="state muted">別のウィンドウで使用中<\/span><\/div>/, "no button for a device another window holds");
-  assert.ok(out.indexOf("つながっている機器") < out.indexOf("自分のツール"));
+  const ja = plainStrings("ja");
+  assert.ok(out.includes(`ESP32-S3</span><span class="state muted">${ja.stateWatched}</span><button data-dev="esp" data-use="0">${ja.releaseDevice}</button>`));
+  assert.ok(out.includes(`SIPEED JTAG Debugger</span><span class="state muted">${ja.stateFree}</span><button data-dev="fpga" data-use="1">${ja.useDevice}</button>`));
+  assert.ok(out.includes(`held elsewhere</span><span class="state muted">${ja.inUse}</span></div>`), "no button for a device another window holds");
+  assert.ok(out.indexOf(ja.devicesTitle) < out.indexOf(ja.releaseHint));
 });
 
 test("while everything is allowed, the inbox says so at the top with a way to turn it off", () => {
   const w = webview();
   const on = w.render({ running: true, agent: "x", cards: [], devices: [], allowAll: true, strings: plainStrings("ja") });
-  assert.match(on, /<div class="allowall"><span>すべて許可中:[^<]*元に戻せない操作は毎回確認します。<\/span><button data-cmd="allowAllOff">解除<\/button><\/div>/);
+  const ja = plainStrings("ja");
+  assert.ok(on.includes(`<div class="allowall"><span>${ja.allowAllOn}</span><button data-cmd="allowAllOff">${ja.allowAllOff}</button></div>`));
   const off = w.render({ running: true, agent: "x", cards: [], devices: [], allowAll: false, strings: plainStrings("ja") });
   assert.ok(!off.includes("allowall"));
 });

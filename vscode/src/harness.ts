@@ -250,8 +250,9 @@ export class Harness extends EventEmitter {
     const command = a.effect === "disruptive" && Array.isArray(a.impact.subjects) && a.impact.subjects.length > 0;
     const options: CardOption[] = [{ id: "once", label: this.s.allowOnce, primary: true }];
     if (a.effect === "disruptive") options.push({ id: "session", label: command ? this.s.allowCommandSession : this.s.allowSession });
-    // "always on this device": the commands the human saw are remembered as theirs, whatever the protocol
-    const always = command;
+    // "always on this device": the commands the human saw are remembered as theirs, whatever the protocol, where the
+    // core says it can keep that (a unit its serial number singles out; else the next call would ask again)
+    const always = command && !!a.always;
     if (always) options.push({ id: "always", label: this.s.allowAlwaysHere });
     if (a.effect === "disruptive" && !this.core.allowAll) options.push({ id: "all", label: this.s.allowAllSession });
     options.push({ id: "deny", label: this.s.deny });

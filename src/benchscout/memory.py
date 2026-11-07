@@ -123,10 +123,9 @@ class MemoryFile:
     def save(self) -> None:
         if self.broken:  # the person's file as they left it: fixing it is theirs, losing it is not an option
             raise ValueError(f"memory file {self.path} could not be read ({self.broken}); fix or delete it first")
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
-        tmp.write_text(dump(self.entries, self.header), encoding="utf-8")
-        os.replace(tmp, self.path)  # whole or not at all: a stop in the middle leaves the old file
+        from .files import write_whole
+
+        write_whole(self.path, dump(self.entries, self.header))
 
 
 class _FileLock:
@@ -159,10 +158,15 @@ class _FileLock:
 
 
 class Memory:
-    def __init__(self, workspace: Path, root: Path | None = None):
+    def __init__(self, workspace: Path | None, root: Path | None = None):
+        """`workspace`: the folder whose setup is remembered with it; None in a folder VS Code does not trust (its files
+        are not read, as its knowledge is not: design.md section 3, S2)."""
         self.root = Path(root or user_dir())
-        self.workspace_file = Path(workspace) / ".benchscout" / "memory" / "workspace.toml"
+        self.workspace_file = Path(workspace) / ".benchscout" / "memory" / "workspace.toml" if workspace else None
         self._lock = threading.Lock()
+
+    def _files(self, key: str) -> list[Path]:
+        return [self._path(key)] + ([self.workspace_file] if self.workspace_file else [])
 
     def _path(self, key: str) -> Path:
         return self.root / "devices" / f"{key}.toml"
@@ -175,7 +179,10 @@ class Memory:
         nets: true of this setup, not of the device wherever it goes; design.md section 6)."""
         with self._lock:
             mine = self.device_file(key).entries
-            here = [e for e in MemoryFile(self.workspace_file).entries if e.device == key]
+            # the folder's file holds this setup (kind config) and nothing else: whatever else is written there is not
+            # memory benchscout or the human put there, and loosens nothing
+            here = [e for e in MemoryFile(self.workspace_file).entries if e.device == key and e.kind == "config"] \
+                if self.workspace_file else []
             return mine + here
 
     def in_folder(self, entry: Entry) -> bool:
@@ -187,6 +194,8 @@ class Memory:
         if entry.kind not in KINDS:
             raise ValueError(f"kind must be one of {', '.join(KINDS)}")
         if entry.kind == "config":
+            if self.workspace_file is None:
+                raise ValueError("this folder is not trusted in VS Code, so benchscout keeps no memory of its setup here")
             entry.device = key
             with self._lock, _FileLock(self.workspace_file):
                 f = MemoryFile(self.workspace_file, {"memory": "this folder's setup (wiring, probe nets)"})
@@ -212,7 +221,7 @@ class Memory:
             return entry
 
     def set_status(self, key: str, entry_id: str, status: str) -> Entry:
-        for path in (self._path(key), self.workspace_file):
+        for path in self._files(key):
             with self._lock, _FileLock(path):
                 f = MemoryFile(path)
                 for e in f.entries:
@@ -223,7 +232,7 @@ class Memory:
         raise KeyError(f"no memory entry {entry_id!r} for {key}")
 
     def delete(self, key: str, entry_id: str) -> None:
-        for path in (self._path(key), self.workspace_file):
+        for path in self._files(key):
             with self._lock, _FileLock(path):
                 f = MemoryFile(path)
                 if any(e.id == entry_id for e in f.entries):

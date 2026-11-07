@@ -60,6 +60,7 @@ def device_id(vid, pid, serial, location) -> str:
     return f"usb:{hex4(vid)}:{hex4(pid)}:{serial or location or 'noserial'}"
 
 
+DEFAULT_BAUD = 115200  # the rate a serial port is opened at when none was learned for it (memory config {"baud": n})
 PORT_KINDS = ("serial", "jtag", "swd", "usbtmc", "lan-scpi", "resource")  # adapter kinds, not a list of supported devices
 PROBE_KINDS = ("jtag", "swd")  # what a debug probe offers
 
@@ -142,6 +143,27 @@ class Bench:
 
     def ports_reaching(self, target_id: str) -> list[Port]:
         return [self.ports[l.port_id] for l in self.links if l.target_id == target_id]
+
+    # ---- telling units apart (design.md section 3: units that cannot be told apart are never matched by guess) ----
+    def selector_serial(self, dev: Device) -> str | None:
+        """The serial number that singles this unit out among those plugged in now, for a tool told which unit to use by
+        its serial. None when it has none, or another unit of the same product carries the same one or one the OS did not
+        give (it may be the same): a tool given that value could reach the other unit."""
+        if not dev.serial:
+            return None
+        for d in self.devices.values():
+            if d.id == dev.id:
+                continue
+            same_product = d.vid is not None and (d.vid, d.pid) == (dev.vid, dev.pid)
+            if (d.vid, d.pid, d.serial) == (dev.vid, dev.pid, dev.serial) or same_product and not d.serial:
+                return None
+        return dev.serial
+
+    def one_unit(self, dev: Device, shared_serials: set[str]) -> bool:
+        """Memory is kept by product and serial number. It is about this very unit only if the serial singles it out now
+        and the product does not give every unit the same one (`shared_serials`): memory that loosens safety, and a name
+        remembered for it, apply only then."""
+        return bool(dev.serial) and dev.serial not in shared_serials and self.selector_serial(dev) is not None
 
     def dependents(self, target_id: str) -> list[Target]:
         """Targets that go down when this one is reset/reprogrammed (transitively)."""

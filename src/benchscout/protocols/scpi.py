@@ -7,7 +7,7 @@ import re
 from ..actions import ArgError
 from ..policy_types import Effect
 from ..model import Confidence, Device, Evidence, Port, Target, device_id, hex4
-from .base import Judged, Protocol, Values
+from .base import Context, Judged, Protocol, Values
 
 # ---- SCPI ------------------------------------------------------------------------------------
 # SCPI fixes the syntax for every instrument, but the meaning of only a few commands: IEEE 488.2's common
@@ -143,7 +143,10 @@ class Scpi(Protocol):
     probe_action = ("scpi.query", {"command": "*IDN?"})
 
     def probe(self, io, port, seconds: float) -> dict | None:
-        answer = io.visa_query(port.path, "*IDN?")
+        try:
+            answer = io.visa_query(port.path, "*IDN?")
+        except OSError as e:  # what VISA said is the clue
+            return {"probe": "identity", "result": None, "error": str(e), "source": "scpi *IDN?"}
         return dict(parse_idn(answer) if answer else {}, probe="identity", result=answer, source="scpi *IDN?")
 
     def enumerate(self, io, bench, names: dict) -> None:
@@ -159,6 +162,15 @@ class Scpi(Protocol):
 
 
 SCPI = Scpi()
+
+
+def declared_length(data: bytes) -> int | None:
+    """The length a definite-length IEEE 488.2 block says it has (None for anything else)."""
+    if len(data) >= 2 and data[:1] == b"#" and data[1:2].isdigit() and data[1:2] != b"0":
+        n = int(data[1:2])
+        if len(data) >= 2 + n and data[2:2 + n].isdigit():
+            return int(data[2:2 + n])
+    return None
 
 
 def ieee_block(data: bytes) -> bytes:
@@ -207,18 +219,21 @@ def _add_visa(b, res: str, names: dict | None = None) -> None:
 
 # ---- operations (the gate finds them by name; `ctx` is the broker) -------------------------------------------------
 
-def op_message(ctx, port, args: dict):
+def op_message(ctx: Context, port, args: dict):
     """A query or a command, by what the line is: an answer is read only when it asks for one."""
-    if not any(h[0].endswith("?") for h in scpi_headers(args["command"])):
-        sent = ctx.io.visa_write(port.path, args["command"])
-        return {"sent": True} if sent else {"sent": False, "error": "could not send the command to the instrument"}
-    if args.get("save"):
-        return _save_capture(ctx, port, args["command"], args["save"])
-    answer = ctx.io.visa_query(port.path, args["command"])
+    try:
+        if not any(h[0].endswith("?") for h in scpi_headers(args["command"])):
+            sent = ctx.io.visa_write(port.path, args["command"])
+            return {"sent": True} if sent else {"sent": False, "error": "could not send the command to the instrument"}
+        if args.get("save"):
+            return _save_capture(ctx, port, args["command"], args["save"])
+        answer = ctx.io.visa_query(port.path, args["command"])
+    except OSError as e:
+        return {"error": f"the instrument could not be reached: {e}"}
     return answer if answer is not None else {"error": "no answer from the instrument"}
 
 
-def _save_capture(ctx, port, command: str, kind: str) -> dict:
+def _save_capture(ctx: Context, port, command: str, kind: str) -> dict:
     """A screen capture or a waveform into the workspace (design.md section 2: "saved here" is enough; the agent
     reports the numbers), without its IEEE 488.2 block header."""
     from .. import actions as A
@@ -232,6 +247,9 @@ def _save_capture(ctx, port, command: str, kind: str) -> dict:
     p = ctx.new_artifact(f"{port.id}-capture", kind)
     p.write_bytes(data)
     out: dict = {"saved_to": str(p.resolve()), "bytes": len(data), "block": raw[:1] == b"#"}
+    declared = declared_length(raw)
+    if declared is not None and len(data) < declared:  # the answer stopped early (a time-out, a cut connection)
+        out["warning"] = f"incomplete: the block says {declared} bytes, {len(data)} arrived; the file is cut short"
     if kind in ("csv", "txt"):
         out["preview"] = data[:600].decode("utf-8", errors="replace")
     elif kind == "png" and not data.startswith(b"\x89PNG"):

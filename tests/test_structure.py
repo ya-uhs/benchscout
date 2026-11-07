@@ -75,3 +75,22 @@ def test_the_extension_names_no_action_protocol_or_tool_outside_its_wording():
         if re.search(pattern, code):
             found.append(path.relative_to(EXT).as_posix())
     assert not found, found
+
+
+def test_operations_use_only_what_their_context_lists():
+    """Audit 2026-11-07 (16): the protocols' operations called the gate's private methods (`ctx._watch`,
+    `ctx._save_artifact` ...), so what an operation may do to the session was nowhere said. protocols.base.Context lists
+    it; an operation that reaches for anything else fails here (an import of the gate or recon too)."""
+    from benchscout.protocols.base import Context
+
+    allowed = {n for n in vars(Context) if not n.startswith("_")} | set(Context.__annotations__)
+    wrong = []
+    for path in sorted((SRC / "protocols").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "ctx" \
+                    and node.attr not in allowed:
+                wrong.append(f"{path.name}:{node.lineno} ctx.{node.attr}")
+            if isinstance(node, ast.ImportFrom) and node.module in ("broker", "recon") and node.level == 2:
+                wrong.append(f"{path.name}:{node.lineno} imports {node.module}")
+    assert not wrong, wrong

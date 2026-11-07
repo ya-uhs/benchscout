@@ -1,0 +1,8 @@
+# What the fixture benches assume about how their interfaces behave when opened, written as a user would after checking
+# their own bench (design.md section 5: shipped data says nothing it has not seen, so without this file the probe's
+# serial port asks before it is opened). The tests point BENCHSCOUT_KNOWLEDGE here (tests/conftest.py, vscode/test).
+
+[[usb]]
+vid = 0x0483
+pid = 0x374E  # the STLINK-V3 of fixtures/bench_*.json: its virtual COM port does not reset the board when opened
+may_reset_on_open = false

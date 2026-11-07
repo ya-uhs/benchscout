@@ -137,7 +137,9 @@ def write(knowledge_dir: Path, p: Proposal, when: str) -> Path:
         lines.append("[[usb]]")
         lines += [f"{k} = {_toml(v)}" for k, v in u.items()]
         lines.append("")
-    f.write_text("\n".join(lines), encoding="utf-8")
+    from .files import write_whole
+
+    write_whole(f, "\n".join(lines))
     return f
 
 

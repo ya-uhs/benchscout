@@ -16,6 +16,8 @@ import time
 from pathlib import Path
 from typing import Callable
 
+from .model import DEFAULT_BAUD
+
 from . import knowledge as K
 from .io import PortGone
 
@@ -32,7 +34,7 @@ SLEEP_WINDOW_S = 120.0
 
 class PortWatch:
     def __init__(self, io, port_id: str, path: str, log_dir: Path, on_event: Callable[[dict], None],
-                 baud: int = 115200, lines: str = "low", patterns: list[dict] | None = None, device_id: str = "",
+                 baud: int = DEFAULT_BAUD, lines: str = "low", patterns: list[dict] | None = None, device_id: str = "",
                  may_reopen: Callable[["PortWatch"], tuple[bool, str]] | None = None):
         self.io, self.port_id, self.path = io, port_id, path
         self.device_id = device_id  # the unit it was opened for: a port that comes back may be another's
@@ -188,10 +190,11 @@ class PortWatch:
                 break
             if not self.io.port_present(self.path):
                 continue
-            if self.may_reopen:
-                allowed, why = self.may_reopen(self)
-                if not allowed:
-                    return False, why
+            if self.may_reopen is None:  # the broker decides every open (design.md section 3); with no one to ask, no
+                return False, "nothing decides whether to open it again"
+            allowed, why = self.may_reopen(self)
+            if not allowed:
+                return False, why
             try:
                 self._stream = self.io.serial_stream(self.path, self.baud, True, self.lines)
                 self.opened_at = time.monotonic()

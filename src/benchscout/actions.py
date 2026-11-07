@@ -11,6 +11,7 @@ import json
 import math
 from dataclasses import dataclass, field
 
+from .model import DEFAULT_BAUD
 from .policy_types import Effect
 
 
@@ -140,7 +141,7 @@ class Action:
 
 _LISTEN = (
     Param("seconds", float, "how long to listen", 3.0, min=0.05, max=60),
-    Param("baud", int, "baud rate", 115200, min=50, max=12_000_000),
+    Param("baud", int, "baud rate", DEFAULT_BAUD, min=50, max=12_000_000),
 )
 _COMMAND = (Param("command", str, "SCPI command line", required=True),)
 SAVE_KINDS = ("png", "bmp", "jpg", "csv", "txt", "bin")
@@ -154,7 +155,7 @@ BUILTIN: dict[str, Action] = {a.name: a for a in (
            "listen to a serial port and save what it prints", _LISTEN, opens=True),
     Action("serial.watch", Effect.SAFE, False, "keeps the port open and reads it continuously",
            "keep listening to a serial port in the background; then serial.listen reads from it without reopening, "
-           "and alerts (crashes, resets) are noticed", (Param("baud", int, "baud rate", 115200, min=50, max=12_000_000),),
+           "and alerts (crashes, resets) are noticed", (Param("baud", int, "baud rate", DEFAULT_BAUD, min=50, max=12_000_000),),
            opens=True),
     Action("serial.send", Effect.DISRUPTIVE, True, "sends bytes the firmware will act on",
            "send text to a serial port and read the answer; a command remembered for the port is judged by its rule "
@@ -163,17 +164,19 @@ BUILTIN: dict[str, Action] = {a.name: a for a in (
             Param("eol", str, "appended to data: \"\\n\", \"\\r\\n\", or \"\" for single-byte commands (default: the "
                   "remembered command's, else \"\\n\")"),
             Param("seconds", float, "how long to read the answer (at most, with until)", 1.0, min=0.05, max=30),
-            Param("baud", int, "baud rate", 115200, min=50, max=12_000_000),
+            Param("baud", int, "baud rate", DEFAULT_BAUD, min=50, max=12_000_000),
             Param("until", str, "regular expression for the line that ends the answer (the shell's prompt, \"^(ok|err)\", "
                   "\"^(OK|ERROR)$\"): reading stops there instead of after seconds; read it from the device's output")),
            protocol="lines", text="data", opens=True),
-    # the command line decides the effect (policy.py): the standard's status and identity queries are SAFE, an output
-    # setting asks every time, anything else asks and the human may allow that command for the session or always;
-    # these base effects apply only with no command at all
+    # the command line decides the effect (protocols/scpi.py): the standard's status and identity queries that change
+    # nothing are SAFE (not the error queue or the event register: reading them clears them), an output setting asks
+    # every time, anything else asks and the human may allow that command for the session or always; these base effects
+    # apply only with no command at all
     Action("scpi.query", Effect.DISRUPTIVE, False, "a SCPI query; what it does depends on the command and the instrument",
-           "send a SCPI query and read the answer (one message, printable ASCII; *IDN?, SYST:ERR? and the other "
-           "status queries run without asking; another query asks, and the human may allow it for the session or "
-           "always on this instrument; `save` puts a screen capture or waveform in a file)", _QUERY,
+           "send a SCPI query and read the answer (one message, printable ASCII; *IDN?, *STB?, SYST:ERR:COUN? and the "
+           "other status queries that change nothing run without asking; SYST:ERR? and *ESR? ask, since reading them "
+           "clears them; another query asks, and the human may allow it for the session or always on this "
+           "instrument; `save` puts a screen capture or waveform in a file)", _QUERY,
            protocol="scpi", text="command"),
     Action("scpi.write", Effect.DANGEROUS, False, "a SCPI command; what it does depends on the instrument",
            "send a SCPI command (one message, printable ASCII); it asks the human, who may allow that command for the "

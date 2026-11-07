@@ -9,11 +9,35 @@ optionally limits on its values), else by the protocol's default; the strongest 
 
 from __future__ import annotations
 
-import re
 import math
-from typing import Callable
+import re
+from pathlib import Path
+from typing import Any, Callable, Protocol as _Interface
 
 from ..policy_types import Effect
+
+class Context(_Interface):
+    """What a protocol's operations may use of the gate that runs them, and nothing else (tests/test_structure.py):
+    the device's io, the bench, the watches held open, and the few things an operation does to the session."""
+
+    io: Any
+    watches: dict
+
+    @property
+    def bench(self) -> Any: ...
+
+    @property
+    def cancel_event(self) -> Any: ...  # set when the human or the agent stops the call
+
+    def read_reopen_guard(self, port) -> Callable[[float], bool]: ...  # asked before a port that went away is reopened
+    def new_artifact(self, stem: str, ext: str) -> Path: ...
+    def save_artifact(self, name: str, content: str, preview: str) -> dict: ...
+    def watch_port(self, port_id: str, baud: int) -> bool: ...
+    def unwatch_port(self, port_id: str) -> None: ...
+    def fold_output(self, port_id: str, text: str | None, error: str | None = None) -> None: ...
+    def observe_open(self, port_id: str, text: str | None) -> None: ...  # what opening the port did (it stayed, it reset)
+    def record_sent(self, port_id: str, text: str) -> None: ...  # what was sent: a device echoing it did not say it
+
 
 Values = Callable[[str], list[str]]  # a command's argument values, under one of its names
 Judged = tuple[Effect, str, str]  # (effect, reason, code)

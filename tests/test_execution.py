@@ -174,7 +174,7 @@ def test_attached_resource_shares_existing_device_and_pauses_watch(bench):
     run = start(b, plan(b, r, "import time; time.sleep(60)"))
     assert port.id not in b.watches
     assert b.request("serial.listen", port.id, {"seconds": .1})["status"] == "busy"
-    assert b._watch(port.id, 115200) is False
+    assert b.watch_port(port.id, 115200) is False
     b.scan()
     assert b.bench.ports[r["resource"]].device_id == port.device_id
     b.run_state(run["job"], stop=True)

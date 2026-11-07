@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from pathlib import Path
 
 
@@ -21,13 +19,6 @@ class Recipes:
         return data["recipes"]
 
     def write(self, recipes: dict) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        name = None
-        try:
-            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.path.parent, delete=False) as f:
-                name = f.name
-                json.dump({"version": 1, "recipes": recipes}, f, ensure_ascii=False, indent=2)
-            os.replace(name, self.path)
-        finally:
-            if name and os.path.exists(name):
-                os.unlink(name)
+        from .files import write_whole
+
+        write_whole(self.path, json.dumps({"version": 1, "recipes": recipes}, ensure_ascii=False, indent=2))

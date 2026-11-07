@@ -68,8 +68,10 @@ load in `bench-session/`, which must look exactly like an end user's workspace.
 - **The first read needs no LLM** (raw clues + memory, shown at once); the LLM starts when the user
   picks devices (R4). Calls needing approval wait for the panel (S3). Expert behaviour ships as one
   skill source, in `.claude/skills/` for Claude Code and `.agents/skills/` for the others (S4).
-- **One core per VS Code window**; devices are guarded by per-device locks and OS-level exclusive
-  open; the MCP relay never starts a core (S1). Runs only in folders that opted in (S2).
+- **One core per VS Code window**; devices are guarded by per-device locks, and the serial ports the built-in adapters
+  open by OS-level exclusive open (a program run with `bench_run` is trusted, not contained); the MCP relay never starts
+  a core and takes its tool descriptions from it (S1). A folder VS Code does not trust: its knowledge and its memory
+  file are not read (S2). The folder's memory file holds its setup only (kind config).
 - **Scope**: bench observation, diagnosis and hardware operation, including writing a bitstream
   to FPGA SRAM or an image to flash as one DANGEROUS action defined as data. Editing and building
   code are out of scope.
@@ -126,7 +128,12 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
   also disturbs the UART implemented in its fabric.
 - An action (a tool definition) with no declared effect is DANGEROUS. Text sent to a device (serial, SCPI) whose effect
   neither the standard nor memory fixes is DISRUPTIVE, and a grant covers only the command word/header the human saw.
-  A remembered effect applies through every entrance (`serial.command` and raw `serial.send` alike).
+  A remembered effect applies through every entrance (one: `serial.send`; SCPI's `scpi.query`/`scpi.write`).
+- Opening is cautious unless data or a confirmed memory says otherwise: a `usb.toml` entry without `may_reset_on_open`
+  means "may reset". A tool argument naming the unit (`{device.serial}`, `{port.path}`) is filled only where it singles
+  the unit out (`recon.unit_args`); otherwise the tool does not run. A name remembered for a unit that cannot be told
+  apart is shown as a maybe. A quote is checked against the device's output less what benchscout sent (echoes).
+  A call that waited for the human is judged again before it runs (docs/audit-2026-11-07.md).
 - Runtime contracts (design.md §3, review 7): every open or reopen of a device port is decided by the broker on the current
   state (selected, same unit, safe to open now); an approval binds to the resolved content (bytes, argv, definition); an
   operation's effect is the strongest of its steps (open, settings, content, tool); "loosening" is judged against the
@@ -159,6 +166,8 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
   fine; anything that is not SAFE (it resets or writes something) only after the user says OK
   in chat for that action. Why: this session has a shell and can edit code, so a direct probe
   could reset or rewrite a board the user is working on, and would test a path no user takes.
+- Tests read `fixtures/knowledge` as the user's knowledge layer (what the fixture benches assume, e.g. that the
+  example probe's serial port is safe to open): never the developer's own `~/.config/benchscout/knowledge`.
 - **Add a test only for one of these**: a safety promise (the gate, approvals, the policy; property tests where
   inputs are open-ended), something a real bench or a real OS did (record its output in `fixtures/real/` and test
   against the recording), or a regression that was found. Do not add tests that restate the implementation (retyped

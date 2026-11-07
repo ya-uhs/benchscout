@@ -111,6 +111,7 @@ async function start() {
   if (real) { delete env.BENCHSCOUT_FIXTURE; } else {
     env.BENCHSCOUT_FIXTURE = resolve(flag("--fixture") ?? join(repo, "fixtures", "bench_example.json"));
     env.BENCHSCOUT_MEMORY = join(profile, "memory");
+    env.BENCHSCOUT_KNOWLEDGE = join(repo, "fixtures", "knowledge");  // what the fixture benches assume (fixtures/knowledge)
   }
   const p = spawn(BIN, ["--user-data-dir", join(profile, "ud"), "--extensions-dir", join(profile, "ext"),
     `--remote-debugging-port=${port}`, "--disable-workspace-trust", ...(process.env.VSCODE_ARGS ?? "").split(" ").filter(Boolean), ...(flag("--locale") ? ["--locale", flag("--locale")] : []),

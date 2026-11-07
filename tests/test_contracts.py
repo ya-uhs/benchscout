@@ -444,7 +444,7 @@ def test_duplicate_cable_serial_disables_ambiguous_tool_and_sensorhub_remains_vi
 def test_host_artifact_cannot_supply_a_device_quote(tmp_path):
     br = bench(tmp_path, select=[VCP])
     port = br.resolve_port(VCP)
-    br._save_artifact(f"{port}0-command.txt", "HOST-ONLY-MARKER", preview="")
+    br.save_artifact(f"{port}0-command.txt", "HOST-ONLY-MARKER", preview="")
     assert br.identify(port, "incorrect", "HOST-ONLY-MARKER")["status"] == "unverified"
     br.end_session()
 
@@ -478,3 +478,354 @@ def test_equal_serial_strings_on_different_products_have_separate_targets():
     targets = [{t.id for p in inventory.ports_of(d.id) for t in inventory.targets_via(p.id)}
                for d in inventory.devices.values()]
     assert all(targets) and targets[0].isdisjoint(targets[1])
+
+
+# ---- found by the audit of 2026-11-07 (docs/audit-2026-11-07.md): each failed on the code before its fix ----------
+
+def _memory_of(br, path):
+    port = br.resolve_port(path)
+    return port, br._key(br.bench.devices[br.bench.ports[port].device_id])
+
+
+def test_always_from_an_approval_that_no_longer_waits_writes_nothing(tmp_path):
+    """Audit 1: "always on this device" wrote the commands as safe before checking the card was still waiting."""
+    br = bench(tmp_path, select=[VCP])
+    port, key = _memory_of(br, VCP)
+    denied = br.request("serial.send", port, {"data": "status"})
+    br.decide(denied["approval_id"], False)
+    with pytest.raises(ValueError):
+        br.decide(denied["approval_id"], True, "always")
+    withdrawn = br.request("serial.send", port, {"data": "version"})
+    br.select([])  # the device left the session: its request is withdrawn
+    with pytest.raises(ValueError):
+        br.decide(withdrawn["approval_id"], True, "always")
+    assert not [e for e in br.memory.entries(key) if e.kind == "command"]
+    br.end_session()
+
+
+def test_opening_a_port_the_data_says_nothing_about_asks_first(tmp_path, monkeypatch):
+    """Audit 3, 4: an entry without `may_reset_on_open` (a chip on its own USB, a probe's serial port) was taken as safe
+    to open, and recon opened it. Only data that says so, or a confirmed memory, makes opening safe."""
+    kn = tmp_path / "kn"
+    kn.mkdir()
+    (kn / "units.toml").write_text('[[usb]]\nvid = 0x1209\npid = 0x0001\nrole = "native"\n')
+    monkeypatch.setenv("BENCHSCOUT_KNOWLEDGE", str(kn))  # (no file saying the example probe's port is safe to open)
+
+    def add(data):
+        data["usb"].append({"name": "Chip", "vendor": "X", "vid": "0x1209", "pid": "0x0001", "serial": "C1",
+                            "location": "0x01160000"})
+        data["serial"].append({"device": "/dev/cu.usbmodem9", "vid": "0x1209", "pid": "0x0001", "serial_number": "C1",
+                               "description": "Chip"})
+        data["listen"] = list(data["listen"]) + ["/dev/cu.usbmodem9"]
+
+    br = bench(tmp_path, change=add)
+    for path in (VCP, "/dev/cu.usbmodem9"):
+        assert br.impact("serial.listen", path).effect == Effect.DISRUPTIVE, path
+        assert ("serial_listen", path) not in br.io.calls, f"recon opened {path}"
+
+
+def _lab_probe(tmp_path, monkeypatch, sn_arg="{device.serial}"):
+    kn = tmp_path / "kn"
+    kn.mkdir(exist_ok=True)
+    (kn / "lab.toml").write_text(
+        '[[tool]]\nname = "lab.detect"\neffect = "safe"\nport_kinds = ["serial"]\ntimeout = 10\n'
+        f"argv = ['{sys.executable}', '-c', 'import sys; print(sys.argv[1:])', '--sn', '{sn_arg}']\n"
+        "probe = { idcode = 'idcode (0x[0-9a-f]+)', source = 'lab' }\n")
+    for f in (Path(__file__).parent.parent / "fixtures" / "knowledge").glob("*.toml"):
+        (kn / f.name).write_text(f.read_text())
+    monkeypatch.setenv("BENCHSCOUT_KNOWLEDGE", str(kn))
+
+
+def test_a_tool_is_never_pointed_at_a_unit_it_cannot_single_out(tmp_path, monkeypatch):
+    """Audit 5, 6, 21: a tool argument naming the unit (its serial) was filled with "" for a unit without one (the tool
+    then takes whichever it finds), and used while another unit of the product had a serial the OS did not give."""
+    _lab_probe(tmp_path, monkeypatch)
+
+    def add(data):
+        data["tools"] = data["tools"] + [sys.executable]
+        data["usb"].append(dict(data["usb"][0], serial=None, location="0x01170000"))  # a second unit, serial not given
+
+    br = bench(tmp_path, change=add, select=[CH340])
+    assert not [c for c in br.io.calls if c[0] == "probe" and "" in c[1]], "a probe ran with an empty serial"
+    res = br.request("lab.detect", CH340)
+    assert res["status"] != "done" or "error" in res["result"], res
+    assert "--sn" not in json.dumps(res.get("result", {}).get("argv", [])), "the tool was started"
+    fpga = next(p for p in br.bench.ports.values() if p.kind == "jtag" and "210319A8C7D1" in p.device_id)
+    assert not fpga.tools, "the serial does not single this unit out while another one's serial is unknown"
+    br.end_session()
+
+
+def test_a_port_whose_channel_cannot_be_told_is_listed_as_an_unknown_port(tmp_path):
+    """Audit 8: on a board the wiring data matches, a serial port whose channel the OS did not say was dropped."""
+    def change(data):
+        data["serial"] = [s for s in data["serial"] if not s["device"].endswith("D10")]
+        for s in data["serial"]:
+            if s["device"].endswith("D11"):
+                s.pop("channel", None)
+                s["device"] = "/dev/cu.usbserial-ABC"
+
+    br = bench(tmp_path, change=change)
+    p = br.bench.ports.get("serial:usbserial-ABC")
+    assert p is not None and p.may_reset_on_open
+    assert not any(t.hosted_on for t in br.bench.targets_via(p.id)), "not placed inside the FPGA by an assumption"
+
+
+def test_a_probe_that_found_nothing_keeps_the_tools_own_words(tmp_path):
+    """Audit 9: a probe tool that failed (no access, timed out) looked the same as one that found no part."""
+    def change(data):
+        data["tools"] = data["tools"] + ["openFPGALoader"]
+        data["probes"] = {"210319A8C7D1": "unable to open ftdi device: -4 (usb_open() failed)\n"}
+
+    br = bench(tmp_path, change=change)
+    t = br.bench.targets["target:210319A8C7D1:fpga"]
+    assert any("unable to open ftdi device" in f for f in t.facts), t.facts
+
+
+@pytest.mark.assumed
+def test_a_maker_without_a_model_does_not_name_the_part(tmp_path):
+    """Audit 10: a part whose IDCODE the tool's database does not have, but whose maker it knows, was named by the maker
+    alone and marked identified. (Assumed: no recording of such a probe output yet.)"""
+    def change(data):
+        data["tools"] = data["tools"] + ["openFPGALoader"]
+        data["probes"] = {"210319A8C7D1": "index 0:\n\tidcode 0x0362D093\n\tmanufacturer xilinx\n"}
+
+    br = bench(tmp_path, change=change)
+    t = br.bench.targets["target:210319A8C7D1:fpga"]
+    assert t.name is None and t.confidence.value == "unknown"
+    assert any("xilinx" in e.detail for e in t.evidence)
+
+
+def test_a_watch_does_not_reopen_without_the_brokers_say(tmp_path):
+    """Audit 12: a watch given no one to ask reopened its port by itself."""
+    from benchscout.watch import PortWatch
+
+    data = json.loads(FIXTURE.read_text())
+    data["streams"] = {VCP: [{"after": 0.05, "vanish": 0.2}]}
+    f = tmp_path / "bench.json"
+    f.write_text(json.dumps(data))
+    events: list[dict] = []
+    w = PortWatch(FixtureIo(f), "serial:x", VCP, tmp_path / "logs", events.append)
+    w.start()
+    end = time.monotonic() + 5
+    while time.monotonic() < end and not any(e["kind"] in ("gone", "returned") for e in events):
+        time.sleep(0.05)
+    w.stop()
+    assert [e["kind"] for e in events if e["kind"] in ("gone", "returned")] == ["gone"]
+
+
+def test_a_name_remembered_for_a_unit_that_cannot_be_told_apart_is_not_its_name(tmp_path):
+    """Audit 13: a name learned behind a cable without a serial number came back as the name of whatever is behind any
+    cable of that model, marked identified."""
+    from benchscout.memory import Entry
+
+    br = bench(tmp_path)
+    port, key = _memory_of(br, CH340)
+    tid = br.bench.targets_via(port)[0].id
+    br.memory.add(key, Entry(kind="identity", text="ESP32-S3", source="agent", evidence="ESP-ROM:esp32s3", target=tid))
+    br.scan()
+    t = br.bench.targets[tid]
+    assert t.name is None and t.confidence.value == "unknown"
+    assert any("ESP32-S3" in f for f in t.facts), "what was learned is still shown, as a maybe"
+
+
+def test_a_send_that_resets_a_port_judged_safe_to_open_is_remembered(tmp_path):
+    """Audit 14: only listening and watching noticed that opening a port judged safe reset the device; a send that
+    opened the port did not."""
+    br = bench(tmp_path, change=lambda d: d.update(listen={VCP: {"error": "Device not configured"}}), select=[VCP])
+    port, key = _memory_of(br, VCP)
+    br.unwatch_port(port)  # (opened for the call itself)
+    res = br.request("serial.send", port, {"data": "status"})
+    if res["status"] == "approval_required":
+        br.decide(res["approval_id"], True)
+        res = br.request("serial.send", port, {"data": "status"}, approval_id=res["approval_id"])
+    assert br.bench.ports[port].may_reset_on_open
+    assert any(e.kind == "safety" and e.data.get("listen_safe") is False for e in br.memory.entries(key))
+    br.end_session()
+
+
+def test_a_call_that_waited_for_the_human_is_judged_again_before_it_runs(tmp_path):
+    """Audit 18: a call waiting for the human kept the judgment it had before the wait; memory made the command
+    dangerous meanwhile and the human's OK for a disruptive one still ran it."""
+    import threading
+
+    br = bench(tmp_path, select=[VCP], wait=5)
+    port = br.resolve_port(VCP)
+    out: dict = {}
+    t = threading.Thread(target=lambda: out.update(br.request("serial.send", port, {"data": "status"})))
+    t.start()
+    end = time.monotonic() + 5
+    while not br.approvals.pending() and time.monotonic() < end:
+        time.sleep(0.02)
+    aid = br.approvals.pending()[0].id
+    assert remember(br, port, "status", "dangerous")["status"] == "remembered"
+    br.decide(aid, True)
+    t.join(10)
+    assert out["status"] != "done", out
+    assert not [c for c in br.io.calls if c[0] == "serial_write"]
+    br.end_session()
+
+
+def test_a_decided_memory_entry_cannot_be_decided_again(tmp_path):
+    """Audit 19: a rejected (or contradicted, superseded) entry could still be accepted and take effect."""
+    esp = "/dev/cu.usbmodem1101"
+    br = bench(tmp_path)
+    port, key = _memory_of(br, esp)
+    asked = br.remember(port, "safety", "opening does not reset it", data={"listen_safe": True})
+    br.decide_memory(key, asked["id"], False)
+    with pytest.raises(ValueError):
+        br.decide_memory(key, asked["id"], True)
+    assert br.bench.ports[port].may_reset_on_open
+
+
+def test_a_stricter_safety_entry_applies_at_once(tmp_path):
+    """Audit 20: the agent saying a port resets when opened waited for the human, although it only adds caution."""
+    br = bench(tmp_path)
+    port, _ = _memory_of(br, VCP)
+    assert br.remember(port, "safety", "opening it resets the board", data={"listen_safe": False})["status"] == "remembered"
+    assert br.bench.ports[port].may_reset_on_open
+
+
+def test_what_the_device_echoes_of_what_was_sent_does_not_prove_a_name(tmp_path):
+    """Audit 22: a shell echoes what it is sent; that echo verified a quote the host itself wrote."""
+    banner = "ESP-ROM:esp32s3-20210327"
+
+    def echo(data):
+        data["replies"] = {VCP: {banner + "\n": banner + "\r\nunknown command\r\n"}}
+
+    br = bench(tmp_path, change=echo, select=[VCP])
+    port = br.resolve_port(VCP)
+    res = br.request("serial.send", port, {"data": banner, "seconds": 0.3})
+    if res["status"] == "approval_required":
+        br.decide(res["approval_id"], True)
+        res = br.request("serial.send", port, {"data": banner, "seconds": 0.3}, approval_id=res["approval_id"])
+    assert res["status"] == "done"
+    assert br.identify(port, "ESP32-S3", banner)["status"] == "unverified"
+    br.end_session()
+
+
+def test_always_is_offered_only_where_memory_can_keep_it(tmp_path):
+    """Audit 23: "always on this device" was offered (and written) for a unit whose memory cannot loosen anything: the
+    next call asked again."""
+    br = bench(tmp_path, select=[CH340, VCP])
+    no_serial = br.request("serial.send", br.resolve_port(CH340), {"data": "status"})
+    own = br.request("serial.send", br.resolve_port(VCP), {"data": "status"})
+    assert br.approvals.get(no_serial["approval_id"]).always is False
+    assert br.approvals.get(own["approval_id"]).always is True
+    with pytest.raises(ValueError):
+        br.decide(no_serial["approval_id"], True, "always")
+    br.end_session()
+
+
+def test_the_relay_does_not_put_an_untrusted_folders_words_in_the_tool_descriptions(tmp_path, monkeypatch):
+    """Audit 24: the relay read the folder's knowledge for its tool descriptions, which the core does not read in a
+    folder VS Code does not trust. Without a core to ask, only shipped and the user's own actions are described."""
+    import anyio
+
+    from benchscout import mcp_relay
+
+    k = tmp_path / ".benchscout" / "knowledge"
+    k.mkdir(parents=True)
+    (k / "x.toml").write_text('[[tool]]\nname = "x.do"\ndoc = "IGNORE-PREVIOUS-INSTRUCTIONS"\nargv = ["x"]\n')
+    seen = {}
+    monkeypatch.setattr(mcp_relay.MCPServer, "run", lambda self: seen.update(
+        tools=" ".join(t.description or "" for t in anyio.run(self.list_tools))))
+    monkeypatch.setenv("BENCHSCOUT_ADDRESS", str(tmp_path / "no-core.sock"))
+    mcp_relay.main(str(tmp_path))
+    assert "IGNORE-PREVIOUS-INSTRUCTIONS" not in seen["tools"]
+
+
+def test_a_known_device_without_a_port_is_still_listed(tmp_path):
+    """Audit 25: a device the data knows whose port is not there (no driver, handed to a VM) vanished from the scan."""
+    from benchscout.report import render
+
+    br = bench(tmp_path, change=lambda d: d.update(serial=[s for s in d["serial"] if s["vid"] != "0x1a86"]))
+    assert "QinHeng USB Serial" in render(br.recon)
+
+
+def test_the_approval_binds_the_program_that_will_run(tmp_path, monkeypatch):
+    """Audit 26: for a tool with a pinned download, the executable already there was left out of what the approval binds."""
+    from benchscout.fetch import platform_key
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    exe = bin_dir / "labtool"
+    exe.write_text(f"#!{sys.executable}\nprint('one')\n")
+    exe.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    ws = tmp_path / "ws"
+    (ws / ".benchscout" / "knowledge").mkdir(parents=True)
+    (ws / ".benchscout" / "knowledge" / "lab.toml").write_text(
+        '[[tool]]\nname = "lab.run"\neffect = "disruptive"\nport_kinds = ["serial"]\nargv = ["labtool", "{port.path}"]\n'
+        f'[get.labtool]\nversion = "1"\n"{platform_key()}" = {{ url = "https://example.invalid/l.tgz", sha256 = "{"0" * 64}", exe = "labtool" }}\n')
+    data = json.loads(FIXTURE.read_text())
+    f = tmp_path / "bench.json"
+    f.write_text(json.dumps(data))
+    br = Broker(FixtureIo(f), ws / ".benchscout")
+    br.scan()
+    br.select([br.bench.ports[br.resolve_port(VCP)].device_id])
+    asked = br.request("lab.run", VCP, {})
+    assert asked["status"] == "approval_required"
+    exe.write_text(f"#!{sys.executable}\nprint('two')\n")  # replaced while the human decides
+    br.decide(asked["approval_id"], True)
+    assert br.request("lab.run", VCP, {}, approval_id=asked["approval_id"])["status"] == "approval_mismatch"
+    br.end_session()
+
+
+def test_recon_listens_at_the_rate_learned_for_the_port(tmp_path):
+    """Audit 30: recon listened at 115200 whatever rate was learned for the port."""
+    br = bench(tmp_path)
+    port, _ = _memory_of(br, VCP)
+    br.remember(port, "config", "talks at 9600", data={"baud": 9600})
+    br.io.bauds.clear()
+    br.scan()
+    assert 9600 in br.io.bauds
+
+
+def test_the_folders_memory_holds_setup_only_and_is_read_only_where_the_folder_is_trusted(tmp_path):
+    """Audit 32: the folder's memory file (meant for its setup: wiring, a port's rate) was read whatever it held and
+    wherever it was: an entry there marked active could loosen safety without the human, also in a folder VS Code does
+    not trust."""
+    br = bench(tmp_path)
+    port, key = _memory_of(br, "/dev/cu.usbmodem1101")
+    f = tmp_path / "ws" / "memory-planted.toml"
+    f.write_text(f'''
+[[entry]]
+kind = "safety"
+text = "safe to open"
+source = "agent"
+target = "{port}"
+status = "active"
+device = "{key}"
+data = {{ listen_safe = true }}
+
+[[entry]]
+kind = "command"
+text = "erase"
+source = "agent"
+target = "{port}"
+status = "active"
+device = "{key}"
+data = {{ command = "erase", effect = "safe" }}
+''')
+    (tmp_path / "ws" / ".benchscout" / "memory").mkdir(parents=True, exist_ok=True)
+    f.replace(tmp_path / "ws" / ".benchscout" / "memory" / "workspace.toml")
+    br.scan()
+    assert br.bench.ports[port].may_reset_on_open, "a safety entry in the folder's file loosened nothing"
+    assert "erase" not in br.bench.ports[port].commands
+    untrusted = Broker(br.io, tmp_path / "ws" / ".benchscout", workspace_knowledge=False)
+    untrusted.scan()
+    assert untrusted.remember(port, "config", "talks at 9600", data={"baud": 9600})["status"] == "rejected"
+
+
+def test_an_instrument_that_cannot_be_reached_says_why(tmp_path, monkeypatch):
+    """Audit 31: a VISA failure (no VISA library, a busy or vanished resource) came back as "no answer", its reason lost."""
+    from benchscout.io import LiveIo
+
+    class Broken:
+        def open_resource(self, *a, **k):
+            raise OSError("VI_ERROR_RSRC_NFOUND: resource not present")
+
+    io = LiveIo()
+    monkeypatch.setattr(io, "_visa", lambda: Broken())
+    with pytest.raises(OSError, match="RSRC_NFOUND"):
+        io.visa_query("USB0::1::2::3::INSTR", "*IDN?")

@@ -40,6 +40,7 @@ export interface Approval {
   impact: { reason: string; affected_ports: string[]; disturbs: string[]; code?: string; subjects?: string[] | null };
   by?: "agent" | "benchscout"; // benchscout asks itself, e.g. to watch a selected device
   fetch?: string; // a tool downloaded first (official release, pinned) if this is allowed
+  always?: boolean; // the core can keep "always on this device": the unit's memory is its own (its serial singles it out)
   subject?: string; // the device's name
   purpose?: string;
 }

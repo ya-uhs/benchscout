@@ -278,6 +278,23 @@ def test_a_capture_is_saved_as_a_file_without_its_block_header(tmp_path):
     br.end_session()
 
 
+def test_a_capture_cut_short_says_so(tmp_path):
+    """Audit 2026-11-07 (15): a block shorter than its header says (a time-out, a cut connection) was saved as whole."""
+    data = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    res = "USB0::0x1AB1::0x04CE::DS1ZA201804321::INSTR"
+    data["visa_raw"] = {res: {":DISP:DATA? ON,OFF,PNG": (b"#9%09d" % (len(PNG) + 100) + PNG).hex()}}
+    f = tmp_path / "bench.json"
+    f.write_text(json.dumps(data), encoding="utf-8")
+    br = Broker(FixtureIo(f), tmp_path / "ws" / ".benchscout", approval_wait=0)
+    br.scan()
+    br.select([br.bench.ports[SCOPE].device_id])
+    ask = br.request("scpi.query", SCOPE, {"command": ":DISP:DATA? ON,OFF,PNG", "save": "png"})
+    br.decide(ask["approval_id"], True)
+    shot = br.request("scpi.query", SCOPE, {"command": ":DISP:DATA? ON,OFF,PNG", "save": "png"}, approval_id=ask["approval_id"])
+    assert "incomplete" in shot["result"]["warning"]
+    br.end_session()
+
+
 def test_an_ieee_block_is_taken_apart_and_anything_else_is_kept():
     from benchscout.protocols.scpi import ieee_block
 

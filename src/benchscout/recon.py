@@ -225,23 +225,36 @@ def _with_channel(s: dict, usb_serials: set) -> dict:
     return dict(s, channel=ch, serial_number=sn or None) if ch is not None else s
 
 
-def _serial_port(b: Bench, dev: Device, s: dict, kind: str = "serial", may_reset: bool = False) -> Port:
+def _serial_port(b: Bench, dev: Device, s: dict, may_reset: bool, kind: str = "serial") -> Port:
+    """A serial port of `dev`. `may_reset`: what the data says opening it does; benchscout says nothing it does not know,
+    so a caller with no data passes True (design.md section 3: an unknown port asks before it is opened)."""
     pid = "serial:" + os.path.basename(s["device"]).removeprefix("cu.").removeprefix("tty.")
     return b.add_port(Port(pid, dev.id, kind, s["device"], interface=s.get("channel"), may_reset_on_open=may_reset,
                            evidence=[Evidence("serial-port", s["device"])]))
 
 
-def _tool_args(info: dict, dev: Device, port: Port) -> dict[str, list[str]]:
-    """Omit an adapter when its selector cannot address this particular interface."""
-    out = {}
-    for tool, template in info.get("tools", {}).items():
-        if any("{device.serial}" in arg for arg in template) and not dev.serial:
-            continue
-        if any("{port.interface}" in arg for arg in template) and port.interface is None:
-            continue
-        out[tool] = [arg.replace("{device.serial}", dev.serial or "").replace("{port.interface}", str(port.interface))
-                     for arg in template]
+def unit_args(b: Bench, dev: Device, port: Port, template: list[str]) -> list[str] | None:
+    """A tool's arguments for this unit and port, with {device.serial}, {port.path} and {port.interface} filled in; None
+    when one of them cannot single this unit out (no value, or a serial another unit plugged in may carry too): the tool
+    would then take whichever unit it finds first. One place for every tool argument that names a unit."""
+    serial = b.selector_serial(dev)
+    values = {"{device.serial}": serial, "{port.path}": port.path,
+              "{port.interface}": str(port.interface) if port.interface is not None else None}
+    out = []
+    for arg in template:
+        for k, v in values.items():
+            if k in arg:
+                if v is None:
+                    return None
+                arg = arg.replace(k, v)
+        out.append(arg)
     return out
+
+
+def _tool_args(b: Bench, info: dict, dev: Device, port: Port) -> dict[str, list[str]]:
+    """How each tool the USB data names reaches this port (its `tools`), where it can single the unit out."""
+    return {tool: args for tool, template in info.get("tools", {}).items()
+            if (args := unit_args(b, dev, port, template)) is not None}
 
 
 def _apply_usb_knowledge(b: Bench, dev: Device, info: dict, serials: list[dict], raw: dict) -> None:
@@ -258,13 +271,13 @@ def _apply_usb_knowledge(b: Bench, dev: Device, info: dict, serials: list[dict],
                                 facts=["the chip enumerates on USB itself (no separate USB-UART bridge)"],
                                 evidence=[Evidence("usb-descriptor", f"{_hex(dev.vid)}:{_hex(dev.pid)} {dev.name}")]))
         for s in serials:
-            p = _serial_port(b, dev, s, may_reset=info.get("may_reset_on_open", False))
+            p = _serial_port(b, dev, s, may_reset=info.get("may_reset_on_open", True))
             p.open_lines = info.get("open_lines", "low")
             p.own_usb = True
             b.link(p.id, t.id, "uart", Evidence("usb-descriptor", "CDC-ACM of the chip"))
         if info.get("jtag"):
             p = b.add_port(Port(f"jtag:{short}", dev.id, "jtag", evidence=[Evidence("usb-descriptor", "built-in USB-JTAG interface")]))
-            p.tools = _tool_args(info, dev, p)
+            p.tools = _tool_args(b, info, dev, p)
             b.link(p.id, t.id, "jtag")
         return
 
@@ -287,11 +300,13 @@ def _apply_usb_knowledge(b: Bench, dev: Device, info: dict, serials: list[dict],
                 reached[ch] = target(ch, "the part on this board's JTAG, as the shipped wiring assumes (for safety; it names nothing)")
                 jp = b.add_port(Port(f"jtag:{short}" + (f":{ch}" if len(jtags) > 1 else ""), dev.id, "jtag", interface=ch,
                                      evidence=[ev]))
-                jp.tools = _tool_args(info, dev, jp)
+                jp.tools = _tool_args(b, info, dev, jp)
                 b.link(jp.id, reached[ch].id, "jtag", ev)
             for s in serials:
                 ch = s.get("channel")
-                if ch is not None and board["channels"].get(ch) == "uart":
+                if ch is None:  # which channel it is, the OS did not say: a port like any unknown one
+                    _unknown_port(b, dev, s, True)
+                elif board["channels"].get(ch) == "uart":
                     reached[ch] = target(ch, "a UART, as the shipped wiring assumes (for safety; it names nothing)")
                     p = _serial_port(b, dev, s, may_reset=True)
                     b.link(p.id, reached[ch].id, "uart", ev)
@@ -308,19 +323,24 @@ def _apply_usb_knowledge(b: Bench, dev: Device, info: dict, serials: list[dict],
         t = b.add_target(Target(f"target:{short}", None, "unknown", Confidence.UNKNOWN,
                                 facts=[f"behind {dev.name}"], evidence=[Evidence("usb-descriptor", dev.name)]))
         p = b.add_port(Port(f"{kind}:{short}", dev.id, kind, evidence=[Evidence("usb-descriptor", dev.name)]))
-        p.tools = _tool_args(info, dev, p)
+        p.tools = _tool_args(b, info, dev, p)
         b.link(p.id, t.id, kind)
         for s in serials:  # virtual COM port of the probe goes to the same target
-            sp = _serial_port(b, dev, s)
+            sp = _serial_port(b, dev, s, may_reset=info.get("may_reset_on_open", True))
             b.link(sp.id, t.id, "uart", Evidence("usb-descriptor", f"{dev.name} virtual COM port"))
         return
 
     if role in ("bridge", "unknown"):
         for s in serials:
-            p = _serial_port(b, dev, s, may_reset=info.get("may_reset_on_open", True))
-            t = b.add_target(Target(f"target:{p.id.split(':', 1)[1]}", None, "unknown", Confidence.UNKNOWN,
-                                    facts=[f"behind {dev.name}"]))
-            b.link(p.id, t.id, "uart")
+            _unknown_port(b, dev, s, info.get("may_reset_on_open", True))
+
+
+def _unknown_port(b: Bench, dev: Device, s: dict, may_reset: bool) -> None:
+    """A serial port with something unknown behind it."""
+    p = _serial_port(b, dev, s, may_reset=may_reset)
+    t = b.add_target(Target(f"target:{p.id.split(':', 1)[1]}", None, "unknown", Confidence.UNKNOWN,
+                            facts=[f"behind {dev.name}"]))
+    b.link(p.id, t.id, "uart")
 
 
 def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] | None = None,
@@ -383,17 +403,26 @@ def _probe(io: Io, b: Bench, port: Port, seconds: float, ran: list[str]) -> list
                 or any(a["need"] == "driver" or spec.argv[0] in a.get("tools", []) for a in dev.access):
             continue
         exe = b.tools.get(spec.argv[0])
-        argv = _probe_argv(spec, port, dev, exe)
+        argv = _probe_argv(b, spec, port, dev, exe)
         if argv is None or classify(b, spec.name, port.id).effect != Effect.SAFE:
             continue
         ran.append(f"{spec.name} {port.id}")
-        text = io.run_probe(argv, spec.timeout)
-        out.append({"probe": "chain", "result": read_parts(spec.probe, text or ""),
-                    "source": spec.probe.get("source", spec.argv[0])})
+        out.append(chain_result(spec, io.run_probe(argv, spec.timeout)))
     return out
 
 
-def _probe_argv(spec, port: Port, dev, exe: str | None) -> list[str] | None:
+def chain_result(spec, text: str | None) -> dict:
+    """What a probe tool's run gives the bench: the parts it named (by its own database) and, when it named none, its
+    own last words, or that it did not finish (`text` None): a tool that could not open the cable is not an empty chain."""
+    got = {"probe": "chain", "result": read_parts(spec.probe, text or ""), "source": spec.probe.get("source", spec.argv[0]),
+           "tool": spec.name}
+    if not got["result"]:
+        words = " | ".join(line.strip() for line in (text or "").splitlines() if line.strip())
+        got["said"] = words[-300:] if text is not None else f"(did not finish within {spec.timeout:g} s)"
+    return got
+
+
+def _probe_argv(b: Bench, spec, port: Port, dev, exe: str | None) -> list[str] | None:
     """The probe's command line for this port, or None when it cannot run here (not installed, no known way to reach
     the port, or it needs arguments a probe cannot have)."""
     if not exe:
@@ -406,10 +435,10 @@ def _probe_argv(spec, port: Port, dev, exe: str | None) -> list[str] | None:
                 return None  # only where the USB data says how this tool reaches this port
             argv += sel
             continue
-        val = a.replace("{port.path}", port.path or "").replace("{device.serial}", dev.serial or "")
-        if "{" in val:
-            return None
-        argv.append(val)
+        val = unit_args(b, dev, port, [a])
+        if val is None or "{" in val[0]:
+            return None  # it would not single this unit out, or it needs arguments a probe cannot have
+        argv += val
     return argv
 
 
@@ -443,7 +472,7 @@ def _fold(b: Bench, targets: list[Target], got: dict, earlier: bool = False, por
             elif result:
                 t.evidence.append(Evidence(source, str(result)))  # an answer that names nothing
             else:
-                t.facts.append(f"no answer to {source}")
+                t.facts.append(f"no answer to {source}" + (f" ({got['error']})" if got.get("error") else ""))
         if got.get("serial") and port is not None:
             dev = b.devices[port.device_id]
             if dev.transport == "lan" and not dev.serial:
@@ -454,11 +483,19 @@ def _fold(b: Bench, targets: list[Target], got: dict, earlier: bool = False, por
                      learned=b.devices[port.device_id].line_rules if port is not None else None)
     elif got["probe"] == "chain":
         chain = list(result or [])
+        if not chain and got.get("said") is not None:
+            for t in targets:
+                fact = f"{got.get('tool', 'the probe')} found no part; it said: {got['said'] or '(nothing)'}"
+                if fact not in t.facts:
+                    t.facts.append(fact)
         for i, found in enumerate(chain):
             code = found["idcode"]
-            # the tool's own database names it; benchscout keeps no table (design.md section 5)
-            name = " ".join(x for x in (found.get("maker"), found.get("model")) if x)
-            src = got.get("source", "the tool") if found.get("model") else f"not in {got.get('source', 'the tool')}"
+            # the tool's own database names it; benchscout keeps no table (design.md section 5). A maker without a model
+            # does not name the part: it stays unknown, with what the tool said
+            maker, model = found.get("maker"), found.get("model")
+            name = " ".join(x for x in (maker, model) if x) if model else ""
+            src = got.get("source", "the tool") if model else \
+                f"not in {got.get('source', 'the tool')}" + (f"; manufacturer {maker}" if maker else "")
             if len(chain) > 1:
                 src += f"; part {i + 1} of {len(chain)} on the chain"
             parts = targets
@@ -472,20 +509,6 @@ def _fold(b: Bench, targets: list[Target], got: dict, earlier: bool = False, por
                 if name:  # what the tool's database says; the kind of part is not guessed from it
                     t.name, t.confidence = name, Confidence.IDENTIFIED
                 t.evidence.append(Evidence("jtag idcode", f"0x{code:08X} ({src})"))
-
-
-def listen_into(io: Io, path: str, targets: list[Target], seconds: float, exclusive: bool = False,
-                baud: int = 115200, lines: str = "low", cancel=None, may_reopen=None) -> str | None:
-    """Listen and fold what was heard into the targets. A port that vanishes mid-read
-    (USB re-enumeration, usually a reset) is recorded as a fact, not a crash."""
-    try:
-        text = io.serial_listen(path, seconds, baud, exclusive, lines, **({"cancel": cancel} if cancel is not None else {}),
-                                **({"may_reopen": may_reopen} if may_reopen is not None else {}))
-    except Exception as e:  # serial.SerialException / OSError: device went away
-        _fold_listen(targets, None, str(e))
-        return None
-    _fold_listen(targets, text, None)
-    return text
 
 
 def _fold_listen(targets: list[Target], text: str | None, error: str | None, seen: str | None = None,
