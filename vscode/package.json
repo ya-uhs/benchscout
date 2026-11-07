@@ -143,7 +143,7 @@
     "untrustedWorkspaces": {
       "supported": "limited",
       "restrictedConfigurations": ["benchscout.corePath"],
-      "description": "In a folder you have not trusted, benchscout does not read the folder's own .benchscout/knowledge files: a project from elsewhere could declare its actions safe."
+      "description": "In a folder you have not trusted, benchscout does not read the folder's own .benchscout/knowledge files or its memory file: a project from elsewhere could declare its actions safe."
     }
   }
 }

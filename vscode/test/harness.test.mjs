@@ -66,7 +66,9 @@ for (const [name, make] of [
   ["Claude Code (claude -p)", (ws, relay) => new ClaudeDriver(ws, relay, join(import.meta.dirname, "fake-claude.mjs"))],
   ["ACP agent", (ws, relay) => new AcpDriver({ label: "Fake ACP", command: join(import.meta.dirname, "fake-acp-agent.mjs"), args: [], mcp: { via: "session" }, install: "-" }, ws, relay)],
 ]) {
-  test(`${name}: benchscout asks first, wakes the agent, gates only non-benchscout tools`, async () => {
+  // an ACP agent's permission request names a tool by its display title, not by an authenticated MCP server, so there
+  // benchscout's own tools are put to the human too (acp.ts); claude -p names the server, so there they are not
+  test(`${name}: benchscout asks first, wakes the agent, and the agent's own tools wait for the human`, async () => {
     const { core, h, done } = await bench(make);
     try {
       const first = await until(h, (c) => c.kind === "question");
@@ -387,11 +389,11 @@ test("Windows: a device that needs a driver gets one card saying which interface
   const bench = (dev) => ({ devices: [{ id: "usb:0403:6010:x", name: "SIPEED JTAG Debugger", evidence: [], ...dev }], ports: [], targets: [], links: [] });
   core.emit("scan", bench({ access: [{ need: "driver", interfaces: [0, 1] }] }), []);
   const card = () => h.cards.find((c) => c.id === "driver:usb:0403:6010:x");
-  assert.equal(card().body, strings("ja").driverBody("0, 1", ""), "which interfaces lack a driver");
+  assert.equal(card().body, strings("ja").driverBody("0, 1", "", ""), "which interfaces lack a driver");
   assert.ok(h.cards.find((c) => c.kind === "question").body.includes(`SIPEED JTAG Debugger (${strings("ja").stateNoDriver})`));
   core.emit("scan", bench({ access: [{ need: "winusb", interfaces: [0], tools: ["openFPGALoader"] }] }), []);  // the maker's driver came; openFPGALoader still needs WinUSB
   assert.equal(h.cards.filter((c) => c.id.startsWith("driver:")).length, 1);
-  assert.equal(card().body, strings("ja").driverBody("", "0"), "which interface needs WinUSB, with how");
+  assert.equal(card().body, strings("ja").driverBody("", "0", "openFPGALoader"), "which interface needs WinUSB, with how");
   core.emit("scan", bench({}), []);  // after Zadig and a rescan
   assert.equal(card().status, "closed");
 });
@@ -413,14 +415,16 @@ test("a tool the agent proposes is a card with the exact command, its effect and
   assert.deepEqual(decided[0], ["p1", true]);
 });
 
-test("Linux: a device a libusb tool cannot open gets one card naming the node and the udev fix", () => {
+test("Linux: a device a libusb tool cannot open gets one card naming the node, the tool and the udev fix", () => {
   const core = new CoreClient("/nonexistent", tmpdir());
   const h = new Harness(core, () => { throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 1 });
   const bench = (dev) => ({ devices: [{ id: "usb:0403:6010:x", name: "SIPEED JTAG Debugger", evidence: [], ...dev }], ports: [], targets: [], links: [] });
-  core.emit("scan", bench({ access: [{ need: "udev", node: "/dev/bus/usb/003/002", tools: ["openFPGALoader"] }] }), []);
+  // the tool is the one the core's data names (a person's knowledge may add one): the panel named openFPGALoader always
+  // (audit 2026-11-07, files read last)
+  core.emit("scan", bench({ access: [{ need: "udev", node: "/dev/bus/usb/003/002", tools: ["openocd"] }] }), []);
   const card = () => h.cards.find((c) => c.id === "driver:usb:0403:6010:x");
   assert.equal(card().title, strings("ja").udevTitle("SIPEED JTAG Debugger"));
-  assert.equal(card().body, strings("ja").udevBody("/dev/bus/usb/003/002"));
+  assert.equal(card().body, strings("ja").udevBody("/dev/bus/usb/003/002", "openocd"));
   core.emit("scan", bench({}), []);  // the rule took effect
   assert.equal(card().status, "closed");
 });

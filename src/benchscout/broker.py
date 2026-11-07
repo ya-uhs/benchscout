@@ -432,10 +432,38 @@ class Broker:
             dev = self.bench.devices[port.device_id]
             # the card first: one no longer waiting (decided, withdrawn) raises here, before anything is remembered
             decided = self.approvals.decide(approval_id, True, "once")
-            for h in a.impact.get("subjects") or []:
+            for h, kept in self._always_keeps(a, port, dev).items():
                 self._remember_command(dev, a.port, "allowed always on this device, in the benchscout inbox", "",
-                                       {"command": h, "effect": "safe"}, "human", confirmed=True)
+                                       {**kept, "command": h, "effect": "safe"}, "human", confirmed=True)
         return asdict(decided)
+
+    def _always_keeps(self, a, port, dev) -> dict[str, dict]:
+        """For each command on the card, what "always" keeps besides the effect: what is remembered for it now (its value
+        limits, outside which it still asks every time; its line ending), and room for as many values (any) as the call
+        had, so the same call runs without asking next time. Audit 2026-11-07: "always" was remembered bare and replaced
+        the entry with limits (`VOLT 12` ran on a supply limited to 0..3.6 V), and a firmware command with a value
+        (`set 42`) asked again."""
+        spec = A.all_actions().get(a.action)
+        proto = protocols.get(spec.protocol) if spec and spec.protocol else None
+        args = json.loads(a.args)
+        text = args.get(spec.text) if spec and spec.text else None
+        counts = protocols.values_to_take(str(text) + str(args.get("eol") or ""), proto) if proto and text is not None else {}
+        key = self._key(dev)
+        out: dict[str, dict] = {}
+        for h in a.impact.get("subjects") or []:
+            same = self._command_key(port, h)
+            held: dict = {}
+            for e in self.memory.entries(key):  # the one in force: the last active entry for it (_reload_command)
+                if (e.kind == "command" and e.target == port.id and e.status == "active"
+                        and self._command_key(port, e.data.get("command", "")) == same):
+                    held = e.data
+            kept = {k: held[k] for k in ("eol", "until") if held.get(k) is not None}
+            limits = list(held.get("limits") or [])
+            limits += [None] * (counts.get(h, 0) - len(limits))
+            if limits:
+                kept["limits"] = limits
+            out[h] = kept
+        return out
 
     # ---- tools the agent proposes (proposals.py, design.md section 4) ---------------------------
     def define_tool(self, tool: dict | None = None, evidence: str = "", probes: list[dict] | None = None,

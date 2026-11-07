@@ -3,7 +3,7 @@ The gate, recon and memory use only `Protocol` and this registry; none of them n
 
 from __future__ import annotations
 
-from .base import Protocol, judge, judge_rule, outside
+from .base import Protocol, judge, judge_rule, outside, values_to_take
 from .lines import LINES
 from .scpi import SCPI
 
@@ -24,4 +24,4 @@ def for_port(port) -> Protocol | None:
     return next((p for p in PROTOCOLS.values() if port.kind in p.port_kinds), None)
 
 
-__all__ = ["OPERATIONS", "PROTOCOLS", "Protocol", "for_port", "get", "judge", "judge_rule", "outside"]
+__all__ = ["OPERATIONS", "PROTOCOLS", "Protocol", "for_port", "get", "judge", "judge_rule", "outside", "values_to_take"]

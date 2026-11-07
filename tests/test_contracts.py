@@ -404,12 +404,33 @@ def test_widening_or_dropping_value_limits_waits_for_the_human(tmp_path):
     br.end_session()
 
 
+@pytest.mark.parametrize("port, name, inside, outside", [(PSU, "VOLT", "VOLT 3.3", "VOLT 12"), (VCP, "set", "set 42", "set 200")])
+def test_always_on_this_device_keeps_the_value_limits_in_force(tmp_path, port, name, inside, outside):
+    """The human pressed "always" on a card for a value within the limits; values outside them still ask every time
+    (audit 2026-11-07, files read last: "always" was remembered without the limits and replaced the entry that had them,
+    so `VOLT 12` on a supply limited to 0..3.6 V ran without asking)."""
+    br = bench(tmp_path, select=[VCP, PSU])
+    pid = br.resolve_port(port)
+    _confirm(br, pid, {"command": name, "effect": "disruptive", "limits": [{"min": 0, "max": 3.6 if port == PSU else 100}]})
+    action, key = ("scpi.write", "command") if port == PSU else ("serial.send", "data")
+    asked = br.request(action, pid, {key: inside})
+    assert asked["status"] == "approval_required" and br.approvals.get(asked["approval_id"]).always
+    br.decide(asked["approval_id"], True, "always")
+    assert br.impact(action, pid, {key: inside}).effect == Effect.SAFE, "what the human saw now runs without asking"
+    imp = br.impact(action, pid, {key: outside})
+    assert imp.effect == Effect.DANGEROUS and imp.code in ("outside_limits", "energizing"), (outside, imp.reason)
+    br.end_session()
+
+
 
 def test_always_on_this_device_works_for_a_firmware_command_as_for_an_instrument_command(tmp_path):
-    """One rule table for every protocol: what the human allows always is kept the same way for both."""
+    """One rule table for every protocol: what the human allows always is kept the same way for both. With a value too
+    (audit 2026-11-07: a firmware command was remembered without room for its value, and `set 42` asked again)."""
     br = bench(tmp_path, select=[VCP, PSU])
     for port, action, args in ((br.resolve_port(VCP), "serial.send", {"data": "status", "seconds": 0.05}),
-                               (br.resolve_port(PSU), "scpi.query", {"command": "MEAS:VOLT?"})):
+                               (br.resolve_port(VCP), "serial.send", {"data": "set 42", "seconds": 0.05}),
+                               (br.resolve_port(PSU), "scpi.query", {"command": "MEAS:VOLT?"}),
+                               (br.resolve_port(PSU), "scpi.write", {"command": "TRIG:DEL 0.5"})):
         asked = br.request(action, port, args)
         assert asked["status"] == "approval_required"
         br.decide(asked["approval_id"], True, "always")

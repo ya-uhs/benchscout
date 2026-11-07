@@ -143,7 +143,7 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
 - A list of risky patterns may only add caution on top of a default that is acceptable alone: lists miss
   things. SCPI: only the standard's status/identity queries are SAFE; anything else asks, and a standing grant
   (for the session, or "always on this instrument", which the human's channel writes to memory) covers that
-  command header only; an output setting asks every time. One message per call, printable ASCII
+  command header only, within the value limits in force; an output setting asks every time. One message per call, printable ASCII
   (`tests/test_scpi.py`, `tests/test_gate_properties.py`, docs/notes.md review U9, U12).
 - Every proposal carries a `why:` that is the policy's actual reason
   (`test_proposal_reason_matches_policy`).

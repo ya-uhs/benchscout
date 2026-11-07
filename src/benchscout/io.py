@@ -531,6 +531,21 @@ class _FixtureStream:
         pass
 
 
+# What LiveIo's lists give (pyserial's ports; the USB lists of macOS, Linux and Windows): a fixture says nothing else,
+# or a test passes on a clue no OS gives (audit 2026-11-07, T12: a "channel" field made a test right that macOS is not)
+SERIAL_FIELDS = frozenset({"device", "vid", "pid", "serial_number", "location", "interface", "description"})
+USB_FIELDS = frozenset({"name", "vendor", "vid", "pid", "serial", "location", "device_class", "usb_node", "usb_writable",
+                        "drivers", "no_driver"})
+
+
+def _as_listed(items: list[dict], fields: frozenset, what: str) -> list[dict]:
+    for item in items:
+        if set(item) - fields:
+            raise ValueError(f"fixture {what} {item.get('device') or item.get('name')!r}: {sorted(set(item) - fields)} "
+                             "is not something the OS gives")
+    return [dict(i, vid=int(i["vid"], 16), pid=int(i["pid"], 16)) for i in items]
+
+
 class FixtureIo:
     """Replays a bench described in JSON (see fixtures/)."""
 
@@ -599,11 +614,11 @@ class FixtureIo:
 
     def usb_devices(self) -> list[dict]:
         self._reread()
-        return [dict(d, vid=int(d["vid"], 16), pid=int(d["pid"], 16)) for d in self.data.get("usb", [])]
+        return _as_listed(self.data.get("usb", []), USB_FIELDS, "USB device")
 
     def serial_ports(self) -> list[dict]:
         self._reread()
-        return [dict(p, vid=int(p["vid"], 16), pid=int(p["pid"], 16)) for p in self.data.get("serial", [])]
+        return _as_listed(self.data.get("serial", []), SERIAL_FIELDS, "serial port")
 
     def visa_resources(self) -> list[str]:
         return list(self.data.get("visa", {}).keys())

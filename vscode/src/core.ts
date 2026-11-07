@@ -255,6 +255,7 @@ export interface DeviceView {
   needsWinusb: number[]; // Windows: interfaces a libusb tool opens, whose driver must be replaced with WinUSB
   other: boolean; // a USB device benchscout has no data for: the agent sees it, the device list only counts it
   needsUdev: string | null; // Linux: the USB node this user cannot open (a libusb tool needs a udev rule), else null
+  accessTools: string[]; // the tools that need the WinUSB driver or the udev rule, as the core's data names them
 }
 
 export function deviceViews(bench: Bench): DeviceView[] {
@@ -287,6 +288,7 @@ export function deviceViews(bench: Bench): DeviceView[] {
       needsWinusb: need("winusb")?.interfaces ?? [],
       other: !!d.other,
       needsUdev: need("udev") ? (need("udev")?.node ?? d.usb_node ?? "") : null,
+      accessTools: [...new Set([...(need("winusb")?.tools ?? []), ...(need("udev")?.tools ?? [])])],
     };
   });
 }

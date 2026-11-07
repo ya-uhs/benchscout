@@ -204,10 +204,18 @@ async function main() {
     if (!hit) throw new Error(`no open card with "${rest[0]}" and a reply box in the inbox`);
     console.log(`replied to: ${hit}`);
   } else if (cmd === "click") {
-    const hit = await inbox(st.port, `(() => { const b = [...doc.querySelectorAll("button")].find((b) => b.textContent.trim() === ${JSON.stringify(rest[0])}
-      || b.textContent.includes(${JSON.stringify(rest[0])})); if (!b) return ""; b.click(); return b.textContent.trim(); })()`);
-    if (!hit) throw new Error(`no button "${rest[0]}" in the inbox`);
-    console.log(`pressed: ${hit}`);
+    // the button whose text is exactly this, else the one that contains it; never a guess among several (with --real a
+    // wrong guess could be an approval: audit 2026-11-07, "Allow" pressed "Allow once" on whichever card came first)
+    const hit = await inbox(st.port, `(() => { const want = ${JSON.stringify(rest[0])}; const all = [...doc.querySelectorAll("button")];
+      const exact = all.filter((b) => b.textContent.trim() === want);
+      const pick = exact.length ? exact : all.filter((b) => b.textContent.includes(want));
+      if (pick.length !== 1) return { many: pick.map((b) => b.textContent.trim()) };
+      pick[0].click(); return { pressed: pick[0].textContent.trim() }; })()`);
+    if (!hit.pressed) {
+      throw new Error(hit.many.length ? `"${rest[0]}" is on ${hit.many.length} buttons (${hit.many.join(" / ")}): nothing pressed`
+        : `no button "${rest[0]}" in the inbox`);
+    }
+    console.log(`pressed: ${hit.pressed}`);
   } else if (cmd === "stop") {
     try {
       const v = await (await fetch(`http://127.0.0.1:${st.port}/json/version`)).json();

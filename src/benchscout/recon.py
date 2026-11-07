@@ -207,8 +207,6 @@ def _with_channel(s: dict, usb_serials: set) -> dict:
     - Linux:   the USB interface number is in the location (1-1:1.1)
     - macOS:   the port name ends with the channel digit (cu.usbserial-210319A8C7D11)
     """
-    if s.get("channel") is not None:
-        return s
     if K.USB_IDS.get((s["vid"], s["pid"]), {}).get("role") != "multi":
         return s
     sn = s.get("serial_number") or ""

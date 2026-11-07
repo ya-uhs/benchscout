@@ -35,8 +35,8 @@ const en = {
     " · from its official release, checked against its pinned SHA-256. The agent's request goes on when it is done.",
   statusAllowAll: "allowing all",
   allowAlwaysHere: "Always on this device",
-  commandCovers: "“For the session” lets this same command (any values) run without asking until benchscout stops; “Always” remembers it for this device (forget it in the inbox any time). Other commands still ask.",
-  commandCoversSession: "“For the session” lets this same command (with any values within its limits) run without asking until benchscout stops. Other commands still ask.",
+  commandCovers: "“For the session” lets this same command run without asking until benchscout stops, with any values (only within the limits remembered for it, if there are any); “Always” remembers it for this device, limits included (forget it in the inbox any time). Other commands still ask.",
+  commandCoversSession: "“For the session” lets this same command run without asking until benchscout stops, with any values (only within the limits remembered for it, if there are any). Other commands still ask.",
   sessionCovers: "“Allow while this session lasts” also lets other calls of this kind on this port run without asking, as long as they only change state; anything that cannot be undone still asks each time.",
   deny: "Deny",
   devicesTitle: "Devices on the bench",
@@ -55,14 +55,14 @@ const en = {
   stateNeedsWinusb: "needs the WinUSB driver",
   stateNeedsUdev: "needs a udev rule",
   udevTitle: (name: string) => `${name}: Linux needs a udev rule`,
-  udevBody: (node: string) => `Your user cannot open ${node || "this USB device"}, which openFPGALoader opens through libusb. `
-    + "Install a udev rule that gives access (the tool's package often brings one, e.g. 99-openfpgaloader.rules), then unplug and plug "
+  udevBody: (node: string, tools: string) => `Your user cannot open ${node || "this USB device"}, which ${tools || "a tool"} opens through libusb. `
+    + "Install a udev rule that gives access (the tool's package often brings one), then unplug and plug "
     + "the device in again, or run `sudo udevadm control --reload-rules && sudo udevadm trigger`. Then press Rescan.",
   otherDevices: "and {n} other USB devices benchscout has no data for (the agent sees them, e.g. a programmer cable)",
   driverTitle: (name: string) => `${name}: Windows needs a driver change`,
-  driverBody: (none: string, winusb: string) =>
+  driverBody: (none: string, winusb: string, tools: string) =>
     (none ? `Windows has no driver for its USB interface ${none}, so nothing can open it. For a serial port, install the maker's driver (Windows Update often does). ` : "")
-    + (winusb ? `openFPGALoader reaches interface ${winusb} through libusb, which on Windows needs the WinUSB driver there. ` : "")
+    + (winusb ? `${tools || "A tool"} reaches interface ${winusb} through libusb, which on Windows needs the WinUSB driver there. ` : "")
     + "With Zadig (https://zadig.akeo.ie): Options › List All Devices, pick this device's interface, choose WinUSB, Replace Driver. "
     + "An interface switched to WinUSB no longer appears as a COM port. Then press Rescan. "
     + "Windows may refuse Zadig's driver (\"signer is not trusted\") on Arm PCs or where Code Integrity is enforced; "
@@ -77,7 +77,7 @@ const en = {
   firstQuestion: "Found on the bench:",
   learned: (name: string) => `Remembered about ${name}`,
   commandAs: (cmd: string, effect: string) =>
-    `\`${cmd}\`: ${({ safe: "runs without asking", disruptive: "asks once (can be allowed for the session)", dangerous: "asks every time" } as Record<string, string>)[effect] ?? effect}`,
+    `\`${cmd}\`: ${({ safe: "runs without asking", disruptive: "asks before it runs (can be allowed for the session)", dangerous: "asks every time" } as Record<string, string>)[effect] ?? effect}`,
   limitsAs: (t: string) => `Values allowed: ${t}. Outside them, it asks every time.`,
   learnedSafety: (name: string) => `Remember about ${name}? This loosens safety`,
   listenSafeAsk: (port: string, n: number) => `Opening ${port} left the chip's own USB port in place (${n} times), and this chip shows a reset by its port dropping off: it did not reset. Treat listening to it as safe, so it is watched without asking?`,
@@ -191,8 +191,8 @@ const ja: typeof en = {
     " · 公式のリリースから取得し、固定した SHA-256 で確かめます。終わるとエージェントの依頼が続きます。",
   statusAllowAll: "すべて許可中",
   allowAlwaysHere: "この機器では今後も許可",
-  commandCovers: "「セッション中は許可」は、benchscout を止めるまで、同じ命令(値は問わない)を聞かずに実行します。「今後も許可」は、この機器について覚えます(受信箱からいつでも忘れさせられます)。ほかの命令は引き続き確認します。",
-  commandCoversSession: "「セッション中は許可」を押すと、benchscout を止めるまで、この同じ命令(値は制限の範囲で)は聞かずに実行されます。ほかの命令は聞きます。",
+  commandCovers: "「セッション中は許可」は、benchscout を止めるまで、同じ命令を値を問わず聞かずに実行します(値の範囲を覚えているときは、その範囲の中だけ)。「今後も許可」は、範囲も含めてこの機器について覚えます(受信箱からいつでも忘れさせられます)。ほかの命令は引き続き確認します。",
+  commandCoversSession: "「セッション中は許可」を押すと、benchscout を止めるまで、この同じ命令は値を問わず聞かずに実行されます(値の範囲を覚えているときは、その範囲の中だけ)。ほかの命令は聞きます。",
   sessionCovers: "「このセッション中は許可」を押すと、このポートへの同じ種類の操作のうち、状態が変わるだけのものは以後聞かずに実行されます。元に戻せないものは毎回聞きます。",
   deny: "拒否",
   devicesTitle: "つながっている機器",
@@ -211,14 +211,14 @@ const ja: typeof en = {
   stateNeedsWinusb: "WinUSB ドライバが必要",
   stateNeedsUdev: "udev の規則が必要",
   udevTitle: (name: string) => `${name}: Linux の udev の規則が必要です`,
-  udevBody: (node: string) => `いまのユーザーは ${node || "この USB 機器"} を開けません。openFPGALoader は libusb でそこを開きます。`
-    + "開けるようにする udev の規則を入れてください(道具のパッケージに付いていることが多い。例:99-openfpgaloader.rules)。"
+  udevBody: (node: string, tools: string) => `いまのユーザーは ${node || "この USB 機器"} を開けません。${tools || "道具"} は libusb でそこを開きます。`
+    + "開けるようにする udev の規則を入れてください(道具のパッケージに付いていることが多い)。"
     + "入れたら機器を挿し直すか、`sudo udevadm control --reload-rules && sudo udevadm trigger` を実行し、再スキャンを押してください。",
   otherDevices: "ほかに benchscout がデータを持たない USB 機器が {n} 台(エージェントには見えています。書き込み器のケーブルなど)",
   driverTitle: (name: string) => `${name}: Windows のドライバの入れ替えが必要です`,
-  driverBody: (none: string, winusb: string) =>
+  driverBody: (none: string, winusb: string, tools: string) =>
     (none ? `USB のインターフェース ${none} に Windows のドライバが無いので、どのプログラムも開けません。シリアルポートとして使うなら、メーカーのドライバを入れてください(多くは Windows Update が入れます)。` : "")
-    + (winusb ? `openFPGALoader はインターフェース ${winusb} を libusb で開くので、Windows ではそこに WinUSB ドライバが要ります。` : "")
+    + (winusb ? `${tools || "道具"} はインターフェース ${winusb} を libusb で開くので、Windows ではそこに WinUSB ドライバが要ります。` : "")
     + "Zadig(https://zadig.akeo.ie)で:Options › List All Devices → この機器のインターフェースを選ぶ → WinUSB → Replace Driver。"
     + "WinUSB に替えたインターフェースは COM ポートとしては見えなくなります。終わったら再スキャンを押してください。"
     + "Arm の PC や、コードの整合性の検査が強制されている PC では、Windows が Zadig のドライバを拒否することがあります"
@@ -233,7 +233,7 @@ const ja: typeof en = {
   firstQuestion: "見つかった機器:",
   learned: (name: string) => `${name} について覚えたこと`,
   commandAs: (cmd: string, effect: string) =>
-    `\`${cmd}\`:${({ safe: "聞かずに実行します", disruptive: "一度だけ確認します(セッション中まとめて許可できます)", dangerous: "毎回確認します" } as Record<string, string>)[effect] ?? effect}`,
+    `\`${cmd}\`:${({ safe: "聞かずに実行します", disruptive: "実行の前に確認します(セッション中まとめて許可できます)", dangerous: "毎回確認します" } as Record<string, string>)[effect] ?? effect}`,
   limitsAs: (t: string) => `許す値: ${t}。この外は毎回確認します。`,
   learnedSafety: (name: string) => `${name} について覚えますか?(安全の扱いが緩みます)`,
   listenSafeAsk: (port: string, n: number) => `${port} を開いても、チップ自身の USB ポートは消えませんでした(${n} 回)。このチップはリセットするとポートが消えるので、リセットしていません。聞くことを安全として扱い、次から確認なしで見張りますか?`,
@@ -248,7 +248,7 @@ const ja: typeof en = {
   deviceAlert: (name: string) => `${name} で気になる出力`,
   deviceVanished: (name: string) => `${name} のポートが消えました(リセットか抜けた?)`,
   deviceReset: (name: string) => `${name} のポートが一度消えて戻りました(リセットか USB の切断?)`,
-  hostSlept: (name: string, n: number) => `Mac のスリープで ${name} のポートが切れ、開き直しました${n > 1 ? `(${n} 回)` : ""}`,
+  hostSlept: (name: string, n: number) => `コンピューターのスリープで ${name} のポートが切れ、開き直しました${n > 1 ? `(${n} 回)` : ""}`,
   deviceGone: (name: string) => `${name} のポートが戻りません`,
   pluggedIn: (name: string) => `つながりました: ${name}`,
   throughBenchscout: "直前に benchscout を通して行ったこと:",

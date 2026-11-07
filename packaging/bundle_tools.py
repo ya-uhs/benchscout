@@ -30,6 +30,11 @@ OUT = ROOT / "vscode" / "bin" / "benchscout" / "tools" / "openFPGALoader"
 LICENSE_URL = f"https://raw.githubusercontent.com/trabucayre/openFPGALoader/v{VERSION}/LICENSE"
 # shared libraries that travel with it; everything else must be part of the OS
 SHIPPED_LIBS = re.compile(r"lib(ftdi1?|usb-1\.0|hidapi[\w-]*)[.\d-]*\.(so[.\d]*|dylib|dll)$", re.I)
+# each library that may travel with it (a part of its file name) and the word its license files are named by (the
+# package or formula they come from: Homebrew's libftdi, Debian's libusb-1.0-0, MSYS2's gcc-libs ...). A library not
+# listed here stops the build: it would ship without its license text
+LICENSED_AS = (("hidapi", "hidapi"), ("ftdi", "ftdi"), ("usb-1.0", "libusb"), ("stdc++", "gcc"), ("gcc_s", "gcc"),
+               ("winpthread", "winpthread"), ("zlib", "zlib"))
 
 
 def run(*args: str | Path) -> str:
@@ -91,7 +96,20 @@ def bundle_windows(exe: Path) -> list[Path]:
     return shipped
 
 
-def licenses(exe: Path) -> None:
+def check_licensed(shipped: list[Path], licenses: Path) -> None:
+    """Every library shipped has its license text beside it (LGPL and the GCC runtime require it). Audit 2026-11-07:
+    only openFPGALoader's own NOTICE was checked for, so a library whose license was not found shipped without it."""
+    names = [f.name.lower() for f in licenses.iterdir()]
+    for lib in shipped:
+        word = next((w for part, w in LICENSED_AS if part in lib.name.lower()), None)
+        # hidapi's Debian package is libhidapi-libusb0: that is hidapi's license, not libusb's
+        if word is None or not any(word in n and not (word == "libusb" and "hidapi" in n) for n in names):
+            raise SystemExit(f"{lib.name} would ship without its license text: none of {sorted(names)} is "
+                             f"{word or 'known to be'} its. Find its license (Homebrew, /usr/share/doc, MSYS2 share/licenses) "
+                             "and copy it in licenses(), or add the library to LICENSED_AS")
+
+
+def licenses(exe: Path, shipped: list[Path]) -> None:
     out = OUT / "licenses"
     out.mkdir()
     try:
@@ -115,6 +133,7 @@ def licenses(exe: Path) -> None:
                 if f.is_file():
                     shutil.copy2(f, out / f"{d.name}-{f.name}.txt")
     print("licenses:", sorted(f.name for f in out.iterdir()))
+    check_licensed(shipped, out)
     (OUT / "NOTICE.txt").write_text(
         f"openFPGALoader {VERSION} (Apache-2.0) https://github.com/trabucayre/openFPGALoader\n"
         "with libftdi1 and libusb-1.0 (LGPL-2.1, shipped as separate shared libraries you may replace),\n"
@@ -133,7 +152,7 @@ def main() -> None:
     if OUT.exists():
         shutil.rmtree(OUT)
     shipped = {"darwin": bundle_macos, "win32": bundle_windows}.get(sys.platform, bundle_linux)(exe)
-    licenses(exe)
+    licenses(exe, shipped)
     main_exe = OUT / ("openFPGALoader.exe" if sys.platform == "win32" else "openFPGALoader")
     version = subprocess.run([main_exe, "--Version"], capture_output=True, text=True).stdout.strip()
     if f"v{VERSION}" not in version:

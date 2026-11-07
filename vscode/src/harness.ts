@@ -278,7 +278,8 @@ export class Harness extends EventEmitter {
         if (old && old.status !== "closed") this.closeRef(id, "");
         continue;
       }
-      const body = d.needsUdev !== null ? this.s.udevBody(d.needsUdev) : this.s.driverBody(d.noDriver.join(", "), d.needsWinusb.join(", "));
+      const tools = d.accessTools.join(", ");  // which tool needs it is the data's to say, not the panel's
+      const body = d.needsUdev !== null ? this.s.udevBody(d.needsUdev, tools) : this.s.driverBody(d.noDriver.join(", "), d.needsWinusb.join(", "), tools);
       if (old && old.body === body && old.status !== "closed") continue;
       if (old) this.cards = this.cards.filter((c) => c !== old);
       const title = d.needsUdev !== null ? this.s.udevTitle(d.name) : this.s.driverTitle(d.name);

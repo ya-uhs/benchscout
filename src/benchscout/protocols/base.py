@@ -106,6 +106,20 @@ def outside(limits: list, args: list[str]) -> str:
     return ""
 
 
+def values_to_take(text: str, proto: Protocol) -> dict[str, int]:
+    """For each name the commands in `text` may be known by, how many values a rule remembered for it must take (one
+    item each in its limits, None for any value) to cover `text`: `judge` below reads the words after a remembered
+    command as its values only up to its limits where a protocol has one reading; with many readings (a header and its
+    parameters) a rule takes any values already."""
+    if proto.many_readings:
+        return {}
+    counts: dict[str, int] = {}
+    for names, values in proto.commands(text):
+        for n in names:
+            counts[n] = max(counts.get(n, 0), len(values(n)))
+    return counts
+
+
 def judge_rule(rule: dict, name: str, args: list[str]) -> Judged:
     """One command under the rule remembered for it."""
     effect = Effect[rule["effect"].upper()]

@@ -10,6 +10,11 @@ from benchscout.broker import Broker
 from benchscout.core import agent_dispatch
 from benchscout.io import FixtureIo
 
+# How long a wait may take before it counts as stuck. What the tests check does not depend on it (they look at the state
+# once the wait is over); a program can take seconds to start under load (a full run with others, CI): with 5 s, one run
+# saw a job still "running" (audit 2026-11-07, T24)
+WAIT = 30
+
 
 @pytest.fixture
 def bench(tmp_path):
@@ -37,7 +42,7 @@ def start(b, args):
 
 
 def finish(b, job):
-    assert b.runs[job].done.wait(5), b.run_state(job)
+    assert b.runs[job].done.wait(WAIT), b.run_state(job)
     return b.run_state(job)
 
 
@@ -135,7 +140,7 @@ def test_observer_stops_before_releasing_ownership(bench, stop):
     b, r, events = bench
     args = plan(b, r, "import time\nprint('observation', flush=True)\ntime.sleep(60)", observe=True)
     run = start(b, args)
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + WAIT
     while not any(e.get("kind") == "observation" for e in events) and time.monotonic() < deadline:
         time.sleep(.02)
     observation = next(e for e in events if e.get("kind") == "observation")
@@ -248,7 +253,7 @@ def test_adapter_tool_uses_managed_stop_and_raw_artifacts(bench, monkeypatch, st
     b.decide(asked["approval_id"], True)
     with ThreadPoolExecutor(max_workers=1) as pool:
         pending = pool.submit(b.request, "fixture.observe", r["resource"], approval_id=asked["approval_id"])
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + WAIT
         while not any(e.get("event") == "run_changed" for e in events) and time.monotonic() < deadline:
             time.sleep(.01)
         event = next(e for e in events if e.get("event") == "run_changed")
@@ -259,7 +264,7 @@ def test_adapter_tool_uses_managed_stop_and_raw_artifacts(bench, monkeypatch, st
             b.run_state(job, stop=True)
         else:
             b.select([])
-        result = pending.result(timeout=5)["result"]
+        result = pending.result(timeout=WAIT)["result"]
     assert result["execution"]["status"] == "cancelled"
     assert Path(result["execution"]["stdout"]).read_bytes() == b"\x00\xff"
     assert result["returncode"] is None
@@ -297,7 +302,7 @@ def test_native_listen_can_be_cancelled_without_releasing_early(bench, stop):
     b.select([b.bench.ports[port].device_id])
     with ThreadPoolExecutor(max_workers=1) as pool:
         pending = pool.submit(b.request, "serial.listen", port, {"seconds": 30})
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + WAIT
         while not any(e.get("event") == "run_changed" for e in events) and time.monotonic() < deadline:
             time.sleep(.01)
         job = next(e["job"] for e in events if e.get("event") == "run_changed")
@@ -305,7 +310,7 @@ def test_native_listen_can_be_cancelled_without_releasing_early(bench, stop):
             b.run_state(job, stop=True)
         else:
             b.select([])
-        result = pending.result(timeout=5)
+        result = pending.result(timeout=WAIT)
     assert result["status"] == "cancelled"
     assert b.run_state(job)["status"] == "cancelled"
 
@@ -358,30 +363,30 @@ def test_shutdown_allows_native_safety_recording_but_rejects_new_work(bench, mon
 
     def operation(ctx, p, args):
         entered.set()
-        assert ctx.cancel_event.wait(5)
+        assert ctx.cancel_event.wait(WAIT)
         # What a real operation reports when the port vanished as it was opened (Context.observe_open; audit
         # 2026-11-07, T15: this stand-in reached past the Context). Recording it takes the broker's lock; shutdown must
         # let it finish, while retaining selection/ownership and rejecting new work.
         ctx.observe_open(p.id, None)
         recorded.set()
-        assert finish_record.wait(5)
+        assert finish_record.wait(WAIT)
         return {}
 
     monkeypatch.setitem(protocols.OPERATIONS, "serial.listen", operation)
     with ThreadPoolExecutor(max_workers=2) as pool:
         call = pool.submit(b.request, "serial.listen", port, {"seconds": 30})
-        assert entered.wait(5)
+        assert entered.wait(WAIT)
         stopping = pool.submit(b.select, []) if stop == "deselect" else pool.submit(b.end_session)
         try:
-            assert recorded.wait(5), "shutdown held the lock needed to record the safety observation"
+            assert recorded.wait(WAIT), "shutdown held the lock needed to record the safety observation"
             assert device in b.selected
             assert not stopping.done()
             assert b.request("serial.listen", port)["status"] == "stopping"
             assert b.run_program([port], [sys.executable, "-c", "pass"], "must not start")["status"] == "stopping"
         finally:
             finish_record.set()
-        stopping.result(timeout=5)
-        assert call.result(timeout=5)["status"] == "cancelled"
+        stopping.result(timeout=WAIT)
+        assert call.result(timeout=WAIT)["status"] == "cancelled"
     assert not b.selected
     assert b.bench.ports[port].may_reset_on_open
 
