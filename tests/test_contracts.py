@@ -464,3 +464,17 @@ def test_exclusive_open_failure_closes_the_port(monkeypatch):
     with pytest.raises(OSError, match="exclusive"):
         LiveIo().serial_stream("fixture", exclusive=True)
     port.close.assert_called_once()
+
+
+def test_equal_serial_strings_on_different_products_have_separate_targets():
+    from benchscout.recon import build
+
+    io = FixtureIo(FIXTURE)
+    native, probe = io.data["usb"][1], io.data["usb"][3]
+    io.data.update(usb=[dict(native, serial="SAME"), dict(probe, serial="SAME")], serial=[], visa={})
+    inventory = build(io)
+    assert len(inventory.devices) == 2
+    assert len(inventory.targets) == 2
+    targets = [{t.id for p in inventory.ports_of(d.id) for t in inventory.targets_via(p.id)}
+               for d in inventory.devices.values()]
+    assert all(targets) and targets[0].isdisjoint(targets[1])
