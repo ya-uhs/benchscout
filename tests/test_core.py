@@ -108,7 +108,7 @@ def test_denied_request_does_not_run(io, tmp_path):
     aid = br.request("serial.listen", CH340)["approval_id"]
     br.decide(aid, False)
     assert br.request("serial.listen", CH340, approval_id=aid)["status"] == "denied"
-    assert ("serial_listen", "/dev/cu.usbserial-10") not in io.calls
+    assert not io.opened("/dev/cu.usbserial-10")
 
 
 def test_nothing_on_disk_grants_anything(io, tmp_path):
@@ -191,7 +191,7 @@ def test_a_device_is_used_by_one_window_at_a_time(io, tmp_path):
 
     io_b = FixtureIo(FIXTURE)
     b = broker_with(io_b, tmp_path / "b", locks=b_locks)
-    assert ("serial_listen", VCP) not in io_b.calls  # window B's recon leaves A's device alone
+    assert not io_b.opened(VCP)  # window B's recon leaves A's device alone
     t = b.bench.targets_via(b.resolve_port(VCP))[0]
     assert any("in use by another benchscout window (/work/a)" in f for f in t.facts)
     assert b.select([stlink])["busy"][stlink]["workspace"] == "/work/a"
@@ -203,10 +203,26 @@ def test_a_device_is_used_by_one_window_at_a_time(io, tmp_path):
 # ---- channels -------------------------------------------------------------------
 
 def test_agent_channel_has_no_way_to_approve_or_select(io, tmp_path):
+    """The agent's channel is core.agent_dispatch; the human's is control_dispatch. Every method only the human's channel
+    has is refused on the agent's, whatever it is called (audit 2026-11-07, T16: three were tried here, and the state
+    machine looked for the word "decide" in the relay's source, which is not where the boundary is)."""
+    import ast
+    import inspect
+
+    from benchscout import core
+
+    def methods(f) -> set[str]:
+        return {n.comparators[0].value for n in ast.walk(ast.parse(inspect.getsource(f)))
+                if isinstance(n, ast.Compare) and isinstance(n.left, ast.Name) and n.left.id == "method"
+                and isinstance(n.comparators[0], ast.Constant)}
+
+    agent, control = methods(core.agent_dispatch), methods(core.control_dispatch)
+    assert agent == set(core.AGENT_METHODS), "the agent is told the methods it has"
+    assert agent & control <= {"scan", "inventory", "run_state"}, agent & control
     br = broker_with(io, tmp_path, CH340)
-    for method in ("decide", "select", "pending"):
+    for method in sorted(control - agent):
         with pytest.raises(ValueError, match="agent channel"):
-            agent_dispatch(br, method, {"approval_id": "x", "granted": True, "devices": []})
+            agent_dispatch(br, method, {"approval_id": "x", "granted": True, "devices": [], "key": "k", "id": "x"})
 
 
 def test_end_to_end_agent_waits_while_human_approves_on_control(io, tmp_path, addr):
@@ -386,9 +402,10 @@ def test_serial_send_writes_once_and_reads_the_answer(tmp_path):
     res = br.request("serial.send", VCP, {"data": "status"})
     assert res["status"] == "approval_required"  # sending can make the firmware act
     br.decide(res["approval_id"], True)
+    opens = len(io.opened(VCP))
     done = br.request("serial.send", VCP, {"data": "status"}, approval_id=res["approval_id"])
     assert done["status"] == "done" and done["result"]["reply"].endswith("ok")
-    assert ("serial_write", VCP, b"status\n") in io.calls  # through the watch, which holds the port
+    assert io.sent(VCP) == [b"status\n"] and len(io.opened(VCP)) == opens, "sent once, through the watch that holds the port"
     assert br.request("serial.send", VCP, {"data": "?", "eol": "", "seconds": 0.1})["status"] == "approval_required"
 
 
@@ -508,6 +525,10 @@ def test_no_child_process_inherits_the_control_channel():
     missing = []
     for f in src.rglob("*.py"):
         for node in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
+            # the check below sees `subprocess.run(...)`: any other way to reach it (from-import, an alias) hides a call
+            if isinstance(node, ast.ImportFrom) and node.module == "subprocess" or isinstance(node, ast.Import) and any(
+                    a.name == "subprocess" and a.asname for a in node.names):
+                missing.append(f"{f.name}:{node.lineno} (imports subprocess in a form this check cannot follow)")
             if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
                     and node.func.value.id == "subprocess" and node.func.attr in ("run", "Popen", "call", "check_call", "check_output")
                     and not any(k.arg == "stdin" for k in node.keywords)):

@@ -59,7 +59,6 @@
       "vid": "0x0403",
       "pid": "0x6010",
       "serial_number": "210319A8C7D1",
-      "channel": 0,
       "description": "Digilent USB Device"
     },
     {
@@ -67,7 +66,6 @@
       "vid": "0x0403",
       "pid": "0x6010",
       "serial_number": "210319A8C7D1",
-      "channel": 1,
       "description": "Digilent USB Device"
     },
     {

@@ -147,7 +147,7 @@ def test_without_any_shipped_data_benchscout_only_gets_stricter(tmp_path, monkey
         serial = [p for p in r.bench.ports.values() if p.kind == "serial"]
         assert serial and all(p.may_reset_on_open for p in serial)
         assert all(classify(r.bench, "serial.listen", p.id).effect >= Effect.DISRUPTIVE for p in serial)
-        assert not any(c[0] in ("serial_listen", "probe") for c in io.calls), "nothing it knows nothing about is opened"
+        assert not io.opened() and not any(c[0] == "probe" for c in io.calls), "nothing it knows nothing about is opened"
     finally:
         K.SHIPPED = shipped
         K.load()

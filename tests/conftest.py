@@ -14,6 +14,12 @@ def pytest_configure(config):
 
 @pytest.fixture(autouse=True)
 def isolated_memory(tmp_path, monkeypatch):
-    """Tests never read or write the real ~/.config/benchscout/memory."""
+    """Tests never read or write the real ~/.config/benchscout/memory, and each starts from the same knowledge.
+
+    The loaded knowledge is process-wide: a test that loaded other layers (a folder's, an empty user layer) left them
+    for whichever test ran next, so a result depended on the order (audit 2026-11-07, T22)."""
+    from benchscout import knowledge as K
+
     monkeypatch.setenv("BENCHSCOUT_MEMORY", str(tmp_path / "memory"))
     monkeypatch.setenv("BENCHSCOUT_KNOWLEDGE", str(FIXTURE_KNOWLEDGE))
+    K.load()

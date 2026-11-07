@@ -34,7 +34,7 @@ def test_unseen_devices_are_handled_cautiously():
     io = FixtureIo(UNSEEN)
     r = recon.run(io)
     b = r.bench
-    assert not [c for c in io.calls if c[0] in ("serial_listen", "probe")], "nothing opened, no tool pointed at them"
+    assert not io.opened() and not [c for c in io.calls if c[0] == "probe"], "nothing opened, no tool pointed at them"
     assert all(p.startswith("scpi.query *IDN?") for p in r.ran)
     assert not any("ASRL" in p for p in r.ran), "*IDN? never goes to a serial VISA resource"
     serial = [p for p in b.ports.values() if p.kind == "serial"]

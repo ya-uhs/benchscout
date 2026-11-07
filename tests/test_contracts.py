@@ -134,8 +134,7 @@ def test_every_call_that_opens_a_port_that_may_reset_asks(tmp_path):
     br = bench(tmp_path)
     port = br.resolve_port("/dev/cu.usbmodem1101")  # the chip's own USB: opening may reset it
     br.bench.ports[port].commands["status"] = {"effect": "safe", "eol": "\n", "text": "", "pending": False}
-    for action, args in (("serial.listen", {}), ("serial.watch", {}), ("serial.send", {"data": "status"}),
-                         ("serial.send", {"data": "status"})):
+    for action, args in (("serial.listen", {}), ("serial.watch", {}), ("serial.send", {"data": "status"})):
         assert br.impact(action, port, args).effect >= Effect.DISRUPTIVE, action
     br.end_session()
 
@@ -165,7 +164,7 @@ def test_recon_does_not_open_a_port_memory_says_resets_when_opened(tmp_path):
                                       text="opened as safe and it vanished", data={"listen_safe": False}), br._header(dev))
     br.io.calls.clear()
     br.scan()
-    assert ("serial_listen", VCP) not in br.io.calls, "the stricter memory counts before any probe"
+    assert not br.io.opened(VCP), "the stricter memory counts before any probe"
     br.end_session()
 
 
@@ -241,15 +240,18 @@ def test_a_part_is_named_only_by_a_checked_quote_of_device_output(tmp_path):
 # ---- memory, patterns, knowledge kept current ----------------------------------------------------------------------
 
 def test_always_on_this_instrument_keeps_every_command_the_human_allowed(tmp_path):
-    from benchscout.memory import Memory
-
-    m = Memory(tmp_path)
-    from benchscout.memory import Entry
-
-    for cmd in ("VOLT", "CURR"):
-        m.add("k", Entry(kind="command", text="allowed always on this instrument, in the benchscout inbox", source="human",
-                         target="visa:x", data={"command": cmd, "effect": "safe"}))
-    assert {e.data["command"] for e in m.entries("k")} == {"VOLT", "CURR"}
+    """Each command the human allows always is kept beside the ones allowed before (audit 2026-11-07, T19: this test
+    wrote two entries into Memory itself, so the path the human's "always" takes was not looked at)."""
+    br = bench(tmp_path, select=[PSU])
+    for cmd in ("MEAS:VOLT?", "MEAS:CURR?"):
+        asked = br.request("scpi.query", PSU, {"command": cmd})
+        assert asked["status"] == "approval_required", cmd
+        br.decide(asked["approval_id"], True, "always")
+    for cmd in ("MEAS:VOLT?", "MEAS:CURR?"):
+        assert br.impact("scpi.query", PSU, {"command": cmd}).effect == Effect.SAFE, cmd
+    port, key = _memory_of(br, PSU)
+    assert {e.data["command"] for e in br.memory.entries(key) if e.kind == "command"} == {"MEAS:VOLT?", "MEAS:CURR?"}
+    br.end_session()
 
 
 def test_a_learned_trouble_line_is_looked_for_at_once_and_a_bad_pattern_is_refused(tmp_path):
@@ -338,8 +340,7 @@ def test_recon_opens_a_port_the_way_it_was_judged_safe_to_open(tmp_path):
     br.io.calls.clear()
     br.io.lines.clear()
     br.scan()
-    opens = [c for c in br.io.calls if c[0] in ("serial_listen", "serial_stream")]
-    used = dict(zip([c[1] for c in opens], br.io.lines))
+    used = dict(zip(br.io.opened(), br.io.lines))
     assert esp in used, "safe to open by memory: recon listens"
     assert used[esp] == lines, "and opens it as it was judged safe to open"
     br.end_session()
@@ -516,12 +517,12 @@ def test_opening_a_port_the_data_says_nothing_about_asks_first(tmp_path, monkeyp
                             "location": "0x01160000"})
         data["serial"].append({"device": "/dev/cu.usbmodem9", "vid": "0x1209", "pid": "0x0001", "serial_number": "C1",
                                "description": "Chip"})
-        data["listen"] = list(data["listen"]) + ["/dev/cu.usbmodem9"]
+        data["listen"]["/dev/cu.usbmodem9"] = "chip: hello\n"  # what it would print, were it opened
 
     br = bench(tmp_path, change=add)
     for path in (VCP, "/dev/cu.usbmodem9"):
         assert br.impact("serial.listen", path).effect == Effect.DISRUPTIVE, path
-        assert ("serial_listen", path) not in br.io.calls, f"recon opened {path}"
+        assert not br.io.opened(path), f"recon opened {path}"
 
 
 def _lab_probe(tmp_path, monkeypatch, sn_arg="{device.serial}"):
@@ -561,8 +562,7 @@ def test_a_port_whose_channel_cannot_be_told_is_listed_as_an_unknown_port(tmp_pa
         data["serial"] = [s for s in data["serial"] if not s["device"].endswith("D10")]
         for s in data["serial"]:
             if s["device"].endswith("D11"):
-                s.pop("channel", None)
-                s["device"] = "/dev/cu.usbserial-ABC"
+                s["device"] = "/dev/cu.usbserial-ABC"  # a name that does not carry the channel
 
     br = bench(tmp_path, change=change)
     p = br.bench.ports.get("serial:usbserial-ABC")
@@ -661,7 +661,7 @@ def test_a_call_that_waited_for_the_human_is_judged_again_before_it_runs(tmp_pat
     br.decide(aid, True)
     t.join(10)
     assert out["status"] != "done", out
-    assert not [c for c in br.io.calls if c[0] == "serial_write"]
+    assert not br.io.sent(), "nothing was sent"
     br.end_session()
 
 
@@ -829,6 +829,16 @@ def test_an_instrument_that_cannot_be_reached_says_why(tmp_path, monkeypatch):
     monkeypatch.setattr(io, "_visa", lambda: Broken())
     with pytest.raises(OSError, match="RSRC_NFOUND"):
         io.visa_query("USB0::1::2::3::INSTR", "*IDN?")
+
+    # T9: through the product, on a fixture that fails as VISA does (the fixture had returned None, a shape the real
+    # one never gives, so no test went through the scan's or the call's handling of the failure)
+    busy = "VI_ERROR_RSRC_BUSY: the resource is locked by another program"
+    br = bench(tmp_path, lambda d: d["visa"][PSU.removeprefix("visa:")].update(error=busy), select=[PSU])
+    facts = [f for t in br.bench.targets_via(PSU) for f in t.facts]
+    assert any("RSRC_BUSY" in f for f in facts), facts
+    done = br.request("scpi.query", PSU, {"command": "*IDN?"})
+    assert "RSRC_BUSY" in json.dumps(done), done
+    br.end_session()
 
 
 def test_memory_applies_only_to_the_ports_and_targets_of_the_unit_it_is_about(tmp_path):

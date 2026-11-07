@@ -359,9 +359,10 @@ def test_shutdown_allows_native_safety_recording_but_rejects_new_work(bench, mon
     def operation(ctx, p, args):
         entered.set()
         assert ctx.cancel_event.wait(5)
-        # The real reset observation takes this lock too. Shutdown must let it
-        # finish, while retaining selection/ownership and rejecting new work.
-        ctx._reset_on_open(p.id, "vanished during the operation")
+        # What a real operation reports when the port vanished as it was opened (Context.observe_open; audit
+        # 2026-11-07, T15: this stand-in reached past the Context). Recording it takes the broker's lock; shutdown must
+        # let it finish, while retaining selection/ownership and rejecting new work.
+        ctx.observe_open(p.id, None)
         recorded.set()
         assert finish_record.wait(5)
         return {}

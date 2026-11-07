@@ -87,7 +87,6 @@
       "vid": "0x0403",
       "pid": "0x6010",
       "serial_number": "ib8xQ3Z1",
-      "channel": 0,
       "description": "iCEBreaker V1.0e"
     },
     {
@@ -95,7 +94,6 @@
       "vid": "0x0403",
       "pid": "0x6010",
       "serial_number": "ib8xQ3Z1",
-      "channel": 1,
       "description": "iCEBreaker V1.0e"
     }
   ],

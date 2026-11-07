@@ -23,6 +23,15 @@ from benchscout.io import FixtureIo
 from benchscout.policy import Effect, classify
 from benchscout.protocols.scpi import _ENERGIZING, _SCPI_SAFE, scpi_headers
 
+# What the standards fix as status or identity queries that change nothing, written here from the standards and not
+# taken from the code (audit 2026-11-07, T7: the properties below took the code's own table as the answer, so a query
+# wrongly added there passed them). IEEE 488.2 common queries: identity, operation complete, status byte, the enable
+# registers, options, the setup as commands, power-on status clear flag, parallel poll enable. SCPI-99: the error
+# queue's count and the SCPI version. Not here: *ESR? and SYST:ERR? (reading clears them), *TST? and *CAL? (they run
+# a self-test or a calibration).
+STANDARD_STATUS_QUERIES = {"*IDN?", "*OPC?", "*STB?", "*ESE?", "*SRE?", "*OPT?", "*LRN?", "*PSC?", "*PRE?",
+                           "SYST:ERR:COUN?", "SYST:VERS?"}
+
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "bench_example.json"
 PSU = "visa:TCPIP0::192.168.1.50::INSTR"
 BENCH = recon.run(FixtureIo(FIXTURE)).bench
@@ -42,6 +51,10 @@ def broker(tmp_path):
     br.select([br.bench.ports[PSU].device_id])
     yield br, io
     br.end_session()
+
+
+def test_only_what_the_standards_fix_is_judged_safe_by_name():
+    assert _SCPI_SAFE <= STANDARD_STATUS_QUERIES, _SCPI_SAFE - STANDARD_STATUS_QUERIES
 
 
 # ---- what each rule says, by example ---------------------------------------------------------------
@@ -184,7 +197,7 @@ line = st.lists(unit, min_size=1, max_size=4).map(";".join)
 @given(line)
 def test_safe_only_when_every_unit_is_a_status_query_the_standard_fixes(cmd):
     if effect(cmd) == Effect.SAFE:
-        assert all(set(ways) <= _SCPI_SAFE for ways in scpi_headers(cmd)), cmd
+        assert all(set(ways) <= STANDARD_STATUS_QUERIES for ways in scpi_headers(cmd)), cmd
 
 
 @settings(max_examples=400, deadline=None)
@@ -197,7 +210,7 @@ def test_a_line_that_sets_an_output_asks_every_time(cmd):
 @settings(max_examples=400, deadline=None)
 @given(line)
 def test_anything_outside_the_standards_status_queries_asks(cmd):
-    if any(h not in _SCPI_SAFE for ways in scpi_headers(cmd) for h in ways):
+    if any(h not in STANDARD_STATUS_QUERIES for ways in scpi_headers(cmd) for h in ways):
         assert effect(cmd) >= Effect.DISRUPTIVE, cmd
 
 
@@ -223,7 +236,7 @@ def test_anything_but_one_printable_ascii_message_is_refused_or_judged(cmd):
         return
     assert e in (Effect.SAFE, Effect.DISRUPTIVE, Effect.DANGEROUS)
     if e == Effect.SAFE:
-        assert all(set(ways) <= _SCPI_SAFE for ways in scpi_headers(cmd))
+        assert all(set(ways) <= STANDARD_STATUS_QUERIES for ways in scpi_headers(cmd))
 
 
 @settings(max_examples=150, deadline=None)
@@ -303,12 +316,3 @@ def test_an_ieee_block_is_taken_apart_and_anything_else_is_kept():
     assert ieee_block(b"1.23E-3\n") == b"1.23E-3\n", "not a block: as it came"
     assert ieee_block(b"#x") == b"#x" and ieee_block(b"#9123") == b"#9123"
 
-
-def test_failed_instrument_io_is_an_operation_error():
-    from types import SimpleNamespace
-    from benchscout.protocols.scpi import op_message
-
-    ctx = SimpleNamespace(io=SimpleNamespace(visa_write=lambda *_: False, visa_query=lambda *_: None))
-    port = SimpleNamespace(path="fixture")
-    assert op_message(ctx, port, {"command": "*CLS"})["error"]
-    assert op_message(ctx, port, {"command": "*IDN?"})["error"]

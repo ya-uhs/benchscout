@@ -79,11 +79,10 @@ def test_stlink_swd_and_vcp_reach_same_target(r):
 
 def test_recon_runs_only_safe_probes(io, r):
     # CH340 bridge and native-USB ESP32 may reset on open -> never opened during recon
-    assert ("serial_listen", "/dev/cu.usbserial-10") not in io.calls
-    assert ("serial_listen", "/dev/cu.usbmodem1101") not in io.calls
-    assert ("serial_listen", "/dev/cu.usbmodem21403") in io.calls  # probe VCP is safe
+    assert not io.opened("/dev/cu.usbserial-10") and not io.opened("/dev/cu.usbmodem1101")
+    assert io.opened("/dev/cu.usbmodem21403")  # probe VCP is safe
     for p in r.bench.ports.values():
-        if p.kind == "serial" and ("serial_listen", p.path) in io.calls:
+        if p.kind == "serial" and io.opened(p.path):
             assert classify(r.bench, "serial.listen", p.id).effect == Effect.SAFE
 
 
@@ -140,8 +139,17 @@ def test_every_proposal_says_why(r):
 
 
 def test_proposal_reason_matches_policy(r):
-    jtag = next(p for p in r.proposals if p.action == "openFPGALoader.detect")
-    assert jtag.reason == classify(r.bench, "openFPGALoader.detect", jtag.port).reason
+    """Every proposal's why is the policy's reason for that call (audit 2026-11-07, T13: one proposal was compared)."""
+    from benchscout import protocols
+
+    for rec in (r, recon.run(FixtureIo(FIXTURE.parent / "bench_unseen.json"))):
+        assert rec.proposals
+        for p in rec.proposals:
+            probe = protocols.for_port(rec.bench.ports[p.port])
+            args = probe.probe_action[1] if probe and probe.probe_action and probe.probe_action[0] == p.action else None
+            imp = classify(rec.bench, p.action, p.port, args)
+            why, _, also = p.reason.partition("; also disturbs ")  # the same judgment's other ports, said with it
+            assert why == imp.reason and set(filter(None, also.split(", "))) == set(imp.affected_ports), p.text
 
 
 @pytest.mark.parametrize(
@@ -169,7 +177,7 @@ def test_approval_gate(io, tmp_path):
     res = br.request("serial.listen", "serial:usbserial-10")
     assert res["status"] == "approval_required"
     aid = res["approval_id"]
-    assert ("serial_listen", "/dev/cu.usbserial-10") not in io.calls
+    assert not io.opened("/dev/cu.usbserial-10")
 
     assert br.request("serial.listen", "serial:usbserial-10", approval_id=aid)["status"] == "approval_required"
     br.decide(aid, True)
@@ -207,31 +215,6 @@ def test_port_vanishing_mid_read_is_a_fact_not_a_crash(tmp_path):
     vcp = next(p for p in r.bench.ports.values() if p.path == "/dev/cu.usbmodem21403")
     (t,) = r.bench.targets_via(vcp.id)
     assert any("port disappeared" in f for f in t.facts)
-
-
-def test_tang_nano_9k(tmp_path):
-    def mutate(d):
-        d["usb"] = [{"name": "JTAG Debugger", "vendor": "SIPEED", "vid": "0x0403", "pid": "0x6010", "serial": "FactoryAIOT Pro", "location": "0x01100000"}]
-        d["serial"] = [
-            {"device": "/dev/cu.usbserial-FactoryAIOT0", "vid": "0x0403", "pid": "0x6010", "serial_number": "FactoryAIOT Pro", "channel": 0},
-            {"device": "/dev/cu.usbserial-FactoryAIOT1", "vid": "0x0403", "pid": "0x6010", "serial_number": "FactoryAIOT Pro", "channel": 1},
-        ]
-        d["visa"] = {}
-        d["tools"] = ["openFPGALoader"]
-        # raw output captured from a real Tang Nano 9K (openFPGALoader v1.2.0)
-        d["probes"] = {"FactoryAIOT Pro": "No cable or board specified: using direct ft2232 interface\n"
-                     "Jtag frequency : requested 6.00MHz    -> real 6.00MHz   \nindex 0:\n\tidcode 0x100481b\n"
-                     "\tmanufacturer Gowin\n\tfamily GW1N\n\tmodel  GW1N(R)-9C\n\tirlength 8\n"}
-    io = _variant(tmp_path, mutate)
-    r = recon.run(io)
-    fpga = target_named(r.bench, "Gowin GW1N(R)-9C")
-    assert any("openFPGALoader's database" in e.detail for e in fpga.evidence), "the evidence says which database decided"
-    assert fpga.confidence == Confidence.IDENTIFIED
-    fabric = next(t for t in r.bench.targets.values() if t.hosted_on)
-    assert fabric.hosted_on == fpga.id
-    (dev,) = r.bench.devices.values()
-    assert dev.name == "SIPEED JTAG Debugger"  # what the BL702 debugger calls itself
-    assert all(" " not in pid for pid in r.bench.ports)
 
 
 def test_idcode_without_a_tool_database_stays_unknown(tmp_path):
@@ -321,20 +304,41 @@ def test_crash_without_guru_meditation_is_an_alert_that_survives_a_quiet_answer(
     assert any(f.startswith("ALERT: abort marker") for f in esp.facts)
 
 
-def test_every_reason_has_a_code_the_panel_can_translate(tmp_path):
-    """The panel says reasons in the person's language by code; the English reason stays for the agent."""
-    from benchscout.policy import classify
+def test_every_reason_the_core_gives_is_said_in_the_japanese_panel(tmp_path):
+    """The panel says a reason in the person's language by its code, else in the core's English (harness.ts reason()).
+    Audit 2026-11-07, T14: this test copied eight codes and never looked at the panel; a value outside its remembered
+    limits was said in English in a Japanese panel."""
+    import re
 
-    b = recon.run(FixtureIo(FIXTURE)).bench
-    assert classify(b, "serial.listen", "serial:usbserial-10").code == "reset_on_open"
-    assert classify(b, "openFPGALoader.detect", next(p for p in b.ports if p.startswith("jtag:"))).code == "action:openFPGALoader.detect"
-    assert classify(b, "no.such.action", "serial:usbserial-10").code == "unknown_action"
-    scpi = "visa:TCPIP0::192.168.1.50::INSTR"  # the PSU on the LAN
-    assert classify(b, "scpi.query", scpi, {"command": "OUTP CH1,ON"}).code == "energizing"
-    assert classify(b, "scpi.query", scpi, {"command": "DISP:BRIG 5"}).code == "scpi_command"
-    assert classify(b, "scpi.query", scpi, {"command": "MEAS:VOLT?"}).code == "scpi_query"
-    assert classify(b, "scpi.query", scpi, {"command": "*IDN?"}).code == "scpi_status"
-    assert classify(b, "scpi.query", scpi, {"command": "*TST?"}).code == "scpi_procedure"
+    from benchscout import actions as A
+
+    i18n = (Path(__file__).parent.parent / "vscode" / "src" / "i18n.ts").read_text(encoding="utf-8")
+    said = set(re.findall(r'^\s*"?([\w:.]+)"?\s*:', i18n.split("const ja", 1)[1].split("reasons: {", 1)[1].split("\n  },")[0], re.M))
+    codes: dict[str, str] = {}
+    for bench in ("bench_example.json", "bench_unseen.json"):  # every action, shipped or built in, on every port
+        b = recon.run(FixtureIo(FIXTURE.parent / bench)).bench
+        for name in [*A.all_actions(), "no.such.action"]:
+            for port in b.ports:
+                codes.setdefault(classify(b, name, port).code, f"{name} on {port}")
+    br = Broker(FixtureIo(FIXTURE), tmp_path / "ws" / ".benchscout")
+    br.scan()
+    vcp, psu = br.resolve_port("/dev/cu.usbmodem21403"), "visa:TCPIP0::192.168.1.50::INSTR"
+    br.select([br.bench.ports[vcp].device_id])  # watched: listening opens nothing
+    for c in ("*IDN?", "MEAS:VOLT?", "DISP:BRIG 5", "OUTP ON", "*TST?", "*RST", "*CLS"):
+        codes.setdefault(br.impact("scpi.query", psu, {"command": c}).code, c)
+    key = br._key(br.bench.devices[br.bench.ports[vcp].device_id])
+    for cmd, effect, extra in (("status", "safe", {}), ("reboot", "disruptive", {}), ("erase", "dangerous", {}),
+                               ("set", "disruptive", {"limits": [{"min": 0, "max": 9}]})):
+        r = br.remember(vcp, "command", cmd, data={"command": cmd, "effect": effect, **extra})
+        if r["status"] == "pending_human":
+            br.decide_memory(key, r["id"], True)
+    for text in ("status", "reboot", "erase", "set 3", "set 99"):
+        codes.setdefault(br.impact("serial.send", vcp, {"data": text}).code, text)
+    codes.setdefault(br.impact("serial.listen", vcp).code, "listen while watched")
+    br.end_session()
+    assert {"watched", "outside_limits", "command_safe", "unknown_action"} <= set(codes), sorted(codes)
+    missing = {c: what for c, what in codes.items() if c not in said}
+    assert not missing, f"no Japanese wording for: {missing}"
 
 
 def test_every_serial_port_keeps_its_evidence_and_a_valid_open_mode():

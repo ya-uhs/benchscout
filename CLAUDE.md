@@ -178,6 +178,8 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
   system is on the bench. Prefer one end-to-end check (`npm run e2e`) over many unit tests of the same path.
 - New behaviour is tested against `FixtureIo` first. When the real bench shows something,
   record it in `fixtures/` or a test so the suite keeps covering it without hardware.
+  `FixtureIo` takes only what an OS or VISA gives and fails as `LiveIo` does (OSError, not None); a test checks "nothing
+  was opened" with `io.opened()` and what was written with `io.sent()`, never by guessing call names (audit T5, T9, T12).
 - Real-hardware checks happen in `../bench-session`, a workspace set up exactly as an end user
   would get it (today by `benchscout setup` for Claude Code; later by opening it in VS Code with
   the extension). Do not hand-edit its `.mcp.json` or `.claude/`; if they are wrong, fix

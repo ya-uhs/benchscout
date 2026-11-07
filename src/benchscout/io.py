@@ -37,9 +37,10 @@ class Io(Protocol):
     def plugged(self) -> frozenset[tuple]: ...
 
     # access: opens things; callers go through policy first
-    def visa_query(self, resource: str, command: str) -> str | None: ...
-    def visa_query_raw(self, resource: str, command: str) -> bytes | None: ...  # the answer's bytes (a block, an image)
-    def visa_write(self, resource: str, command: str) -> bool: ...  # True once sent
+    # VISA: a failure (no VISA library, a resource busy or gone, no answer in time) raises OSError with VISA's words
+    def visa_query(self, resource: str, command: str) -> str: ...
+    def visa_query_raw(self, resource: str, command: str) -> bytes: ...  # the answer's bytes (a block, an image)
+    def visa_write(self, resource: str, command: str) -> None: ...
     def serial_listen(self, path: str, seconds: float, baud: int, exclusive: bool = False, lines: str = "low",
                       send: bytes | None = None, until: re.Pattern | None = None, cancel=None, may_reopen=None) -> str: ...
     # `send` is written once, right after opening; a whole line matching `until` ends the read early (codec.py)
@@ -285,21 +286,18 @@ class LiveIo:
         except Exception as e:
             raise OSError(f"VISA {resource}: {type(e).__name__}: {e}") from e
 
-    def visa_query(self, resource: str, command: str) -> str | None:
+    def visa_query(self, resource: str, command: str) -> str:
         return self._visa_call(resource, 1500, lambda inst: inst.query(command).strip())
 
-    def visa_query_raw(self, resource: str, command: str) -> bytes | None:
+    def visa_query_raw(self, resource: str, command: str) -> bytes:
         """The whole answer as bytes, for a screen capture or a waveform (seconds, and megabytes, on some scopes)."""
         def use(inst):
             inst.write(command)
             return bytes(inst.read_raw())
         return self._visa_call(resource, 15000, use)
 
-    def visa_write(self, resource: str, command: str) -> bool:
-        def use(inst):
-            inst.write(command)
-            return True
-        return self._visa_call(resource, 1500, use)
+    def visa_write(self, resource: str, command: str) -> None:
+        self._visa_call(resource, 1500, lambda inst: inst.write(command))
 
     def serial_listen(self, path: str, seconds: float, baud: int = DEFAULT_BAUD, exclusive: bool = False,
                       lines: str = "low", send: bytes | None = None, until: re.Pattern | None = None, cancel=None, may_reopen=None) -> str:
@@ -548,6 +546,19 @@ class FixtureIo:
         self.unplugged: set[str] = set()  # serial ports taken out of the file since it was first read
         self.streams_opened: list[str] = []
 
+    # every way this fixture opens a serial port: to listen, to send (and read the answer), to hold it open (a watch)
+    OPENS = ("serial_listen", "serial_send", "serial_stream")
+
+    def opened(self, path: str | None = None) -> list[str]:
+        """The serial ports opened so far (each time), or only `path`'s. Tests ask this for "nothing was opened": asking
+        for one way of opening let the others through (audit 2026-11-07, T5)."""
+        paths = [c[1] for c in self.calls if c[0] in self.OPENS]
+        return paths if path is None else [p for p in paths if p == path]
+
+    def sent(self, path: str | None = None) -> list[bytes]:
+        """What was written to serial ports (or to `path`), through a watch that holds the port or by opening it."""
+        return [c[2] for c in self.calls if c[0] in ("serial_send", "serial_write") and (path is None or c[1] == path)]
+
     def serial_stream(self, path: str, baud: int = DEFAULT_BAUD, exclusive: bool = False, lines: str = "low") -> _FixtureStream:
         if not self.port_present(path):
             raise PortGone("not present (fixture)")
@@ -603,32 +614,48 @@ class FixtureIo:
         have = self.data.get("tools", [])
         return {t: (f"/fixture/bin/{t}" if t in have else None) for t in K.tool_names()}
 
-    def visa_query_raw(self, resource: str, command: str) -> bytes | None:
+    def _visa(self, resource: str) -> dict:
+        """A recorded instrument fails as LiveIo does, with OSError: one not on the bench, one recorded with "error"
+        (busy, gone), a command it has no answer for (VISA times out). Returning None here let tests pass on a shape
+        the real one never gives (audit 2026-11-07, T9)."""
+        entry = self.data.get("visa", {}).get(resource)
+        if entry is None:
+            raise OSError(f"VISA {resource}: not on this bench (fixture)")
+        if "error" in entry:
+            raise OSError(f"VISA {resource}: {entry['error']}")
+        return entry
+
+    def visa_query_raw(self, resource: str, command: str) -> bytes:
         self.calls.append(("visa_query_raw", resource, command))
+        self._visa(resource)
         v = self.data.get("visa_raw", {}).get(resource, {}).get(command)  # recorded as hex
-        return bytes.fromhex(v) if v is not None else None
+        if v is None:
+            raise OSError(f"VISA {resource}: no answer to {command!r} in time (fixture: none recorded)")
+        return bytes.fromhex(v)
 
-    def visa_query(self, resource: str, command: str) -> str | None:
+    def visa_query(self, resource: str, command: str) -> str:
         self.calls.append(("visa_query", resource, command))
-        return self.data.get("visa", {}).get(resource, {}).get(command)
+        answer = self._visa(resource).get(command)
+        if answer is None:
+            raise OSError(f"VISA {resource}: no answer to {command!r} in time (fixture: none recorded)")
+        return answer
 
-    def visa_write(self, resource: str, command: str) -> bool:
+    def visa_write(self, resource: str, command: str) -> None:
         self.calls.append(("visa_write", resource, command))
-        return resource in self.data.get("visa", {})
+        self._visa(resource)
 
     def serial_listen(self, path: str, seconds: float, baud: int = DEFAULT_BAUD, exclusive: bool = False,
                       lines: str = "low", send: bytes | None = None, until: re.Pattern | None = None, cancel=None, may_reopen=None) -> str:
         v = self.data.get("listen", {}).get(path, "")
-        if send is not None:  # what a device answers is recorded per sent text in "replies"
-            self.calls.append(("serial_send", path, send))
-            if isinstance(v, dict) and "error" in v:  # gone as soon as it was opened
-                raise OSError(6, v["error"])
-            return self.data.get("replies", {}).get(path, {}).get(send.decode(errors="replace"), "")
-        self.calls.append(("serial_listen", path))
-        self.lines.append(lines)
+        self.calls.append(("serial_send", path, send) if send is not None else ("serial_listen", path))
+        self.lines.append(lines)  # how it was opened, a send as a listen: both open the port
         if exclusive:
             self.exclusive_opens.append(path)
         self.bauds.append(baud)
+        if send is not None:  # what a device answers is recorded per sent text in "replies"
+            if isinstance(v, dict) and "error" in v:  # gone as soon as it was opened
+                raise OSError(6, v["error"])
+            return self.data.get("replies", {}).get(path, {}).get(send.decode(errors="replace"), "")
         if isinstance(v, dict) and "then" in v:  # vanishes, comes back, keeps printing
             if may_reopen is None or not may_reopen(0.1):
                 raise PortGone("port vanished; reopening was not authorized")

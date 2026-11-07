@@ -223,14 +223,13 @@ def op_message(ctx: Context, port, args: dict):
     """A query or a command, by what the line is: an answer is read only when it asks for one."""
     try:
         if not any(h[0].endswith("?") for h in scpi_headers(args["command"])):
-            sent = ctx.io.visa_write(port.path, args["command"])
-            return {"sent": True} if sent else {"sent": False, "error": "could not send the command to the instrument"}
+            ctx.io.visa_write(port.path, args["command"])
+            return {"sent": True}
         if args.get("save"):
             return _save_capture(ctx, port, args["command"], args["save"])
-        answer = ctx.io.visa_query(port.path, args["command"])
-    except OSError as e:
-        return {"error": f"the instrument could not be reached: {e}"}
-    return answer if answer is not None else {"error": "no answer from the instrument"}
+        return ctx.io.visa_query(port.path, args["command"])
+    except OSError as e:  # VISA's own words: not there, busy, or no answer in time
+        return {"error": f"the call to the instrument failed: {e}"}
 
 
 def _save_capture(ctx: Context, port, command: str, kind: str) -> dict:
@@ -240,9 +239,7 @@ def _save_capture(ctx: Context, port, command: str, kind: str) -> dict:
 
     if kind not in A.SAVE_KINDS:
         return {"error": f"save must be one of {', '.join(A.SAVE_KINDS)}"}
-    raw = ctx.io.visa_query_raw(port.path, command)
-    if raw is None:
-        return {"error": "no answer from the instrument (check the command in its programming manual)"}
+    raw = ctx.io.visa_query_raw(port.path, command)  # (no answer in time: check the command in the programming manual)
     data = ieee_block(raw)
     p = ctx.new_artifact(f"{port.id}-capture", kind)
     p.write_bytes(data)

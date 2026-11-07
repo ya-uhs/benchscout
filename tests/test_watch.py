@@ -114,7 +114,7 @@ def test_benchscout_offers_to_watch_a_port_it_cannot_open_safely(tmp_path):
     a = asked[0]
     assert (a["by"], a["action"], a["port"], a["effect"]) == ("benchscout", "serial.watch", "serial:usbserial-10", "disruptive")
     assert a["subject"] == "QinHeng USB Serial" and a["purpose"]
-    assert br.watches == {} and ("serial_open", CH340) not in [c[:2] for c in io.calls]
+    assert br.watches == {} and not io.opened(CH340)
     assert "Do not ask again" in br.watch_state()["serial:usbserial-10"]
 
     select(br, CH340)  # selecting again does not ask twice

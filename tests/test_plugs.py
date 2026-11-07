@@ -99,10 +99,10 @@ def test_a_scan_does_not_open_what_the_session_is_using(bench):
 
     io.calls.clear()
     br.scan()  # the human pressed Rescan
-    assert ("serial_listen", path) not in io.calls and ("serial_stream", path) not in io.calls
+    assert not io.opened(path)
     kept = [f for t in br.bench.targets_via(br.resolve_port(path)) for f in t.facts if f.startswith("earlier log:")]
     assert kept, "what the first scan heard is still shown, marked as earlier"
-    assert ("serial_listen", "/dev/cu.usbserial-210319A8C7D11") not in io.calls, "assumed wiring cannot authorize an open"
+    assert not io.opened("/dev/cu.usbserial-210319A8C7D11"), "assumed wiring cannot authorize an open"
 
     # after a plug only the new device is probed
     io.calls.clear()
@@ -112,8 +112,8 @@ def test_a_scan_does_not_open_what_the_session_is_using(bench):
     events = []
     br.on_event = events.append
     br.scan(only_new=True)
-    probed = [c for c in io.calls if c[0] in ("serial_listen", "serial_stream", "visa_query", "probe")]
-    assert all(c[1] == "/dev/cu.usbserial-0001" for c in probed), probed
+    assert set(io.opened()) <= {"/dev/cu.usbserial-0001"}, io.opened()
+    assert not [c for c in io.calls if c[0] in ("visa_query", "probe")], "nothing else was probed"
     changed = next(e for e in events if e["event"] == "devices_changed")
     assert [d["id"] for d in changed["added"]] == ["usb:10c4:ea60:0001"] and not changed["removed"]
 

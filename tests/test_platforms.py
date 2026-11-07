@@ -47,6 +47,33 @@ def test_linux_bench_as_recorded_root_hubs_left_out_tang_nano_channels_right(tmp
     assert [p.path for p in b.ports_of(esp.id) if p.kind == "serial"] == ["/dev/ttyACM0"]
 
 
+# raw output of openFPGALoader v1.2.0 on the real Tang Nano 9K (2026-10-31)
+TANG_DETECT = ("No cable or board specified: using direct ft2232 interface\n"
+               "Jtag frequency : requested 6.00MHz    -> real 6.00MHz   \nindex 0:\n\tidcode 0x100481b\n"
+               "\tmanufacturer Gowin\n\tfamily GW1N\n\tmodel  GW1N(R)-9C\n\tirlength 8\n")
+
+
+def test_tang_nano_9k_as_recorded_on_linux(tmp_path):
+    """The real Tang Nano 9K as Linux listed it and openFPGALoader read it: the FPGA named by the tool's database, the
+    UART on channel B inside it. Audit 2026-11-07 (T12): this was shown on macOS port names with a channel number no
+    OS gives; on the real macOS its ports are unknown ports (#33)."""
+    from benchscout.model import Confidence
+
+    usb = [dict(d, vid=f"0x{d['vid']:04x}", pid=f"0x{d['pid']:04x}") for d in linux_usb_devices(_sysfs(tmp_path / "sys"))]
+    serial = [dict(p, vid=f"0x{p['vid']:04x}", pid=f"0x{p['pid']:04x}") for p in LINUX["serial"]]
+    data = json.loads(FIXTURE.read_text())
+    data.update(usb=usb, serial=serial, visa={}, listen={}, tools=["openFPGALoader"], probes={"FactoryAIOT Pro": TANG_DETECT})
+    f = tmp_path / "bench.json"
+    f.write_text(json.dumps(data))
+    b = recon.run(FixtureIo(f)).bench
+    fpga = next(t for t in b.targets.values() if t.name == "Gowin GW1N(R)-9C")
+    assert fpga.confidence == Confidence.IDENTIFIED
+    assert any("openFPGALoader's database" in e.detail for e in fpga.evidence), "the evidence says which database decided"
+    assert fabric_port(b).path == "/dev/ttyUSB1" and next(t for t in b.targets.values() if t.hosted_on).hosted_on == fpga.id
+    tang = next(d for d in b.devices.values() if d.vid == 0x0403)
+    assert tang.name == "SIPEED JTAG Debugger" and all(" " not in pid for pid in b.ports)  # what the BL702 debugger calls itself
+
+
 def _bench(tmp_path, usb, serial):
     data = json.loads(FIXTURE.read_text())
     data.update(usb=usb, serial=serial, visa={}, listen={})
@@ -77,6 +104,7 @@ def test_windows_ft2232h_one_device_channel_from_serial_letter(tmp_path):
 
 
 
+@pytest.mark.assumed  # macOS is not a target; the one macOS recording (Tang Nano) named its ports by location instead
 def test_macos_ft2232h_channel_from_port_name(tmp_path):
     ports = [{"device": f"/dev/cu.usbserial-210319A8C7D1{i}", "vid": "0x0403", "pid": "0x6010", "serial_number": "210319A8C7D1"}
              for i in (1, 0)]
@@ -91,6 +119,7 @@ def test_serial_ending_in_a_letter_is_not_cut_without_reason(tmp_path):
     assert dev.serial == "ABCB"
 
 
+@pytest.mark.assumed  # Python's locale names on Windows, not yet recorded on the Windows VM
 @pytest.mark.parametrize("name,code", [("Japanese_Japan", "ja"), ("ja_JP", "ja"), ("English_United States", "en"), (None, None)])
 def test_windows_locale(name, code):
     assert windows_locale_code(name) == code
@@ -172,7 +201,7 @@ def _tang_nano_on_windows(jtag_driver):
 def test_a_libusb_tool_behind_a_serial_driver_is_named_with_the_interface_that_needs_winusb(tmp_path):
     from benchscout import report
 
-    serial = [{"device": "COM5", "vid": "0x0403", "pid": "0x6010", "serial_number": "FactoryAIOT Pro", "channel": 1,
+    serial = [{"device": "COM5", "vid": "0x0403", "pid": "0x6010", "serial_number": "FactoryAIOT ProB",  # FTDI's driver adds the channel letter
                "description": "USB Serial Port (COM5)"}]
     b = _bench(tmp_path, _tang_nano_on_windows("FTDIBUS"), serial)
     dev = next(d for d in b.devices.values() if d.vid == 0x0403)

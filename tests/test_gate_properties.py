@@ -5,7 +5,8 @@ approval id it got hold of, nothing that is not SAFE runs unless the human allow
   - a DISRUPTIVE call runs with such an approval, or a session grant the human gave for that action on that port
     (for SCPI: for a line whose commands include every command of this call), or what the human allowed always
   - an approval is used at most once, and never for a different call
-  - the agent has no way to decide (it only calls `request`); the human decides through `decide`
+  - the agent only calls `request`; the human decides through `decide` (that the agent's channel has no way to decide
+    is test_core's `test_agent_channel_has_no_way_to_approve_or_select`)
 
 And, over every action and every port of two benches, a call's effect is never below its action's own effect
 except where a rule says why (the command line for SCPI, memory the human confirmed for firmware commands).
@@ -18,7 +19,7 @@ from pathlib import Path
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from hypothesis.stateful import RuleBasedStateMachine, invariant, rule
+from hypothesis.stateful import RuleBasedStateMachine, rule
 
 from benchscout import actions as A
 from benchscout import recon
@@ -164,13 +165,6 @@ class Gate(RuleBasedStateMachine):
             if scope == "session":
                 subjects = self.br.approvals.get(aid).impact.get("subjects")
                 self.session.add((action, port, frozenset(subjects) if subjects is not None else None))
-
-    @invariant()
-    def the_agents_channel_cannot_decide(self):
-        from benchscout import mcp_relay
-
-        src = Path(mcp_relay.__file__).read_text(encoding="utf-8")
-        assert '"decide"' not in src and "approvals.decide" not in src
 
 
 Gate.TestCase.settings = settings(max_examples=150, stateful_step_count=30, deadline=None)

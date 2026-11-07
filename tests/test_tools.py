@@ -96,13 +96,13 @@ def test_a_tool_with_no_declared_effect_is_dangerous(ws):
     br.end_session()
 
 
-def test_shipped_writes_are_dangerous_and_fpga_program_disturbs_the_fabric():
-    K.load()
-    assert A.get("esptool.write_flash").effect == Effect.DANGEROUS
-    assert A.get("fpga.program").port_kinds == ("jtag",)
-    flash = A.get("fpga.write_flash")
-    assert flash.effect == Effect.DANGEROUS and flash.port_kinds == ("jtag",) and flash.releases_device
-    assert "--write-flash" in flash.argv
+def test_shipped_writes_are_dangerous_and_hand_the_device_over():
+    """Writing an FPGA (its SRAM or its flash) or an MCU's flash is DANGEROUS, and the tool gets the device to itself.
+    (That writing the FPGA disturbs the UART in its fabric is test_bench's test_fpga_program_disturbs_fabric_uart.)"""
+    for name in ("fpga.program", "fpga.write_flash", "esptool.write_flash"):
+        a = A.get(name)
+        assert a.effect == Effect.DANGEROUS and a.releases_device, name
+    # the offsets the approval card shows are the ones written
     assert A.get("esptool.write_flash").params[0].coerce("0x0:a.bin,0x10000:b.bin") == [[0, "a.bin"], [0x10000, "b.bin"]]
 
 

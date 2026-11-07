@@ -91,6 +91,8 @@ def test_operations_use_only_what_their_context_lists():
             if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "ctx" \
                     and node.attr not in allowed:
                 wrong.append(f"{path.name}:{node.lineno} ctx.{node.attr}")
-            if isinstance(node, ast.ImportFrom) and node.module in ("broker", "recon") and node.level == 2:
-                wrong.append(f"{path.name}:{node.lineno} imports {node.module}")
+            if isinstance(node, (ast.Import, ast.ImportFrom)):  # in any form: from ..broker, from .. import broker, absolute
+                names = [a.name for a in node.names] + ([node.module] if isinstance(node, ast.ImportFrom) and node.module else [])
+                if any(n.split(".")[-1] in ("broker", "recon") for n in names):
+                    wrong.append(f"{path.name}:{node.lineno} imports the gate or recon")
     assert not wrong, wrong

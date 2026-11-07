@@ -66,7 +66,7 @@ test("a pinned card is shown first, and the status says when no agent is chosen"
     card({ id: "b", kind: "question", title: "What should we look at?", options: [{ id: "x", label: "Look at x" }] }),
   ] });
   assert.ok(out.indexOf("Which agent") < out.indexOf("What should we look at"), "pinned first, though older");
-  assert.match(out, /no agent chosen yet/);
+  assert.ok(out.includes(plainStrings("en").noAgentYet));
   assert.match(out, /class="opt" data-card="a" data-opt="copilot"/);
 });
 
@@ -80,7 +80,7 @@ test("decisions come before reports, and remembered things come last", () => {
   ] });
   const at = (x) => out.indexOf(x);
   assert.ok(at("CONFIRM") < at("REPORT") && at("REPORT") < at("MEMORY"), out);
-  assert.match(out, /class="badge">Changes device state</);
+  assert.ok(out.includes(`class="badge">${plainStrings("en").effect.disruptive}<`));
   assert.match(out, /class="card memory  record"/);
 });
 

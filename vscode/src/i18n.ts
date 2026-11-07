@@ -311,7 +311,7 @@ const ja: typeof en = {
     command_dangerous: "記憶では DANGEROUS",
     unknown_action: "何をするか分からない操作です",
     watched: "ポートはすでに開いています(見張り中)。読むだけで、何も開きません",
-    command_unconfirmed: "SAFE と確認されていないファームウェアのコマンドは、文字を送るのと同じ扱いです",
+    outside_limits: "覚えている値の範囲の外です。範囲の外では毎回確認します",
     "action:serial.listen": "コンソールの出力を読むだけです",
     "action:serial.watch": "ポートを開いたままにして読み続けます",
     "action:serial.send": "ファームウェアが反応するバイトを送ります",

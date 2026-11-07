@@ -23,6 +23,7 @@ const win = process.platform === "win32";
 const bin = process.env.BENCHSCOUT_TEST_BIN ?? join(repo, ".venv", win ? "Scripts" : "bin", win ? "benchscout.exe" : "benchscout");
 const py = join(repo, ".venv", win ? "Scripts" : "bin", win ? "python.exe" : "python");
 const s = strings("en");
+const STLINK = "STMicroelectronics STLINK-V3";  // the device the streaming bench's crash comes from
 
 async function bench(makeDriver) {
   const root = mkdtempSync(join(win ? tmpdir() : "/tmp", "bsh"));
@@ -35,13 +36,18 @@ async function bench(makeDriver) {
   return { core, h, root, env, done };
 }
 
+/** The first card matching `pred`, waiting at most `ms`. It waited for the next change with no time limit, so a card that
+ *  never came hung the run past the test's own time-out, its core left running (audit 2026-11-07, T23). */
 async function until(h, pred, ms = 15000) {
   const end = Date.now() + ms;
   for (;;) {
     const c = h.cards.find(pred);
     if (c) return c;
-    if (Date.now() > end) throw new Error("timed out; cards: " + JSON.stringify(h.cards.map((c) => [c.kind, c.title, c.status])));
-    await once(h, "changed");
+    const left = end - Date.now();
+    if (left <= 0) throw new Error("timed out; cards: " + JSON.stringify(h.cards.map((c) => [c.kind, c.title, c.status])));
+    let timer;
+    await Promise.race([once(h, "changed"), new Promise((r) => { timer = setTimeout(r, left); })]);
+    clearTimeout(timer);
   }
 }
 
@@ -68,7 +74,7 @@ for (const [name, make] of [
       assert.ok(ch340, "the first question offers each device");
       assert.ok(first.freeText, "and a way to say something else");
       void h.answer(first.id, { option: ch340.id });
-      const watch = await until(h, (c) => c.kind === "confirm" && /^Watch QinHeng USB Serial\?/.test(c.title));
+      const watch = await until(h, (c) => c.kind === "confirm" && c.title === s.offerWatch("QinHeng USB Serial"));
       assert.deepEqual(watch.options.map((o) => o.id), ["once", "deny"], "benchscout offers to watch the device it cannot open safely");
       if (name === "ACP agent") {
         const scan = await until(h, (c) => c.kind === "confirm" && /bench_scan/.test(c.title));
@@ -91,8 +97,7 @@ test("an agent that cannot be woken is reported and nothing else is tried", asyn
   try {
     const first = await until(h, (c) => c.kind === "question");
     void h.answer(first.id, { option: first.options[0].id });
-    const n = await until(h, (c) => c.kind === "notify" && /Could not start/.test(c.title));
-    assert.match(n.title, /Could not start Claude Code/);
+    const n = await until(h, (c) => c.kind === "notify" && c.title === s.wakeFailed("Claude Code"));
     assert.match(n.detail, /Install Claude Code/);
     assert.equal(h.cards.filter((c) => c.kind === "report" && c.status !== "closed").length, 0);
   } finally { done(); }
@@ -175,10 +180,10 @@ test("auto: a crash on a watched device wakes the agent with the line, without t
     const first = await until(h, (c) => c.kind === "question");
     const st = first.options.find((o) => o.label.includes("STLINK"));
     await h.answer(first.id, { option: st.id });               // the only human action: pick the device
-    const alert = await until(h, (c) => c.kind === "notify" && /something to look at/.test(c.title));
+    const alert = await until(h, (c) => c.kind === "notify" && c.title === s.deviceAlert(STLINK));
     assert.match(alert.body, /abort\(\) was called at PC 0x42001c85/);
     assert.match(alert.detail, /\.benchscout[\\/]logs[\\/]serial_usbmodem21403\.log/);
-    const report = await until(h, (c) => c.kind === "report" && c.status === "open" && /something to look at/.test(c.title));
+    const report = await until(h, (c) => c.kind === "report" && c.status === "open" && c.title === `${s.report}: ${s.deviceAlert(STLINK)}`);
     assert.match(report.body, /got: benchscout noticed this on STMicroelectronics STLINK-V3/);
   } finally { done(); }
 });
@@ -190,9 +195,9 @@ test("suggest: a crash only offers to investigate", async () => {
     const st = first.options.find((o) => o.label.includes("STLINK"));
     await h.answer(first.id, { option: st.id });
     await until(h, (c) => c.kind === "report" && c.status === "open");  // the selection itself wakes the agent once
-    const offer = await until(h, (c) => c.kind === "question" && /something to look at/.test(c.title));
+    const offer = await until(h, (c) => c.kind === "question" && c.title === s.deviceAlert(STLINK));
     assert.deepEqual(offer.options.map((o) => o.id), ["go", "ignore"]);
-    assert.equal(h.cards.filter((c) => c.kind === "report" && /something to look at/.test(c.title)).length, 0);
+    assert.equal(h.cards.filter((c) => c.kind === "report" && c.title.endsWith(s.deviceAlert(STLINK))).length, 0);
   } finally { done(); }
 });
 
@@ -201,12 +206,12 @@ test("memory: plain entries are recorded, safety-loosening ones wait for the hum
   try {
     await until(h, (c) => c.kind === "question");
     await agentCall(env, root, "remember", { ref: "usbserial-10", kind: "config", text: "CH1 is on the 3V3 rail" });
-    const rec = await until(h, (c) => c.kind === "memory" && /Remembered about QinHeng USB Serial/.test(c.title));
+    const rec = await until(h, (c) => c.kind === "memory" && c.title === s.learned("QinHeng USB Serial"));
     assert.match(rec.body, /CH1 is on the 3V3 rail/);
     assert.deepEqual(rec.options.map((o) => o.id), ["forget"]);
     const res = (await agentCall(env, root, "remember", { ref: "/dev/cu.usbserial-10", kind: "safety", text: "no auto-reset circuit", data: { listen_safe: true } })).result;
     assert.equal(res.status, "pending_human");
-    const pend = await until(h, (c) => c.kind === "memory" && /loosens safety/.test(c.title));
+    const pend = await until(h, (c) => c.kind === "memory" && c.title === s.learnedSafety("QinHeng USB Serial"));
     void h.answer(pend.id, { option: "accept" });
     await until(h, (c) => c.id === pend.id && c.status === "closed");
     const recall = (await agentCall(env, root, "recall", { ref: "usbserial-10" })).result;
@@ -219,11 +224,11 @@ test("an offered watch, once allowed, starts watching and says so", async () => 
   try {
     const first = await until(h, (c) => c.kind === "question");
     await core.select([first.options.find((o) => o.label.includes("USB Serial")).id]);  // as the panel does, without waking anyone
-    const watch = await until(h, (c) => c.kind === "confirm" && /^Watch /.test(c.title));
-    assert.match(watch.body, /notice reconnections and matching log lines/);
+    const watch = await until(h, (c) => c.kind === "confirm" && c.title === s.offerWatch("QinHeng USB Serial"));
+    assert.ok(watch.body.startsWith(s.offerWatchWhy));
     assert.match(watch.body, /\nOpening this port can reset the device/, "English: the core's own words, capitalised");
     void h.answer(watch.id, { option: "once" });
-    const on = await until(h, (c) => c.kind === "notify" && /^Watching /.test(c.title));
+    const on = await until(h, (c) => c.kind === "notify" && c.title === s.watching("QinHeng USB Serial"));
     assert.match(on.detail, /\.benchscout[\\/]logs[\\/]serial_usbserial-10\.log/);
     assert.ok(!h.cards.some((c) => c.kind === "report"), "watching wakes nobody");
   } finally { done(); }
@@ -242,7 +247,7 @@ test("with no agent chosen, a pick waits for the choice and then wakes the chose
     void h.tell("what is on the bench?");
     const wait = await until(h, (c) => c.kind === "notify" && c.title === s.chooseAgentFirst);
     assert.ok(wait.pin);
-    assert.ok(!h.cards.some((c) => /Could not start/.test(c.title)), "not choosing yet is not a failure");
+    assert.ok(!h.cards.some((c) => c.title === s.wakeFailed("benchscout")), "not choosing yet is not a failure");
     assert.ok(!h.cards.some((c) => c.kind === "report"));
     chosen = true;
     h.resetAgent();  // what choosing an agent in the card does
