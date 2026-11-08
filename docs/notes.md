@@ -728,4 +728,8 @@ Codex の監査(docs/audit-2026-11-07.md、基準 fc2cefc)を引き継ぎ、判�
 - 長い確認の途中で Mac がスリープし、テストが 955 秒かかって見えた(電源ログで確認)。長い実行は `caffeinate -i` を付ける。
 - **Tang Nano を Windows VM へ(2026-11-08、利用者の了解)**:ARM64 の FTDI のドライバは Windows Update にも Microsoft のカタログにも無い
   (どれも x64 だけ)。ドライバ無しの Windows は、JTAG 側のインターフェースを「OK・問題なし・サービスなし」と返し、benchscout はそれを
-  ドライバありと読んでいた(#49、直した)。この VM では FT2232 がハブ経由の文字列要求にシリアル番号しか答えず、SIPEED の配線が当たらない。
+  ドライバありと読んでいた(#49、直した)。ドライバの無い間、FT2232 はハブ経由の文字列要求にシリアル番号しか答えない。
+- 利用者が FTDI のサイトから ARM64 版(CDM 2.12.36.20、WHQL)を取り、VM に入れた:COM4・COM5 が出て、文字列も全部読めた。pyserial は両方の
+  ポートを SER=FACTORYAIOT_PRO(Windows の書き方)とし、チャネルを言わない。benchscout はポートを別の機器にしてチャネルも不明にしていた(#50)。
+  Windows の機器の木(ポートの親 &MI_xx)からチャネルを読み、番号は Windows の書き方でも照合するようにして、Linux と同じ形になった。
+  確認は一覧の読み取りと `benchscout scan`(SAFE)だけ。Tang Nano は Mac に戻した。FTDI のドライバは VM に入れたまま

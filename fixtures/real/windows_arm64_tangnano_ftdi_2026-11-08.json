@@ -1,0 +1,132 @@
+{
+ "_comment": "Windows 11 ARM64 (UTM VM, Insider 26200), 2026-11-08: a Sipeed Tang Nano 9K (FT2232) passed through, with FTDI's CDM 2.12.36.20 for ARM64 (WHQL) installed: both interfaces on FTDIBUS, COM4 and COM5. pnp: io.WINDOWS_PNP_QUERY; strings: winusb_strings.usb_strings() (with a driver loaded the hub returns the maker and product too; without one only the serial); serial: what pyserial listed (both ports SER=FACTORYAIOT_PRO, no location, no interface: FTDI's driver wrote the serial as Windows does, without a channel letter); port_parents: io.WINDOWS_PORT_PARENTS (each port's parent &MI_xx: COM4 interface 0, COM5 interface 1). Nothing was opened (audit 2026-11-07).",
+ "pnp": [
+  {
+   "id": "USB\\VID_46F4&PID_0001\\1-0000:00:03.0-4.1",
+   "status": "OK",
+   "problem": "CM_PROB_NONE",
+   "service": "USBSTOR",
+   "bus": null,
+   "parent": null
+  },
+  {
+   "id": "USB\\VID_0403&PID_6010&MI_00\\6&2FEB2BE7&0&0000",
+   "status": "OK",
+   "problem": "CM_PROB_NONE",
+   "service": "FTDIBUS",
+   "bus": null,
+   "parent": null
+  },
+  {
+   "id": "USB\\VID_0403&PID_6010\\FACTORYAIOT_PRO",
+   "status": "OK",
+   "problem": "CM_PROB_NONE",
+   "service": "usbccgp",
+   "bus": "JTAG Debugger",
+   "parent": "USB\\ROOT_HUB30\\4&2cc4d715&0&0"
+  },
+  {
+   "id": "USB\\VID_0409&PID_55AA\\MSFT20314159-0000:00:03.0-4",
+   "status": "OK",
+   "problem": "CM_PROB_NONE",
+   "service": "USBHUB3",
+   "bus": null,
+   "parent": null
+  },
+  {
+   "id": "USB\\VID_0627&PID_0001\\28754-0000:00:03.0-1",
+   "status": "OK",
+   "problem": "CM_PROB_NONE",
+   "service": "HidUsb",
+   "bus": null,
+   "parent": null
+  },
+  {
+   "id": "USB\\VID_0403&PID_6010&MI_01\\6&2FEB2BE7&0&0001",
+   "status": "OK",
+   "problem": "CM_PROB_NONE",
+   "service": "FTDIBUS",
+   "bus": null,
+   "parent": null
+  },
+  {
+   "id": "USB\\VID_0627&PID_0001\\68284-0000:00:03.0-3",
+   "status": "OK",
+   "problem": "CM_PROB_NONE",
+   "service": "HidUsb",
+   "bus": "QEMU USB Keyboard",
+   "parent": "USB\\ROOT_HUB30\\4&9a1dcae&0&0"
+  },
+  {
+   "id": "USB\\VID_0627&PID_0001\\89126-0000:00:03.0-2",
+   "status": "OK",
+   "problem": "CM_PROB_NONE",
+   "service": "HidUsb",
+   "bus": "QEMU USB Mouse",
+   "parent": "USB\\ROOT_HUB30\\4&9a1dcae&0&0"
+  }
+ ],
+ "strings": [
+  {
+   "vid": 1575,
+   "pid": 1,
+   "manufacturer": null,
+   "product": null,
+   "serial": "28754-0000:00:03.0-1",
+   "location": "\\\\?\\usb#root_hub30#4&9a1dcae&0&0#{f18a0e88-c30c-11d0-8815-00a0c906bed8}#5"
+  },
+  {
+   "vid": 1575,
+   "pid": 1,
+   "manufacturer": null,
+   "product": null,
+   "serial": "89126-0000:00:03.0-2",
+   "location": "\\\\?\\usb#root_hub30#4&9a1dcae&0&0#{f18a0e88-c30c-11d0-8815-00a0c906bed8}#6"
+  },
+  {
+   "vid": 1575,
+   "pid": 1,
+   "manufacturer": null,
+   "product": null,
+   "serial": "68284-0000:00:03.0-3",
+   "location": "\\\\?\\usb#root_hub30#4&9a1dcae&0&0#{f18a0e88-c30c-11d0-8815-00a0c906bed8}#7"
+  },
+  {
+   "vid": 18164,
+   "pid": 1,
+   "manufacturer": "QEMU",
+   "product": "QEMU USB HARDDRIVE",
+   "serial": "1-0000:00:03.0-4.1",
+   "location": "\\\\?\\usb#vid_0409&pid_55aa#msft20314159-0000:00:03.0-4#{f18a0e88-c30c-11d0-8815-00a0c906bed8}#1"
+  },
+  {
+   "vid": 1027,
+   "pid": 24592,
+   "manufacturer": "SIPEED",
+   "product": "JTAG Debugger",
+   "serial": "FactoryAIOT Pro",
+   "location": "\\\\?\\usb#root_hub30#4&2cc4d715&0&0#{f18a0e88-c30c-11d0-8815-00a0c906bed8}#7"
+  }
+ ],
+ "serial": [
+  {
+   "device": "COM4",
+   "vid": 1027,
+   "pid": 24592,
+   "serial_number": "FACTORYAIOT_PRO",
+   "location": null,
+   "interface": null,
+   "description": "USB Serial Port (COM4)"
+  },
+  {
+   "device": "COM5",
+   "vid": 1027,
+   "pid": 24592,
+   "serial_number": "FACTORYAIOT_PRO",
+   "location": null,
+   "interface": null,
+   "description": "USB Serial Port (COM5)"
+  }
+ ],
+ "port_parents": "[{\"port\":\"COM4\",\"parent\":\"USB\\\\VID_0403\\u0026PID_6010\\u0026MI_00\\\\6\\u00262feb2be7\\u00260\\u00260000\"},{\"port\":\"COM5\",\"parent\":\"USB\\\\VID_0403\\u0026PID_6010\\u0026MI_01\\\\6\\u00262feb2be7\\u00260\\u00260001\"}]"
+}

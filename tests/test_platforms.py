@@ -190,33 +190,29 @@ def test_a_device_windows_has_no_driver_for_is_shown_with_what_it_needs(tmp_path
     assert "■ Espressif USB JTAG/serial debug unit" in text
 
 
-def _tang_nano_on_windows(jtag_driver):
-    """A Tang Nano 9K on an ordinary Windows PC: Windows Update gave both FT2232 interfaces FTDI's serial driver
-    (two COM ports); someone may have put WinUSB on interface 0 for openFPGALoader (Zadig)."""
-    pnp = [{"id": "USB\\VID_0403&PID_6010\\FACTORYAIOT_PRO", "status": "OK", "service": "usbccgp", "bus": None, "parent": None},
-           {"id": "USB\\VID_0403&PID_6010&MI_00\\6&1&0&0000", "status": "OK", "service": jtag_driver, "bus": "JTAG Debugger",
-            "parent": "USB\\VID_0403&PID_6010\\FactoryAIOT_Pro"},
-           {"id": "USB\\VID_0403&PID_6010&MI_01\\6&1&0&0001", "status": "OK", "service": "FTDIBUS", "bus": "JTAG Debugger",
-            "parent": "USB\\VID_0403&PID_6010\\FactoryAIOT_Pro"}]
-    strings = [{"vid": 0x0403, "pid": 0x6010, "manufacturer": "SIPEED", "product": "JTAG Debugger", "serial": "FactoryAIOT Pro"}]
-    return [dict(d, vid=f"0x{d['vid']:04x}", pid=f"0x{d['pid']:04x}") for d in parse_windows_pnp(json.dumps(pnp), strings)]
+WIN_TANG_FTDI = json.loads((Path(__file__).parent.parent / "fixtures" / "real" / "windows_arm64_tangnano_ftdi_2026-11-08.json")
+                           .read_text(encoding="utf-8"))
 
 
-@pytest.mark.assumed
-def test_a_libusb_tool_behind_a_serial_driver_is_named_with_the_interface_that_needs_winusb(tmp_path):
+def test_tang_nano_9k_as_recorded_on_windows_with_ftdis_driver(tmp_path):
+    """Windows VM, 2026-11-08 (audit 2026-11-07, T8: this was assumed, with a channel letter on the serial). FTDI's driver
+    gave both ports the serial as Windows writes it (FACTORYAIOT_PRO) and no channel; Windows' device tree says which
+    interface each hangs off. One device, the UART on channel B inside the FPGA, as on Linux; openFPGALoader needs WinUSB
+    on interface 0, which has FTDI's driver."""
     from benchscout import report
+    from benchscout.io import parse_windows_port_parents
 
-    serial = [{"device": "COM5", "vid": "0x0403", "pid": "0x6010", "serial_number": "FactoryAIOT ProB",  # FTDI's driver adds the channel letter
-               "description": "USB Serial Port (COM5)"}]
-    b = _bench(tmp_path, _tang_nano_on_windows("FTDIBUS"), serial)
-    dev = next(d for d in b.devices.values() if d.vid == 0x0403)
-    assert dev.drivers == {0: "FTDIBUS", 1: "FTDIBUS"} and [(a["need"], a["interfaces"]) for a in dev.access] == [("winusb", [0])]
-    text = report.render(recon.Recon(b))  # said once, in one form for every OS (model.Device.access)
-    assert "interface(s) 0 have the FTDIBUS driver" in text and "WinUSB" in text
-
-    b2 = _bench(tmp_path, _tang_nano_on_windows("WinUSB"), serial)  # after Zadig: nothing to say
-    dev2 = next(d for d in b2.devices.values() if d.vid == 0x0403)
-    assert dev2.access == []
+    usb = [dict(d, vid=f"0x{d['vid']:04x}", pid=f"0x{d['pid']:04x}")
+           for d in parse_windows_pnp(json.dumps(WIN_TANG_FTDI["pnp"]), WIN_TANG_FTDI["strings"]) if d["vid"] == 0x0403]
+    parents = parse_windows_port_parents(WIN_TANG_FTDI["port_parents"])
+    serial = [dict(p, vid=f"0x{p['vid']:04x}", pid=f"0x{p['pid']:04x}", usb_interface=parents[p["device"]])
+              for p in WIN_TANG_FTDI["serial"]]
+    b = _bench(tmp_path, usb, serial)
+    (tang,) = [d for d in b.devices.values() if d.vid == 0x0403]
+    assert tang.name == "SIPEED JTAG Debugger" and tang.drivers == {0: "FTDIBUS", 1: "FTDIBUS"}
+    assert fabric_port(b).path == "COM5" and fabric_port(b).device_id == tang.id
+    assert [(a["need"], a["interfaces"]) for a in tang.access] == [("winusb", [0])]
+    assert "interface(s) 0 have the FTDIBUS driver" in report.render(recon.Recon(b))
 
 
 WIN_TANG_NO_DRIVER = json.loads((Path(__file__).parent.parent / "fixtures" / "real" / "windows_arm64_tangnano_nodriver_2026-11-08.json")

@@ -227,7 +227,7 @@ class LiveIo:
     def serial_ports(self) -> list[dict]:
         from serial.tools import list_ports
 
-        return [
+        ports = [
             {
                 "device": p.device,
                 "vid": p.vid,
@@ -240,6 +240,13 @@ class LiveIo:
             for p in list_ports.comports()
             if p.vid is not None  # skip Bluetooth/debug-console pseudo ports
         ]
+        if ports and platform.system() == "Windows":
+            parents = parse_windows_port_parents(
+                _listing(["powershell", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_PORT_PARENTS]))
+            for p in ports:
+                if p["device"] in parents:
+                    p["usb_interface"] = parents[p["device"]]
+        return ports
 
     def _visa(self):
         """NI-VISA / Keysight VISA if installed (common on Windows benches, and the only easy
@@ -398,12 +405,43 @@ WINDOWS_PNP_QUERY = (  # UTF-8 out: Windows PowerShell would print a device's na
     "bus = $prop[\"$($_.InstanceId)|DEVPKEY_Device_BusReportedDeviceDesc\"]; "
     "parent = $prop[\"$($_.InstanceId)|DEVPKEY_Device_Parent\"] } } | ConvertTo-Json -Compress"
 )
+# Which USB interface each COM port hangs off, as Windows' device tree says: the port's device node (FTDIBUS\..., or a
+# usbser child) has a parent USB\VID_..&PID_..&MI_xx. pyserial does not say it for FTDI's driver (no location, no
+# interface; real VM, 2026-11-08: both of a Tang Nano's ports were "SER=FACTORYAIOT_PRO"), so a multi-channel part's
+# channel would be unknown
+WINDOWS_PORT_PARENTS = (
+    "[Console]::OutputEncoding = [Text.Encoding]::UTF8; @(Get-PnpDevice -Class Ports -PresentOnly | ForEach-Object { "
+    "[pscustomobject]@{ port = (Get-ItemProperty -ErrorAction SilentlyContinue "
+    "(\"HKLM:\\SYSTEM\\CurrentControlSet\\Enum\\\" + $_.InstanceId + \"\\Device Parameters\")).PortName; "
+    "parent = (Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName DEVPKEY_Device_Parent "
+    "-ErrorAction SilentlyContinue).Data } }) | ConvertTo-Json -Compress"
+)
+_MI = re.compile(r"&MI_([0-9A-F]{2})\\", re.I)
+
+
+def parse_windows_port_parents(text: str) -> dict[str, int]:
+    """{COM port: the USB interface it hangs off} from WINDOWS_PORT_PARENTS; ports whose parent is not a USB
+    interface (a single-interface device, a PCI port) are left out."""
+    try:
+        data = json.loads(text) if text.strip() else []
+    except json.JSONDecodeError:
+        return {}
+    out = {}
+    for e in data if isinstance(data, list) else [data]:
+        if isinstance(e, dict) and e.get("port") and (m := _MI.search(e.get("parent") or "")):
+            out[e["port"]] = int(m.group(1), 16)
+    return out
+
+
 WINDOWS_HUB_DRIVERS = ("USBHUB3", "USBHUB")  # Windows' own USB hub drivers (USB 3 and USB 2)
 _PNP_ID = re.compile(r"^USB\\VID_([0-9A-F]{4})&PID_([0-9A-F]{4})(?:&MI_([0-9A-F]+))?\\(.+)$", re.I)
 
 
-def _same_serial(a: str, b: str) -> bool:
-    """Windows writes a serial into the instance id upper-cased, spaces as '_' ("FactoryAIOT Pro" -> FACTORYAIOT_PRO)."""
+def same_serial(a: str | None, b: str | None) -> bool:
+    """The same serial number, as a device gives it or as Windows writes it into an instance id, which pyserial then
+    reports for a port: upper-cased, spaces as '_' ("FactoryAIOT Pro" -> FACTORYAIOT_PRO; real VM, 2026-11-08)."""
+    if not a or not b:
+        return False
     norm = lambda x: re.sub(r"[^0-9A-Z]", "", x.upper())  # noqa: E731
     return norm(a) == norm(b)
 
@@ -432,7 +470,7 @@ def parse_windows_pnp(text: str, strings: list[dict] | None = None) -> list[dict
                 or not ce.get("parent") and len(same_ids) == 1 and (cm.group(1), cm.group(2)) == (m.group(1), m.group(2))]
         serial = None if "&" in inst else inst
         own = [x for x in strings or [] if (x["vid"], x["pid"]) == (vid, pid)
-               and (serial and x.get("serial") and _same_serial(x["serial"], serial) or not serial and len(same_ids) == 1)]
+               and (serial and x.get("serial") and same_serial(x["serial"], serial) or not serial and len(same_ids) == 1)]
         desc = own[0] if len(own) == 1 else {}
         bus = e.get("bus") or next((ce.get("bus") for _, ce in kids if ce.get("bus")), None)
         # no working driver: Windows says so (a status other than OK), or there is none at all: an interface listed as OK,
@@ -536,7 +574,8 @@ class _FixtureStream:
 
 # What LiveIo's lists give (pyserial's ports; the USB lists of macOS, Linux and Windows): a fixture says nothing else,
 # or a test passes on a clue no OS gives (audit 2026-11-07, T12: a "channel" field made a test right that macOS is not)
-SERIAL_FIELDS = frozenset({"device", "vid", "pid", "serial_number", "location", "interface", "description"})
+SERIAL_FIELDS = frozenset({"device", "vid", "pid", "serial_number", "location", "interface", "description",
+                           "usb_interface"})  # the last on Windows, from its device tree (WINDOWS_PORT_PARENTS)
 USB_FIELDS = frozenset({"name", "vendor", "vid", "pid", "serial", "location", "device_class", "usb_node", "usb_writable",
                         "drivers", "no_driver"})
 

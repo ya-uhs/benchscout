@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Callable
 
 from . import knowledge as K
-from .io import VANISHED_MARK, Io
+from .io import VANISHED_MARK, Io, same_serial
 from .model import Bench, Confidence, Device, Evidence, Port, Target, device_id, hex4
 from .policy import Effect, Impact, classify
 
@@ -110,7 +110,9 @@ def build(io: Io) -> Bench:
     usb_serials = {(d.vid, d.pid, d.serial) for d in b.devices.values()}
     for s in ports:
         s = _with_channel(s, usb_serials)
-        same = [d for d in b.devices.values() if (d.vid, d.pid) == (s["vid"], s["pid"]) and d.serial == s.get("serial_number")]
+        # the serial as the device gives it, or as Windows writes it (pyserial reports that one for a port)
+        same = [d for d in b.devices.values() if (d.vid, d.pid) == (s["vid"], s["pid"])
+                and (d.serial == s.get("serial_number") or same_serial(d.serial, s.get("serial_number")))]
         if len(same) > 1:
             here = [d for d in same if place(d.location) and place(d.location) == place(s.get("location"))]
             unplaced |= {d.id for d in same}
@@ -203,7 +205,9 @@ def _with_channel(s: dict, usb_serials: set) -> dict:
     """Which channel of a multi-channel USB-UART (FT2232H...) this port is, from what each OS
     tells us, instead of the order the ports happen to be listed in:
 
-    - Windows: the FTDI driver appends the channel letter to the serial (210319A8C7D1B)
+    - Windows: the USB interface its port hangs off, from Windows' device tree (`usb_interface`; real VM, 2026-11-08:
+               FTDI's driver gave a Tang Nano's ports no channel letter); or a channel letter FTDI's driver appends to
+               the serial (210319A8C7D1B; not recorded yet)
     - Linux:   the USB interface number is in the location (1-1:1.1)
     - macOS:   the port name ends with the channel digit (cu.usbserial-210319A8C7D11)
     """
@@ -212,7 +216,9 @@ def _with_channel(s: dict, usb_serials: set) -> dict:
     sn = s.get("serial_number") or ""
     base = os.path.basename(s["device"])
     ch = None
-    if (m := _LINUX_IFACE.search(s.get("location") or "")):
+    if s.get("usb_interface") is not None:
+        ch = s["usb_interface"]
+    elif (m := _LINUX_IFACE.search(s.get("location") or "")):
         ch = int(m.group(1))
     elif re.fullmatch(r".+[A-D]", sn) and ((s["vid"], s["pid"], sn[:-1]) in usb_serials or base.upper().startswith("COM")):
         ch, sn = "ABCD".index(sn[-1]), sn[:-1]
