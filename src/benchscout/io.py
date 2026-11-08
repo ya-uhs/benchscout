@@ -435,7 +435,10 @@ def parse_windows_pnp(text: str, strings: list[dict] | None = None) -> list[dict
                and (serial and x.get("serial") and _same_serial(x["serial"], serial) or not serial and len(same_ids) == 1)]
         desc = own[0] if len(own) == 1 else {}
         bus = e.get("bus") or next((ce.get("bus") for _, ce in kids if ce.get("bus")), None)
-        bad = lambda x: (x.get("status") or "OK").upper() != "OK"  # noqa: E731
+        # no working driver: Windows says so (a status other than OK), or there is none at all: an interface listed as OK,
+        # no problem, no service (real VM, 2026-11-08, the Tang Nano's JTAG side with no FTDI driver for ARM64). A listing
+        # without the service field (older recordings) says nothing either way
+        bad = lambda x: (x.get("status") or "OK").upper() != "OK" or ("service" in x and not x["service"])  # noqa: E731
         no_driver = sorted(int(cm.group(3), 16) for cm, ce in kids if bad(ce)) or ([0] if not kids and bad(e) else [])
         # which driver each interface has (its service: usbser, FTDIBUS, WinUSB ...), for tools that need a certain kind
         drivers = {int(cm.group(3), 16): ce["service"] for cm, ce in kids if ce.get("service") and not bad(ce)} \

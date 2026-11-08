@@ -219,6 +219,22 @@ def test_a_libusb_tool_behind_a_serial_driver_is_named_with_the_interface_that_n
     assert dev2.access == []
 
 
+WIN_TANG_NO_DRIVER = json.loads((Path(__file__).parent.parent / "fixtures" / "real" / "windows_arm64_tangnano_nodriver_2026-11-08.json")
+                                .read_text(encoding="utf-8"))
+
+
+def test_an_interface_windows_lists_as_ok_without_a_driver_has_none(tmp_path):
+    """Windows VM, 2026-11-08 (audit 2026-11-07): with no FTDI driver for ARM64, Windows listed the Tang Nano's JTAG
+    interface as OK, no problem, no service, and only the other one as failed; benchscout said only interface 1 lacked a
+    driver. (Through the hub this FT2232 answered only its serial there, so no board wiring applies: an unknown device.)"""
+    usb = [dict(d, vid=f"0x{d['vid']:04x}", pid=f"0x{d['pid']:04x}")
+           for d in parse_windows_pnp(json.dumps(WIN_TANG_NO_DRIVER["pnp"]), WIN_TANG_NO_DRIVER["strings"]) if d["vid"] == 0x0403]
+    assert [(u["vendor"], u["name"], u["no_driver"]) for u in usb] == [(None, "JTAG Debugger", [0, 1])]
+    b = _bench(tmp_path, usb, WIN_TANG_NO_DRIVER["serial"])
+    dev = next(d for d in b.devices.values() if d.vid == 0x0403)
+    assert dev.access == [{"need": "driver", "interfaces": [0, 1]}], "both interfaces: nothing can open either"
+
+
 def test_nothing_is_said_about_drivers_off_windows(tmp_path):
     b = recon.build(FixtureIo(FIXTURE))
     assert all(not d.drivers and not d.access for d in b.devices.values())
