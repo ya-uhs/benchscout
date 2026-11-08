@@ -446,3 +446,25 @@ def test_orphan_child_cannot_act_after_parent_completes(bench):
     assert result["status"] == "completed"
     time.sleep(1.2)
     assert not marker.exists()
+
+
+def test_the_same_program_may_be_allowed_for_the_session_and_a_changed_one_asks_again(bench):
+    """design.md section 12, 2026-11-08: re-running the very program the human saw (argv and the hashes of its files)
+    needs no new card for the session; a changed file, another resource, or a deselected device asks again. "Allow
+    all" never runs a program."""
+    b, r, _ = bench
+    args = plan(b, r, "print('first')")
+    asked = b.run_program(**args)
+    assert b.approvals.get(asked["approval_id"]).again == "program"
+    b.decide(asked["approval_id"], True, "session")
+    assert finish(b, b.run_program(**args, approval_id=asked["approval_id"])["job"])["status"] == "completed"
+    again = b.run_program(**args)
+    assert "job" in again, again
+    assert finish(b, again["job"])["status"] == "completed"
+    changed = plan(b, r, "print('changed')")
+    assert b.run_program(**changed)["status"] == "approval_required"
+    b.set_allow_all(True)
+    assert b.run_program(**changed)["status"] == "approval_required"
+    b.select([])
+    b.select([r["device"]])
+    assert b.run_program(**plan(b, r, "print('first')"))["status"] == "approval_required", "the grant left with the device"

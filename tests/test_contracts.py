@@ -750,7 +750,9 @@ def test_the_relay_does_not_put_an_untrusted_folders_words_in_the_tool_descripti
     seen = {}
     monkeypatch.setattr(mcp_relay.MCPServer, "run", lambda self: seen.update(
         tools=" ".join(t.description or "" for t in anyio.run(self.list_tools))))
-    monkeypatch.setenv("BENCHSCOUT_ADDRESS", str(tmp_path / "no-core.sock"))
+    # an address where no core listens, in this OS's form (a named pipe on Windows)
+    monkeypatch.setenv("BENCHSCOUT_ADDRESS", r"\\.\pipe\benchscout-no-core-test" if sys.platform == "win32"
+                       else str(tmp_path / "no-core.sock"))
     mcp_relay.main(str(tmp_path))
     assert "IGNORE-PREVIOUS-INSTRUCTIONS" not in seen["tools"]
 
@@ -769,8 +771,11 @@ def test_the_approval_binds_the_program_that_will_run(tmp_path, monkeypatch):
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    exe = bin_dir / "labtool"
-    exe.write_text(f"#!{sys.executable}\nprint('one')\n")
+    # a program PATH finds on this OS: a script with its interpreter line, or a .cmd on Windows (PATHEXT)
+    win = sys.platform == "win32"
+    exe = bin_dir / ("labtool.cmd" if win else "labtool")
+    program = (lambda word: f"@echo {word}\r\n") if win else (lambda word: f"#!{sys.executable}\nprint('{word}')\n")
+    exe.write_text(program("one"))
     exe.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     ws = tmp_path / "ws"
@@ -786,7 +791,7 @@ def test_the_approval_binds_the_program_that_will_run(tmp_path, monkeypatch):
     br.select([br.bench.ports[br.resolve_port(VCP)].device_id])
     asked = br.request("lab.run", VCP, {})
     assert asked["status"] == "approval_required"
-    exe.write_text(f"#!{sys.executable}\nprint('two')\n")  # replaced while the human decides
+    exe.write_text(program("two"))  # replaced while the human decides
     br.decide(asked["approval_id"], True)
     assert br.request("lab.run", VCP, {}, approval_id=asked["approval_id"])["status"] == "approval_mismatch"
     br.end_session()
@@ -880,3 +885,28 @@ def test_memory_applies_only_to_the_ports_and_targets_of_the_unit_it_is_about(tm
     assert br.bench.ports[esp].may_reset_on_open, "another unit's 'safe to open' loosened this one"
     assert "erase" not in br.bench.ports[esp].commands
     assert br.bench.targets[tid].name != "STM32F4"
+
+
+def test_on_a_model_whose_units_share_a_serial_what_asks_less_is_kept_for_the_model_but_a_name_is_not(tmp_path):
+    """design.md section 12, 2026-11-08 (a Tang Nano asked again every session): plugged in alone, a unit of a model
+    whose units all carry the same serial gets "always on this model"; a name remembered for it stays a maybe (the
+    serial is shared by different boards of a maker, and names are the unit's)."""
+    from benchscout.memory import Entry
+
+    kdir = tmp_path / "ws" / ".benchscout" / "knowledge"
+    kdir.mkdir(parents=True)
+    (kdir / "shared.toml").write_text('shared_serials = ["0039003A3133510637363934"]\n')
+    br = bench(tmp_path, select=[VCP])
+    port = br.resolve_port(VCP)
+    asked = br.request("serial.send", port, {"data": "status", "seconds": 0.05})
+    a = br.approvals.get(asked["approval_id"])
+    assert a.always and a.model, "kept for the model, and the card says so"
+    br.decide(asked["approval_id"], True, "always")
+    assert br.impact("serial.send", port, {"data": "status"}).effect == Effect.SAFE
+    target = br.bench.targets_via(port)[0]
+    br.memory.add(br._key(br.bench.devices[br.bench.ports[port].device_id]),
+                  Entry(kind="identity", text="STM32F4", source="agent", evidence="x", target=target.id))
+    br.scan()
+    t = br.bench.targets[target.id]
+    assert t.name != "STM32F4" and any("may be another one" in f for f in t.facts)
+    br.end_session()

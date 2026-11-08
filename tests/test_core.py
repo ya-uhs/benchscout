@@ -132,12 +132,20 @@ def test_session_grant_covers_repeated_disruptive_calls(io, tmp_path):
 PSU = "visa:TCPIP0::192.168.1.50::INSTR"
 
 
-def test_dangerous_cannot_be_granted_beyond_one_use(io, tmp_path):
+def test_dangerous_goes_beyond_one_use_only_for_the_session_and_only_where_its_card_offers_it(io, tmp_path):
+    """design.md section 12, 2026-11-08: a DANGEROUS call is allowed once, or for the session where its card offers that
+    (here an output setting, up to what the card showed). Never for minutes or as "allow all", and never for what the
+    standard says resets or recalls the whole instrument."""
     br = broker_with(io, tmp_path, PSU)
-    res = br.request("scpi.write", PSU, {"command": "OUTP CH1,ON"})
-    assert res["impact"]["effect"] == "dangerous"
-    with pytest.raises(ValueError, match="only DISRUPTIVE"):
-        br.decide(res["approval_id"], True, "session")
+    reset = br.request("scpi.write", PSU, {"command": "*RST"})
+    assert reset["impact"]["effect"] == "dangerous" and not br.approvals.get(reset["approval_id"]).again
+    with pytest.raises(ValueError, match="can be allowed once"):
+        br.decide(reset["approval_id"], True, "session")
+    out = br.request("scpi.write", PSU, {"command": "OUTP CH1,ON"})
+    assert out["impact"]["effect"] == "dangerous" and br.approvals.get(out["approval_id"]).again == "bounded"
+    for scope in ("all", 5):
+        with pytest.raises(ValueError, match="can be allowed once"):
+            br.decide(out["approval_id"], True, scope)
 
 
 def test_listen_args_are_typed_and_checked(io, tmp_path):

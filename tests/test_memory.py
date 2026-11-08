@@ -88,13 +88,21 @@ def test_rejected_or_shared_serial_safety_memory_does_nothing(tmp_path, monkeypa
     res = br.remember(ESP, "safety", "x", data={"listen_safe": True})
     br.decide_memory(br._key(dev), res["id"], False)
     assert session(tmp_path, f).bench.ports[br.resolve_port(ESP)].may_reset_on_open is True
-    # another unit of the same model could answer to a shared serial: never loosen safety on it
+    # every unit of the model carries this serial (the data says so): the memory is the model's, in force while one of
+    # them is plugged in alone (design.md section 12, 2026-11-08); with a second, another unit could answer to it
     res = br.remember(ESP, "safety", "y", data={"listen_safe": True})
     br.decide_memory(br._key(dev), res["id"], True)
     kdir = tmp_path / "ws" / ".benchscout" / "knowledge"
     kdir.mkdir(parents=True, exist_ok=True)
     (kdir / "shared.toml").write_text(f'shared_serials = ["{dev.serial}"]\n')
-    assert session(tmp_path, f).bench.ports[br.resolve_port(ESP)].may_reset_on_open is True
+    assert session(tmp_path, f).bench.ports[br.resolve_port(ESP)].may_reset_on_open is False, "alone: the model's memory"
+    data = json.loads(f.read_text())
+    data["usb"].append(dict(next(u for u in data["usb"] if u["vid"] == "0x303a"), location="0x01130000"))
+    data["serial"].append(dict(next(p for p in data["serial"] if p["vid"] == "0x303a"), device="/dev/cu.usbmodem1201"))
+    two = tmp_path / "two.json"
+    two.write_text(json.dumps(data))
+    both = session(tmp_path, two).bench
+    assert all(p.may_reset_on_open for p in both.ports.values() if p.path in (ESP, "/dev/cu.usbmodem1201")), "two: it asks"
 
 
 def test_a_port_remembered_as_safe_to_open_that_resets_when_opened_asks_again(tmp_path):

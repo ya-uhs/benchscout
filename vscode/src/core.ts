@@ -41,6 +41,10 @@ export interface Approval {
   by?: "agent" | "benchscout"; // benchscout asks itself, e.g. to watch a selected device
   fetch?: string; // a tool downloaded first (official release, pinned) if this is allowed
   always?: boolean; // the core can keep "always on this device": the unit's memory is its own (its serial singles it out)
+  // a DANGEROUS call the human may allow for the session, and what that covers (design.md section 12, 2026-11-08):
+  // "program" this content, "tool" this tool on this device with any file, "bounded" these commands up to these values
+  again?: "" | "program" | "tool" | "bounded";
+  model?: boolean; // "always" would be kept for the model (every unit carries the same serial; this one is alone)
   subject?: string; // the device's name
   purpose?: string;
 }
@@ -65,7 +69,8 @@ export interface DevicesChanged { added: PluggedDevice[]; removed: PluggedDevice
 export interface MemoryEntry {
   id: string; kind: string; text: string; source: string; evidence: string; target: string; time: string; status: string; data: Record<string, unknown>;
 }
-export interface MemoryEvent { key: string; device?: string; device_name?: string; entry: MemoryEntry }
+// model_wide: what asks less applies to the model (every unit carries the same serial; this one is plugged in alone)
+export interface MemoryEvent { key: string; device?: string; device_name?: string; entry: MemoryEntry; model_wide?: boolean }
 /** What is remembered about one device on the bench, and the file it lives in (the inbox's memory list). */
 export interface MemoryGroup { device: string; name: string; key: string; file: string; entries: MemoryEntry[] }
 

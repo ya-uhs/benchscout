@@ -253,10 +253,15 @@ export class Harness extends EventEmitter {
     // "always on this device": the commands the human saw are remembered as theirs, whatever the protocol, where the
     // core says it can keep that (a unit its serial number singles out; else the next call would ask again)
     const always = command && !!a.always;
-    if (always) options.push({ id: "always", label: this.s.allowAlwaysHere });
+    if (always) options.push({ id: "always", label: a.model ? this.s.allowAlwaysModel : this.s.allowAlwaysHere });
     if (a.effect === "disruptive" && !this.core.allowAll) options.push({ id: "all", label: this.s.allowAllSession });
+    // a DANGEROUS call the core lets be allowed for the session, within what the card says it covers
+    const again = a.effect === "dangerous" && a.again ? this.s.again[a.again] : undefined;
+    if (again) options.push({ id: "session", label: again.label });
     options.push({ id: "deny", label: this.s.deny });
-    const covers = a.effect !== "disruptive" ? "" : `\n${always ? this.s.commandCovers : command ? this.s.commandCoversSession : this.s.sessionCovers}`;
+    const covers = again ? `\n${again.covers}`
+      : a.effect !== "disruptive" ? "" : `\n${always ? this.s.commandCovers : command ? this.s.commandCoversSession : this.s.sessionCovers}`
+        + (always && a.model ? `\n${this.s.modelWide}` : "");
     this.add({
       // what the session option lets run later, said before the human picks it
       kind: "confirm", title: this.s.actions[a.action] ?? a.action,
@@ -363,7 +368,7 @@ export class Harness extends EventEmitter {
     const body = memoryText(e, this.s) + cmd + (e.evidence ? `\n"${e.evidence}"` : "");
     const detail = `${this.s.memoryKinds[e.kind] ?? e.kind} · ${this.s.memorySources[e.source] ?? e.source} · ${e.time.slice(0, 16).replace("T", " ")}`;
     if (e.status === "pending") {
-      this.add({ kind: "memory", title: this.s.learnedSafety(name), body, detail, freeText: false,
+      this.add({ kind: "memory", title: this.s.learnedSafety(name), body: body + (m.model_wide ? `\n${this.s.modelWide}` : ""), detail, freeText: false,
         options: [{ id: "accept", label: this.s.accept, primary: true }, { id: "reject", label: this.s.reject }] },
         (a) => this.core.memoryDecide(m.key, e.id, a.option === "accept"), `memory:${e.id}`);
       return;

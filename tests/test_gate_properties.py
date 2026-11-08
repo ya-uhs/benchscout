@@ -1,7 +1,9 @@
 """The safety gate under random sequences of calls (hypothesis): whatever the agent calls, in any order, with any
 approval id it got hold of, nothing that is not SAFE runs unless the human allowed exactly that.
 
-  - a DANGEROUS call runs only with a granted approval for the same action, port and arguments, once
+  - a DANGEROUS call runs only with a granted approval for the same action, port and arguments, once; or, for an output
+    setting whose card offered it, with a session grant for a line whose commands it repeats with values no further
+    from 0 and the same words (design.md section 12, 2026-11-08)
   - a DISRUPTIVE call runs with such an approval, or a session grant the human gave for that action on that port
     (for SCPI: for a line whose commands include every command of this call), or what the human allowed always
   - an approval is used at most once, and never for a different call
@@ -32,6 +34,34 @@ FIXTURE = ROOT / "fixtures" / "bench_example.json"
 CH340 = "serial:usbserial-10"  # opening may reset it: listening is DISRUPTIVE
 PSU = "visa:TCPIP0::192.168.1.50::INSTR"
 
+# the calls below whose card offers "for the session, up to these values": SCPI output settings (the standard's
+# OUTPut/SOURce settings; the test's own list, not the implementation's)
+OUTPUT_SETTINGS = {"OUTP CH1,ON", "OUTP CH1,OFF", "VOLT 5", "VOLT 3.3", "VOLT 9", "VOLT -1", "VOLT MAX"}
+
+
+def _units(text: str) -> list[tuple[str, list[str]]]:
+    out = []
+    for u in (u.strip() for u in text.split(";")):
+        if u:
+            head, _, rest = u.partition(" ")
+            out.append((head.upper(), [v.strip() for v in rest.split(",") if v.strip()]))
+    return out
+
+
+def _no_further(value: str, approved: str) -> bool:
+    try:
+        v, a = float(value), float(approved)
+    except ValueError:
+        return value.upper() == approved.upper()
+    return 0 <= v <= a or a <= v <= 0
+
+
+def _within(call: str, approved: str) -> bool:
+    """Every command of `call` is one of `approved`'s, with values no further from 0 and the same words."""
+    return all(any(h == head and len(v) == len(vals) and all(map(_no_further, vals, v)) for h, v in _units(approved))
+               for head, vals in _units(call))
+
+
 CALLS = [
     ("serial.listen", CH340, {"seconds": 0.05}),
     ("serial.send", CH340, {"data": "status", "seconds": 0.05}),
@@ -41,6 +71,12 @@ CALLS = [
     ("scpi.query", PSU, {"command": "READ?"}),
     ("scpi.write", PSU, {"command": "OUTP CH1,ON"}),
     ("scpi.write", PSU, {"command": "VOLT 5"}),
+    ("scpi.write", PSU, {"command": "VOLT 3.3"}),
+    ("scpi.write", PSU, {"command": "VOLT 9"}),
+    ("scpi.write", PSU, {"command": "VOLT -1"}),
+    ("scpi.write", PSU, {"command": "VOLT MAX"}),
+    ("scpi.write", PSU, {"command": "OUTP CH1,OFF"}),
+    ("scpi.write", PSU, {"command": "VOLT 3;*RST"}),
     ("scpi.write", PSU, {"command": "*CLS"}),
     ("scpi.write", PSU, {"command": "DISP:BRIG 5"}),
     ("scpi.write", PSU, {"command": "DISP:BRIG 7"}),
@@ -68,6 +104,8 @@ class Gate(RuleBasedStateMachine):
         self.used: set[str] = set()
         # (action, port, SCPI headers or None) the human allowed for the session
         self.session: set[tuple[str, str, frozenset | None]] = set()
+        # (action, port, the line on the card) of output settings the human allowed for the session, up to its values
+        self.up_to: set[tuple[str, str, str]] = set()
         self.allow_all = False  # the human allowed every DISRUPTIVE call
 
     def teardown(self):
@@ -102,9 +140,10 @@ class Gate(RuleBasedStateMachine):
             self.used.add(approval_id)
         else:
             subjects = self._impact(action, port, args).subjects
+            up_to = any(a == action and p == port and _within(args.get("command", ""), line) for a, p, line in self.up_to)
             assert effect == Effect.DISRUPTIVE and self.allow_all or effect == Effect.DISRUPTIVE and any(
                 a == action and p == port and (s is None or subjects is not None and set(subjects) <= s)
-                for a, p, s in self.session), f"{action} {args} ({effect.name}) ran without the human's OK for it"
+                for a, p, s in self.session) or up_to, f"{action} {args} ({effect.name}) ran without the human's OK for it"
 
     @rule(call=st.sampled_from(CALLS))
     def agent_calls(self, call):
@@ -150,19 +189,25 @@ class Gate(RuleBasedStateMachine):
         if not waiting:
             return
         aid = data.draw(st.sampled_from(waiting))
-        action, port, _, effect = self.issued[aid]
+        action, port, key, effect = self.issued[aid]
+        line = json.loads(key).get("command", "")
+        offered = effect == Effect.DANGEROUS and line in OUTPUT_SETTINGS
         try:
             self.br.decide(aid, grant, scope)
         except ValueError:
             assert grant and scope != "once", "allowing once is always possible"
-            assert effect == Effect.DANGEROUS or scope == "always" and not action.startswith("scpi."), \
-                f"{action} ({effect.name}) could not be allowed {scope}"
+            assert effect == Effect.DANGEROUS and not (scope == "session" and offered) \
+                or scope == "always" and not action.startswith("scpi."), f"{action} ({effect.name}) could not be allowed {scope}"
             return
+        assert not (grant and effect == Effect.DANGEROUS and scope != "once" and not (scope == "session" and offered)), \
+            f"{action} {line} ({effect.name}) was allowed {scope}"
         if grant:
             self.granted.add(aid)
             if scope == "all":
                 self._allow_all_on()
-            if scope == "session":
+            if scope == "session" and effect == Effect.DANGEROUS:
+                self.up_to.add((action, port, line))
+            elif scope == "session":
                 subjects = self.br.approvals.get(aid).impact.get("subjects")
                 self.session.add((action, port, frozenset(subjects) if subjects is not None else None))
 

@@ -139,21 +139,25 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
 - Runtime contracts (design.md §3, review 7): every open or reopen of a device port is decided by the broker on the current
   state (selected, same unit, safe to open now); an approval binds to the resolved content (bytes, argv, definition); an
   operation's effect is the strongest of its steps (open, settings, content, tool); "loosening" is judged against the
-  strongest rule in force, and loosening memory applies only to a unit with a unique serial; indistinguishable units are
+  strongest rule in force, and loosening memory applies only to a unit with a unique serial, or to the only unit plugged
+  in of a model whose units all carry one serial (`shared_serials`; names stay per unit); indistinguishable units are
   never matched by guess; recon applies memory before talking to a device.
 - A list of risky patterns may only add caution on top of a default that is acceptable alone: lists miss
   things. SCPI: only the standard's status/identity queries are SAFE; anything else asks, and a standing grant
   (for the session, or "always on this instrument", which the human's channel writes to memory) covers that
-  command header only, within the value limits in force; an output setting asks every time. One message per call, printable ASCII
+  command header only, within the value limits in force; an output setting asks, and may be allowed for the session up to
+  the value on its card (0 to that value; the same words). One message per call, printable ASCII
   (`tests/test_scpi.py`, `tests/test_gate_properties.py`, docs/notes.md review U9, U12).
 - Every proposal carries a `why:` that is the policy's actual reason
   (`test_proposal_reason_matches_policy`).
 - VISA `ASRL` resources are never sent `*IDN?`.
 - Approvals come only from the human control channel, never from the agent's channel, and live
   in the core's memory (design.md §3; docs/notes.md review R3). DANGEROUS grants are bound to
-  (action, port, arg) and single use; DISRUPTIVE grants may cover (action, port) for the session
-  or a time limit (R8), for SCPI only the command headers the human saw. The human may also allow every
-  DISRUPTIVE call for the session ("allow all", control channel only); DANGEROUS still asks each time.
+  (action, port, arg) and single use, or for the session only where the card offers it (design.md §12, 2026-11-08): an
+  agent program while its content is unchanged, a write the data marks `allow_session` with the same tool on the same
+  device (any file), an output setting up to the values on the card. DISRUPTIVE grants may cover (action, port) for the
+  session or a time limit (R8), for SCPI only the command headers the human saw. The human may also allow every
+  DISRUPTIVE call for the session ("allow all", control channel only); "allow all" never covers DANGEROUS.
   `test_core.py` and `tests/test_gate_properties.py` cover this.
 - Recon (`bench_scan`) runs SAFE probes only.
 - An external tool is never installed up front: an action fetches it on first use from a pinned

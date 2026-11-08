@@ -63,6 +63,10 @@ class Protocol:
         """How a remembered command is looked up ("" if it is not one command)."""
         raise NotImplementedError
 
+    # judgements (codes) of this protocol's commands that the human may allow for the session up to the values they
+    # approved (design.md section 12, 2026-11-08: an output setting, VOLT 3.3 -> up to 3.3 V); others are allowed once
+    bounded_codes: tuple[str, ...] = ()
+
     # the SAFE call recon makes to hear what a device is (an action and its arguments), and making it
     probe_action: tuple[str, dict] | None = None
     # the action that holds a port open and reads it continuously (None: this protocol's ports are not watched)
@@ -91,19 +95,48 @@ def _number(text: str) -> float | None:
 
 
 def outside(limits: list, args: list[str]) -> str:
-    """Why these argument values are outside the limits ("" if within). `limits[i]` is None (any value) or
-    {"min": x, "max": y} (either may be left out) for the i-th value after the command."""
+    """Why these argument values are outside the limits ("" if within). `limits[i]` is None (any value),
+    {"min": x, "max": y} (either may be left out), or {"is": [words]} (one of those words, in any case) for the i-th
+    value after the command."""
     for i, lim in enumerate(limits or []):
         if lim is None:
             continue
         if i >= len(args):
             return f"value {i + 1} is missing"
+        if "is" in lim:
+            if args[i].strip().upper() not in {str(w).upper() for w in lim["is"]}:
+                return f"value {i + 1} ({args[i]!r}) is not one of {', '.join(lim['is'])}"
+            continue
         v = _number(args[i])
         if v is None:
             return f"value {i + 1} ({args[i]!r}) is not a plain number"
         if "min" in lim and v < lim["min"] or "max" in lim and v > lim["max"]:
             return f"value {i + 1} = {args[i]} is outside {lim.get('min', '')}..{lim.get('max', '')}"
     return ""
+
+
+def values_of(text: str, proto: Protocol) -> dict[str, list[list[str]]]:
+    """The values after each name the commands in `text` may be known by, each time the command comes."""
+    out: dict[str, list[list[str]]] = {}
+    for names, values in proto.commands(text):
+        for n in names:
+            out.setdefault(n, []).append(values(n))
+    return out
+
+
+def up_to(seen: list[list[str]]) -> list[dict]:
+    """Limits that let through what the human saw and less: for each value, 0 up to the number (or down to it, for a
+    negative one; the widest if the command came more than once), or the words it saw where they are not numbers."""
+    out: list[dict] = []
+    for i in range(max((len(v) for v in seen), default=0)):
+        nums = [_number(v[i]) for v in seen if i < len(v)]
+        words = {v[i].strip().upper() for v in seen if i < len(v)}
+        numbers = [n for n in nums if n is not None]
+        if len(numbers) == len(nums):
+            out.append({"min": min([0.0, *numbers]), "max": max([0.0, *numbers])})
+        else:
+            out.append({"is": sorted(words)})
+    return out
 
 
 def values_to_take(text: str, proto: Protocol) -> dict[str, int]:

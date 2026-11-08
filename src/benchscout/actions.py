@@ -44,9 +44,9 @@ BUILTIN: dict[str, Action] = {a.name: a for a in (
                   "\"^(OK|ERROR)$\"): reading stops there instead of after seconds; read it from the device's output")),
            protocol="lines", text="data", opens=True),
     # the command line decides the effect (protocols/scpi.py): the standard's status and identity queries that change
-    # nothing are SAFE (not the error queue or the event register: reading them clears them), an output setting asks
-    # every time, anything else asks and the human may allow that command for the session or always; these base effects
-    # apply only with no command at all
+    # nothing are SAFE (not the error queue or the event register: reading them clears them), an output setting asks (the
+    # human may allow it for the session up to the value on the card), anything else asks and the human may allow that
+    # command for the session or always; these base effects apply only with no command at all
     Action("scpi.query", Effect.DISRUPTIVE, False, "a SCPI query; what it does depends on the command and the instrument",
            "send a SCPI query and read the answer (one message, printable ASCII; *IDN?, *STB?, SYST:ERR:COUN? and the "
            "other status queries that change nothing run without asking; SYST:ERR? and *ESR? ask, since reading them "
@@ -55,8 +55,9 @@ BUILTIN: dict[str, Action] = {a.name: a for a in (
            protocol="scpi", text="command"),
     Action("scpi.write", Effect.DANGEROUS, False, "a SCPI command; what it does depends on the instrument",
            "send a SCPI command (one message, printable ASCII); it asks the human, who may allow that command for the "
-           "session or always on this instrument; one that sets an output (voltage, current, output on) asks every "
-           "time", _COMMAND, protocol="scpi", text="command"),
+           "session or always on this instrument; one that sets an output (voltage, current, output on) asks, and the "
+           "human may allow it for the session up to the value asked (ask for the largest value of a sweep first)",
+           _COMMAND, protocol="scpi", text="command"),
 )}
 
 

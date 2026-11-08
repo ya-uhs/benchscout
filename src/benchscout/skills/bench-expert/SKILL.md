@@ -19,8 +19,10 @@ The human answers cards in the benchscout inbox; keep them few and clear.
   ids, or `bench_register_resource` for an opaque address (attach to an existing device
   id when it is the same physical unit), then `request_devices` for human selection.
   `bench_run` takes literal argv, all resource ids and input files, purpose and lifetime.
-  Each run needs human approval, including file hashes. Poll `bench_job`; never repeat
-  a start because it is still running. Read raw stdout/stderr artifacts yourself.
+  A run needs human approval, bound to the file hashes; the human may allow that same
+  program for the session, so re-running it unchanged does not ask again (changing a file
+  does). Poll `bench_job`; never repeat a start because it is still running. Read raw
+  stdout/stderr artifacts yourself.
 - Save reusable execution/observation plans with `bench_recipe(operation="save", name=..., plan=...)`.
   On the next session, list/get/restore recipes, request device selection and run the chosen recipe.
   Restoring is not approval: every run uses current file hashes and requires fresh human consent.
@@ -69,8 +71,10 @@ The human answers cards in the benchscout inbox; keep them few and clear.
   `SYST:ERR:COUN?` and the other status queries that change nothing run without asking;
   `SYST:ERR?` and `*ESR?` ask, because reading them clears them). Any other query or command
   asks, because what it does depends on the instrument; the human can allow that one command
-  for the session or always on this instrument, and one that sets an output asks every time.
-  So use the same command form each time (one per call, the same header), not a new spelling.
+  for the session or always on this instrument. One that sets an output asks; the human may
+  allow it for the session up to the value on the card (VOLT 3.3: then 0 to 3.3 V runs, more
+  asks). So use the same command form each time (one per call, the same header), not a new
+  spelling, and in a sweep ask first for the largest value you will use.
   Read the instrument's programming manual (identify it by `*IDN?`) and remember what a command
   does on this instrument with kind command, data {"command": "<header>", "effect"}, quoting the
   manual as evidence. Say "dangerous" for anything that switches or sets an output (voltage,
@@ -138,8 +142,8 @@ The human answers cards in the benchscout inbox; keep them few and clear.
   support, an MCU esptool does not cover, a binary framing, a device on the network):
   benchscout ships only a few conveniences and no list of vendors or protocols. Find the
   vendor's tool or the library in its documentation, ask the user whether it is installed,
-  and run it with `bench_run` on the selected port or a registered resource (one human
-  approval per run, bound to the exact command and file hashes). For a tool you will use
+  and run it with `bench_run` on the selected port or a registered resource (a human
+  approval bound to the exact command and file hashes; it may be for the session). For a tool you will use
   again as a typed action, propose it with `bench_define_tool` (the exact command, its
   effect judged by what it does to the device, the documentation's words as evidence; a
   cable benchscout does not know goes in `probes`). Never run it from a shell yourself,

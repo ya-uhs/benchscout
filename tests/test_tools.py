@@ -28,6 +28,26 @@ args.image = {{ type = "file", required = true, ext = [".bin"] }}
 args.images = {{ type = "flash_map", default = "0x0:boot.bin" }}
 
 [[tool]]
+name = "lab.write"
+doc = "our lab's writer"
+effect = "dangerous"
+reason = "rewrites the board's flash"
+port_kinds = ["serial"]
+argv = ['{python}', '{script}', "{{port.path}}", "{{image}}"]
+releases_device = true
+allow_session = true
+args.image = {{ type = "file", required = true, ext = [".bin"] }}
+
+[[tool]]
+name = "lab.fuse"
+doc = "burns our board's eFuses"
+effect = "dangerous"
+reason = "cannot be undone"
+port_kinds = ["serial"]
+argv = ['{python}', '{script}', "{{port.path}}"]
+releases_device = true
+
+[[tool]]
 name = "lab.old"
 argv = ['{python}', "-c", "print('x')"]
 version = {{ argv = ['{python}', "-c", "print('flasher v4.5.1')"], min = "5.0", why = "4.x hangs on our board" }}
@@ -130,4 +150,28 @@ def test_a_long_run_does_not_hold_up_the_human_and_its_result_can_be_collected(w
     done = br.request("lab.slow", VCP, {}, job=running["job"])
     assert done["status"] == "done" and "slow done" in done["result"]["preview"] and done["approval"]["id"] == asked["approval_id"]
     assert br.request("lab.slow", VCP, {}, job=running["job"])["status"] == "unknown_job", "collected once"
+    br.end_session()
+
+
+def test_a_write_the_data_allows_for_the_session_runs_again_with_any_image_until_the_tool_changes(ws, tmp_path):
+    """design.md section 12, 2026-11-08: build, write, check, again: "for the session" covers this tool on this device
+    with any file (each build is a new image), not another device, not a changed tool, not "allow all"; a tool the data
+    does not say it for (an eFuse burner) is allowed once only."""
+    br = broker(ws)
+    port = br.resolve_port(VCP)
+    res = br.request("lab.write", port, {"image": "app.bin"}, wait=0)
+    assert br.approvals.get(res["approval_id"]).again == "tool"
+    br.decide(res["approval_id"], True, "session")
+    assert br.request("lab.write", port, {"image": "app.bin"}, approval_id=res["approval_id"])["status"] == "done"
+    (ws / "app.bin").write_bytes(b"\1")  # the next build
+    for image in ("app.bin", "boot.bin"):
+        assert br.request("lab.write", port, {"image": image}, wait=0)["status"] == "done", image
+    (tmp_path / "echo_args.py").write_text("print('another tool now')\n")
+    assert br.request("lab.write", port, {"image": "app.bin"}, wait=0)["status"] == "approval_required", "a changed tool asks"
+    fuse = br.request("lab.fuse", port, {}, wait=0)
+    assert not br.approvals.get(fuse["approval_id"]).again
+    with pytest.raises(ValueError):
+        br.decide(fuse["approval_id"], True, "session")
+    br.set_allow_all(True)
+    assert br.request("lab.fuse", port, {}, wait=0)["status"] == "approval_required", "allow all is not for writes"
     br.end_session()

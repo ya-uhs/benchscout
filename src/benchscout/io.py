@@ -12,6 +12,7 @@ import os
 import platform
 import re
 import subprocess
+import threading
 import sys
 import time
 from pathlib import Path
@@ -135,6 +136,11 @@ def _exclusive(s) -> None:
 
 
 class LiveIo:
+    # VISA (pyvisa and the VISA library under it) is not made for several threads at once: one call at a time, whoever
+    # makes it (recon hears different devices at the same time; design.md section 12, 2026-11-08)
+    _visa_lock = threading.Lock()
+    _pnp: tuple[float, str] | None = None  # Windows: the device list serial_ports() read with its query, and when
+
     def serial_stream(self, path: str, baud: int = DEFAULT_BAUD, exclusive: bool = False, lines: str = "low") -> _LiveStream:
         import serial
 
@@ -162,7 +168,10 @@ class LiveIo:
         if system == "Linux":
             return linux_usb_devices(Path("/sys/bus/usb/devices"))
         if system == "Windows":
-            out = _listing(["powershell", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_PNP_QUERY])
+            # the device tree serial_ports() read with its own query moments ago (recon lists ports first), else now
+            cached, self._pnp = self._pnp, None
+            out = cached[1] if cached and time.monotonic() - cached[0] < 10 else \
+                _listing(["powershell", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_PNP_QUERY])
             from .winusb_strings import usb_strings
 
             try:
@@ -241,8 +250,13 @@ class LiveIo:
             if p.vid is not None  # skip Bluetooth/debug-console pseudo ports
         ]
         if ports and platform.system() == "Windows":
-            parents = parse_windows_port_parents(
-                _listing(["powershell", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_PORT_PARENTS]))
+            # one PowerShell for both of Windows' lists (it takes a second to start; design.md section 12, 2026-11-08):
+            # the ports' parents now, the USB devices for usb_devices(), which recon calls next
+            both = _listing(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                             f"{WINDOWS_PNP_QUERY}; '{_SPLIT}'; {WINDOWS_PORT_PARENTS}"])
+            pnp, _, port_text = both.partition(_SPLIT)
+            self._pnp = (time.monotonic(), pnp)
+            parents = parse_windows_port_parents(port_text)
             for p in ports:
                 if p["device"] in parents:
                     p["usb_interface"] = parents[p["device"]]
@@ -285,11 +299,12 @@ class LiveIo:
         """Open `resource`, use it, close it. A failure (no VISA library, a resource busy or gone, a time-out) raises
         OSError with VISA's own words: "no answer" would lose why (a raw clue for the agent and the person)."""
         try:
-            inst = self._visa().open_resource(resource, timeout=timeout_ms)
-            try:
-                return use(inst)
-            finally:
-                inst.close()
+            with self._visa_lock:
+                inst = self._visa().open_resource(resource, timeout=timeout_ms)
+                try:
+                    return use(inst)
+                finally:
+                    inst.close()
         except Exception as e:
             raise OSError(f"VISA {resource}: {type(e).__name__}: {e}") from e
 
@@ -417,6 +432,7 @@ WINDOWS_PORT_PARENTS = (
     "-ErrorAction SilentlyContinue).Data } }) | ConvertTo-Json -Compress"
 )
 _MI = re.compile(r"&MI_([0-9A-F]{2})\\", re.I)
+_SPLIT = "BENCHSCOUT-NEXT-LIST"  # between the two lists one PowerShell prints
 
 
 def parse_windows_port_parents(text: str) -> dict[str, int]:

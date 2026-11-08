@@ -124,6 +124,7 @@ class Scpi(Protocol):
     name = "scpi"
     port_kinds = SCPI_PORTS
     many_readings = True  # relative to the path the last unit left, and from the root: the instrument may read either
+    bounded_codes = ("energizing",)  # an output setting: allowed for the session up to the value approved
 
     def check(self, text: str) -> None:
         scpi_headers(text)

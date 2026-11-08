@@ -2,7 +2,9 @@
 
 - Only the control channel (the human's panel) calls `decide`. The agent's channel has
   no method that reaches it.
-- DANGEROUS: granted once, bound to (action, port, args).
+- DANGEROUS: granted once, bound to (action, port, args); or, where the broker offers it on the card, for the session
+  within what it says (design.md section 12, 2026-11-08): a program while its content is unchanged, a write with the
+  same tool on the same device, a command up to the values the human approved.
 - DISRUPTIVE: may instead be granted for (action, port) for the session or N minutes.
 - The audit log is append-only output. Nothing reads it back to decide anything, so
   editing it grants nothing.
@@ -19,6 +21,7 @@ from pathlib import Path
 from typing import Callable
 
 from .policy import Effect, Impact
+from .protocols import outside
 
 Scope = str | int  # "once" | "session" | "all" | minutes ("always" is the broker's: once, plus memory)
 
@@ -40,6 +43,10 @@ class Approval:
     fetch: str = ""  # a tool that will be downloaded first (official release, pinned), if any
     # "always on this device" can be kept: the commands asked about can be remembered as this unit's (the broker says)
     always: bool = False
+    model: bool = False  # ... and it would be kept for the model: every unit carries the same serial, this one is alone
+    # a DANGEROUS call the human may allow for the session, and what that covers: "program" (this content), "tool" (this
+    # tool on this device, any file), "bounded" (these commands up to these values); "" = once only
+    again: str = ""
 
 
 @dataclass
@@ -48,6 +55,9 @@ class Grant:
     port: str
     expires: float | None  # monotonic deadline; None = until the session ends
     subjects: frozenset[str] | None = None  # only calls about these (SCPI headers); None = any call of the action
+    effect: Effect = Effect.DISRUPTIVE  # the strongest call it covers
+    content: str | None = None  # only calls with this content (a program's plan, a tool's identity); None = any
+    bounds: dict | None = None  # {subject: limits (protocols.base.outside)}: only values within them
 
 
 class ApprovalBook:
@@ -59,17 +69,21 @@ class ApprovalBook:
         self._cond = threading.Condition()
         self._items: dict[str, Approval] = {}
         self._grants: list[Grant] = []
+        self._again: dict[str, dict] = {}  # approval id -> what "for the session" would grant (the broker's offer)
         # "allow everything for this session": every DISRUPTIVE call runs without asking until the human turns it
         # off or benchscout stops. DANGEROUS calls still ask each time (R8).
         self.allow_all = False
 
     # ---- agent side (via the broker) ------------------------------------------
     def open(self, impact: Impact, args: str, by: str = "agent", subject: str = "", purpose: str = "", fetch: str = "",
-             always: bool = False) -> Approval:
+             always: bool = False, again: tuple[str, dict] | None = None, model: bool = False) -> Approval:
         a = Approval(uuid.uuid4().hex[:6], impact.action, impact.port_id, args, impact.effect.name.lower(), impact.to_dict(),
-                     by=by, subject=subject, purpose=purpose, fetch=fetch, always=always)
+                     by=by, subject=subject, purpose=purpose, fetch=fetch, always=always, model=always and model,
+                     again=again[0] if again and impact.effect == Effect.DANGEROUS else "")
         with self._cond:
             self._items[a.id] = a
+            if a.again and again:
+                self._again[a.id] = again[1]
         self._log("requested", a)
         self._emit({"event": "approval_requested", "approval": asdict(a)})
         return a
@@ -115,19 +129,35 @@ class ApprovalBook:
             a = self._items.get(approval_id)
             return (a.action, a.port, a.args) if a else None
 
-    def covered(self, action: str, port: str, effect: Effect, subjects: list[str] | None = None) -> bool:
-        """A standing grant (R8) covers this DISRUPTIVE call: same action and port and, for a grant bound to
-        subjects (SCPI headers), nothing in the call it was not given for."""
-        if effect != Effect.DISRUPTIVE:
+    def covered(self, action: str, port: str, effect: Effect, subjects: list[str] | None = None, content: str | None = None,
+                values: dict[str, list[list[str]]] | None = None) -> bool:
+        """A standing grant (R8) covers this call: same action and port, no stronger than it was given for, and within
+        what it was given for: the subjects (SCPI headers), the content (a program, a tool), the values (each time a
+        subject comes in the call). "Allow all" covers DISRUPTIVE calls only."""
+        if effect not in (Effect.DISRUPTIVE, Effect.DANGEROUS):
             return False
         now = self._clock()
         with self._cond:
-            if self.allow_all:
+            if self.allow_all and effect == Effect.DISRUPTIVE:
                 return True
             self._grants = [g for g in self._grants if g.expires is None or g.expires > now]
-            return any(g.action == action and g.port == port
-                       and (g.subjects is None or subjects is not None and set(subjects) <= g.subjects)
-                       for g in self._grants)
+            return any(self._covers(g, action, port, effect, subjects, content, values) for g in self._grants)
+
+    @staticmethod
+    def _covers(g: Grant, action: str, port: str, effect: Effect, subjects, content, values) -> bool:
+        if g.action != action or g.port != port or effect > g.effect:
+            return False
+        if g.subjects is not None and (subjects is None or not set(subjects) <= g.subjects):
+            return False
+        if g.content is not None and content != g.content:
+            return False
+        if g.bounds is not None:
+            for s in subjects or []:
+                limits = g.bounds.get(s)
+                for vals in (values or {}).get(s) or [None]:
+                    if limits is None or vals is None or len(vals) > len(limits) or outside(limits, vals):
+                        return False
+        return True
 
     # ---- human side (control channel only) --------------------------------------
     def decide(self, approval_id: str, granted: bool, scope: Scope = "once") -> Approval:
@@ -140,11 +170,18 @@ class ApprovalBook:
                     "Nothing is waiting; approvals appear here when the agent asks for something that is not SAFE."))
             if a.status != "pending":
                 raise ValueError(f"{approval_id} is already {a.status}")
+            dangerous = a.effect == Effect.DANGEROUS.name.lower()
             if granted and scope != "once":
-                if a.effect != Effect.DISRUPTIVE.name.lower():
-                    raise ValueError(f"only DISRUPTIVE actions can be granted beyond one use; this one is {a.effect.upper()}")
+                if a.effect != Effect.DISRUPTIVE.name.lower() and not (dangerous and scope == "session" and a.again):
+                    raise ValueError(f"{a.action} is {a.effect.upper()}: it can be allowed once"
+                                     + (" or, as its card offers, for the session" if a.again else ""))
             if granted and scope == "all":
                 pass  # this call, and set_allow_all below
+            elif granted and scope != "once" and dangerous:
+                offer = self._again.get(a.id, {})  # what the card said "for the session" covers, and nothing more
+                self._grants.append(Grant(a.action, a.port, None,
+                                          frozenset(offer["subjects"]) if offer.get("subjects") is not None else None,
+                                          Effect.DANGEROUS, offer.get("content"), offer.get("bounds")))
             elif granted and scope != "once":
                 expires = None if scope == "session" else self._clock() + 60 * int(scope)
                 subjects = a.impact.get("subjects")
@@ -198,6 +235,7 @@ class ApprovalBook:
     def end_session(self) -> None:
         with self._cond:
             self._grants.clear()
+            self._again.clear()
 
     def _log(self, what: str, a: Approval) -> None:
         if self._audit:

@@ -131,12 +131,28 @@ def test_always_on_this_instrument_is_remembered_as_the_humans_and_can_be_forgot
     assert effect("MEAS:VOLT?", br.bench) == Effect.DISRUPTIVE
 
 
-def test_an_output_setting_cannot_be_allowed_beyond_once(broker):
+def test_an_output_setting_is_allowed_for_the_session_only_up_to_the_value_on_its_card(broker):
+    """design.md section 12, 2026-11-08 (it was once only, so a sweep was a click per step): "for the session" lets the
+    same setting run with values between 0 and the one approved; more, a keyword, or anything else beside it asks."""
     br, _ = broker
     res = br.request("scpi.write", PSU, {"command": "VOLT 5"}, wait=0)
-    for scope in ("session", "always"):
+    with pytest.raises(ValueError):
+        br.decide(res["approval_id"], True, "always")
+    br.decide(res["approval_id"], True, "session")
+    for line in ("VOLT 5", "VOLT 3.3", "VOLT 0", "VOLTage 4.99"):
+        assert br.request("scpi.write", PSU, {"command": line}, wait=0)["status"] == "done", line
+    # SOUR:VOLT is another header than the VOLT on the card: a grant covers the header the human saw (it may mean the same)
+    for line in ("VOLT 5.1", "VOLT -1", "VOLT MAX", "VOLT", "VOLT 3;OUTP ON", "CURR 1", "SOUR:VOLT 3"):
+        assert br.request("scpi.write", PSU, {"command": line}, wait=0)["status"] == "approval_required", line
+
+
+def test_beside_a_self_test_or_a_reset_an_output_setting_is_allowed_once_only(broker):
+    br, _ = broker
+    for line in ("VOLT 3;*TST?", "VOLT 3;*RST"):
+        res = br.request("scpi.write", PSU, {"command": line}, wait=0)
+        assert not br.approvals.get(res["approval_id"]).again, line
         with pytest.raises(ValueError):
-            br.decide(res["approval_id"], True, scope)
+            br.decide(res["approval_id"], True, "session")
 
 
 # ---- memory: the agent learns, the human loosens --------------------------------------------------

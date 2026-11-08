@@ -358,6 +358,7 @@ def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] 
         prepare(b)
     r = Recon(b)
 
+    todo: list[Port] = []
     for port in list(b.ports.values()):
         targets = b.targets_via(port.id)
         holder = busy(port.device_id) if busy else None
@@ -375,12 +376,37 @@ def run(io: Io, listen_seconds: float = 2.0, busy: Callable[[str], dict | None] 
                 r.heard.setdefault(port.id, []).append(got)
                 _fold(b, targets, got, earlier=True, port=port)
             continue
+        todo.append(port)
 
-        for got in _probe(io, b, port, listen_seconds, r.ran):
+    # a probe listens for seconds: different devices are heard at the same time, the ports of one device one after
+    # another (a probe channel is used exclusively); what they heard is folded in afterwards, in the order of the ports
+    # (design.md section 12, 2026-11-08: five ports took ten seconds)
+    by_device: dict[str, list[Port]] = {}
+    for port in todo:
+        by_device.setdefault(port.device_id, []).append(port)
+    results: dict[str, tuple[list[dict], list[str]]] = {}
+
+    def hear(ports: list[Port]) -> None:
+        for port in ports:
+            ran: list[str] = []
+            results[port.id] = (_probe(io, b, port, listen_seconds, ran), ran)
+
+    if len(by_device) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=min(8, len(by_device))) as pool:
+            list(pool.map(hear, by_device.values()))  # (a probe that raises raises here, as it did one by one)
+    else:
+        for ports in by_device.values():
+            hear(ports)
+    for port in todo:
+        got_all, ran = results[port.id]
+        r.ran += ran
+        for got in got_all:
             got["device"] = port.device_id
             got["time"] = time.strftime("%Y-%m-%d %H:%M")
             r.heard.setdefault(port.id, []).append(got)
-            _fold(b, targets, got, port=port)
+            _fold(b, b.targets_via(port.id), got, port=port)
 
     r.proposals = propose(b)
     return r

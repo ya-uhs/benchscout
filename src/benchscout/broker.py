@@ -529,6 +529,24 @@ class Broker:
 
         return bench.one_unit(dev, K.SHARED_SERIALS)
 
+    @staticmethod
+    def _may_loosen(bench, dev) -> bool:
+        """Memory that asks less (safe to open, a command allowed) applies to this unit: its serial singles it out, or
+        every unit of its model carries the same serial (the data says so) and it is the only one of them plugged in, so
+        the memory is about the model (design.md section 12, 2026-11-08: a Tang Nano asked again every session). Not for
+        a device without a serial: its ids name a USB bridge chip that many different boards carry. Names are not loosening:
+        they stay the unit's (_one_unit)."""
+        from . import knowledge as K
+
+        if bench.one_unit(dev, K.SHARED_SERIALS):
+            return True
+        return bool(dev.serial) and dev.serial in K.SHARED_SERIALS and dev.vid is not None and not any(
+            d.id != dev.id and (d.vid, d.pid) == (dev.vid, dev.pid) for d in bench.devices.values())
+
+    def _model_wide(self, bench, dev) -> bool:
+        """Memory that asks less applies to this device as its model's, not as this very unit's (the card says so)."""
+        return self._may_loosen(bench, dev) and not self._one_unit(bench, dev)
+
     def _header(self, dev) -> dict:
         from . import knowledge as K
 
@@ -542,7 +560,8 @@ class Broker:
         for dev in bench.devices.values():
             if only is not None and dev.id not in only:
                 continue
-            shared = not self._one_unit(bench, dev)
+            shared = not self._one_unit(bench, dev)  # a name remembered may be another unit's
+            loosen = self._may_loosen(bench, dev)
             targets = [t for p in bench.ports_of(dev.id) for t in bench.targets_via(p.id)]
             for e in self.memory.entries(self._key(dev)):
                 if e.status != "active" and not (e.kind == "command" and e.status == "pending"):
@@ -563,7 +582,7 @@ class Broker:
                     if e.target in bench.ports and e.data.get("listen_safe") is False:
                         bench.ports[e.target].may_reset_on_open = True  # seen to reset when opened: stricter, at once
                         continue
-                    if shared:
+                    if not loosen:
                         continue  # memory of this model and serial may be another unit's: never loosen safety on it
                     if e.target in bench.ports and e.data.get("listen_safe"):
                         bench.ports[e.target].may_reset_on_open = False
@@ -609,7 +628,7 @@ class Broker:
         if text is None or VANISHED_MARK in text:
             return
         dev = self.bench.devices[port.device_id]
-        if not port.own_usb or not self._one_unit(self.bench, dev):
+        if not port.own_usb or not self._may_loosen(self.bench, dev):
             # behind a bridge the port stays whether the MCU reset or not: its staying proves nothing (review 7, 19)
             return
         key = self._key(dev)
@@ -660,7 +679,8 @@ class Broker:
 
         if entry.status == "pending":
             self._pending_shown.add(entry.id)
-        self._emit({"event": "memory_added", "key": self._key(dev), "device": dev.id, "device_name": dev.name, "entry": asdict(entry)})
+        self._emit({"event": "memory_added", "key": self._key(dev), "device": dev.id, "device_name": dev.name, "entry": asdict(entry),
+                    "model_wide": self._model_wide(self.bench, dev)})
 
     def remember(self, ref: str, kind: str, text: str, evidence: str = "", data: dict | None = None, source: str = "agent") -> dict:
         """Written without asking (design.md 6). Safety-loosening entries wait for the human."""
@@ -866,7 +886,7 @@ class Broker:
         if not key:
             return
         loosens = self._loosens(port, e.data["command"], effect)
-        shared = not self._one_unit(bench, dev)  # the memory may be another unit's: never loosen safety on it
+        shared = not self._may_loosen(bench, dev)  # the memory may be another unit's: never loosen safety on it
         held = port.commands.get(key)
         if e.status == "pending" and held and not held.get("pending"):
             return  # waiting for the human: what is in force stays in force meanwhile
@@ -935,7 +955,7 @@ class Broker:
         e = self.memory.set_status(key, entry_id, "active" if accept else "rejected")
         mine = self._port_of_key(key, e.target)
         if accept and e.kind == "safety" and mine and e.data.get("listen_safe"):
-            if self._one_unit(self.bench, self.bench.devices[mine.device_id]):  # as it is applied after a restart
+            if self._may_loosen(self.bench, self.bench.devices[mine.device_id]):  # as it is applied after a restart
                 mine.may_reset_on_open = False
         if e.kind == "command" and mine:
             port = mine
@@ -1346,15 +1366,22 @@ class Broker:
             impact = Impact("program.run", plan.ports[0][0], Effect.DANGEROUS,
                             "Trusted external program; its physical effects cannot be verified. " + purpose,
                             affected_ports=sorted({q.id for p in ports for q in self.bench.ports_of(p.device_id)}))
-            if approval_id is None:
-                approval_id = self.approvals.open(impact, key, purpose=purpose).id
+            # allowed for the session: this very program (its argv and the hashes of its files), on these resources
+            session = approval_id is None and self.approvals.covered(impact.action, impact.port_id, Effect.DANGEROUS,
+                                                                     content=key)
+            if session:
+                pass
+            elif approval_id is None:
+                approval_id = self.approvals.open(impact, key, purpose=purpose, again=("program", {"content": key})).id
             elif self.approvals.asked_for(approval_id) != (impact.action, impact.port_id, key):
                 return {"status": "approval_mismatch", "approval_id": approval_id}
-        status = self.approvals.wait(approval_id, self.approval_wait)
-        if status == "pending":
-            return {"status": "approval_required", "approval_id": approval_id, "impact": impact.to_dict()}
-        if status != "granted":
-            return {"status": status, "approval_id": approval_id}
+        if not session:
+            assert approval_id is not None
+            status = self.approvals.wait(approval_id, self.approval_wait)
+            if status == "pending":
+                return {"status": "approval_required", "approval_id": approval_id, "impact": impact.to_dict()}
+            if status != "granted":
+                return {"status": status, "approval_id": approval_id}
         with self._lock:
             for pid, dev, address in plan.ports:
                 p = self.bench.ports.get(pid)
@@ -1373,10 +1400,12 @@ class Broker:
                     held.release()
             try:
                 plan.verify()
-                used = self.approvals.consume(approval_id, impact.action, impact.port_id, key, "dangerous")
-                if used != "ok":
-                    release()
-                    return {"status": used, "approval_id": approval_id}
+                if not session:
+                    assert approval_id is not None
+                    used = self.approvals.consume(approval_id, impact.action, impact.port_id, key, "dangerous")
+                    if used != "ok":
+                        release()
+                        return {"status": used, "approval_id": approval_id}
                 r = Run(plan, self.artifacts, self._emit)
                 self.runs[r.id] = r
                 for p in list(self.watches):
@@ -1384,7 +1413,8 @@ class Broker:
                         self.unwatch_port(p)
                 self.done.append({"at": time.time(), "time": time.strftime("%H:%M:%S"), "action": impact.action,
                                   "port": impact.port_id, "device": plan.ports[0][1], "args": key,
-                                  "allowed": f"human approval {approval_id}"})
+                                  "allowed": "the human, for the session (this program, unchanged)" if session
+                                  else f"human approval {approval_id}"})
                 def finished() -> None:
                     with self._lock:
                         self._autowatch()
@@ -1395,11 +1425,8 @@ class Broker:
         return r.view()
 
     def _tool_snapshot(self, spec, port_id: str, args: dict) -> str:
-        from dataclasses import asdict
         from .execution import digest
-        from .fetch import plan as fetch_plan
 
-        port = self.bench.ports[port_id]
         paths = set()
         for param in spec.params:
             value = args.get(param.name)
@@ -1407,21 +1434,48 @@ class Broker:
                 paths.add(str(value))
             elif value is not None and param.type is A.FlashMap:
                 paths.update(str(f) for _, f in value)
-        for word in spec.argv[1:]:
-            if "{" not in word and (self.state.parent / word).is_file():
-                paths.add(word)
-        from .fetch import cached
+        files = {str((self.state.parent / f).absolute()): digest(self.state.parent / f) for f in sorted(paths)}
+        return json.dumps({**json.loads(self._tool_identity(spec, port_id)), "args": args, "files": files},
+                          sort_keys=True, default=str)
 
+    def _tool_identity(self, spec, port_id: str) -> str:
+        """The tool and the device a call of this action is, without its arguments and their files: what a grant "for
+        the session" of a write binds to (each build writes a new image; the tool and the device stay)."""
+        from dataclasses import asdict
+        from .execution import digest
+        from .fetch import cached, plan as fetch_plan
+
+        port = self.bench.ports[port_id]
         # the program that will run: one already here is bound by its content; a pinned download (fetched before, or
         # to be fetched after the OK) by the pinned hash in `download`
         exe = self._usable_tool(spec)[0]
-        download = fetch_plan(spec.argv[0])
-        if exe and exe != cached(spec.argv[0]):
-            paths.add(exe)
-        files = {str((self.state.parent / f).absolute()): digest(self.state.parent / f) for f in sorted(paths)}
-        return json.dumps({"args": args, "definition": asdict(spec), "files": files, "download": download,
+        program = {str(Path(exe).absolute()): digest(Path(exe))} if exe and exe != cached(spec.argv[0]) else {}
+        for word in spec.argv[1:]:  # files the definition itself names (a script it runs) are the tool too
+            if "{" not in word and (self.state.parent / word).is_file():
+                program[str((self.state.parent / word).absolute())] = digest(self.state.parent / word)
+        return json.dumps({"definition": asdict(spec), "program": program, "download": fetch_plan(spec.argv[0]),
                            "port": {"id": port.id, "device": port.device_id, "path": port.path, "tools": port.tools},
                            "serial": self.bench.devices[port.device_id].serial}, sort_keys=True, default=str)
+
+    def _session_offer(self, spec, proto, port_id: str, impact: Impact, identity: str | None,
+                       said: dict | None) -> tuple[str, dict] | None:
+        """What "for the session" may cover on this DANGEROUS call's card (design.md section 12, 2026-11-08), or None:
+        once only. A write the data allows it for: this tool on this device, any file. Commands the protocol lets be
+        bounded (an output setting): up to the values on the card, and only if every command in the call is one of
+        those or weaker (a self-test or a full reset beside it keeps the whole call to once)."""
+        if impact.effect != Effect.DANGEROUS:
+            return None
+        if spec.argv and spec.allow_session and identity:
+            return "tool", {"content": identity}
+        if proto and said is not None and impact.subjects and impact.code in proto.bounded_codes:
+            port = self.bench.ports[port_id]
+            for name in impact.subjects:
+                effect, _, code, _ = protocols.judge(port, name, proto)
+                if effect == Effect.DANGEROUS and code not in proto.bounded_codes:
+                    return None
+            return "bounded", {"subjects": impact.subjects,
+                               "bounds": {n: protocols.up_to(said.get(n, [])) for n in impact.subjects}}
+        return None
 
     # ---- the one entry point the agent uses -----------------------------------
     def request(self, action: str, port: str, args: dict | None = None, approval_id: str | None = None,
@@ -1469,10 +1523,15 @@ class Broker:
                 impact = classify(self.bench, action, port_id, args, port_open=self._held_open(port_id, args))
             except A.ArgError as e:  # a SCPI line that is not one plain message
                 return {"status": "invalid_args", "message": str(e)}
+            # what a standing grant is checked against: the tool and device of a write, the values of each command
+            identity = self._tool_identity(spec, port_id) if spec.argv else None
+            text = args.get(spec.text) if proto and spec.text else None
+            said = protocols.values_of(str(text) + str(args.get("eol") or ""), proto) if proto and text is not None else None
             # a tool not installed yet is downloaded only with the human's OK, even for a SAFE action
             fetch = self._fetch_needed(spec)
             if not fetch and (impact.effect == Effect.SAFE or
-                              (approval_id is None and self.approvals.covered(action, port_id, impact.effect, impact.subjects))):
+                              (approval_id is None and self.approvals.covered(action, port_id, impact.effect, impact.subjects,
+                                                                               content=identity, values=said))):
                 go = (impact, args, "safe" if impact.effect == Effect.SAFE else "allowed by the human for the session"
                       if not self.approvals.allow_all else "allowed by the human: allow all", {})
             if go:
@@ -1480,8 +1539,10 @@ class Broker:
             elif approval_id is None:
                 dev = self.bench.devices[self.bench.ports[port_id].device_id]
                 always = bool(spec.protocol and impact.subjects and impact.effect == Effect.DISRUPTIVE
-                              and self._one_unit(self.bench, dev))
-                approval_id = self.approvals.open(impact, key, fetch=fetch, always=always).id
+                              and self._may_loosen(self.bench, dev))
+                again = self._session_offer(spec, proto, port_id, impact, identity, said)
+                approval_id = self.approvals.open(impact, key, fetch=fetch, always=always, again=again,
+                                                  model=self._model_wide(self.bench, dev)).id
             else:
                 # an id for another call: say so now, not after waiting on a card that shows something else
                 asked = self.approvals.asked_for(approval_id)

@@ -164,7 +164,9 @@ test("unknown resource: human approves a program, receives its observation and s
     });
     const approval = await until(h, (c) => c.kind === "confirm" && c.title === "program.run");
     assert.equal(approval.effect, "dangerous");
-    assert.ok(!approval.options.some((o) => o.id === "session"));
+    // this very program may be allowed for the session (design.md section 12, 2026-11-08), never "allow all"
+    assert.equal(approval.options.find((o) => o.id === "session")?.label, s.again.program.label);
+    assert.ok(!approval.options.some((o) => o.id === "all"));
     await h.answer(approval.id, { option: "once" });
     const started = (await request).result;
     const running = await until(h, (c) => c.title === s.programRunning);
@@ -371,19 +373,26 @@ test("a SCPI command's card allows that command for the session or always, and s
   assert.deepEqual(h.cards.find((c) => c.id === "approval:a2").options.map((o) => o.id), ["once", "deny"]);
 });
 
-test("allow all is on DISRUPTIVE cards only, and the inbox shows it with a way to turn it off", () => {
+test("allow all is on DISRUPTIVE cards only; a write may be allowed for the session where the core offers it, saying what that covers", () => {
   const core = new CoreClient("/nonexistent", tmpdir());
   const decided = [];
   core.decide = async (...a) => { decided.push(a); return {}; };
   const h = new Harness(core, () => { throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 1 });
-  const ask = (id, action, effect) => core.emit("approvalRequested", { id, action, port: "serial:usbserial-10", args: "{}", effect,
-    status: "pending", by: "agent", impact: { reason: "x", affected_ports: [], disturbs: [], code: "" } });
+  const ask = (id, action, effect, again) => core.emit("approvalRequested", { id, action, port: "serial:usbserial-10", args: "{}", effect,
+    status: "pending", by: "agent", impact: { reason: "x", affected_ports: [], disturbs: [], code: "" }, ...(again ? { again } : {}) });
   ask("a1", "serial.send", "disruptive");
-  ask("a2", "esptool.write_flash", "dangerous");
-  assert.ok(h.cards.find((c) => c.id === "approval:a1").options.some((o) => o.id === "all"));
-  assert.ok(!h.cards.find((c) => c.id === "approval:a2").options.some((o) => o.id === "all"), "what cannot be undone asks each time");
+  ask("a2", "lab.fuse", "dangerous");
+  ask("a3", "esptool.write_flash", "dangerous", "tool");
+  const card = (id) => h.cards.find((c) => c.id === `approval:${id}`);
+  assert.ok(card("a1").options.some((o) => o.id === "all"));
+  assert.ok(!card("a2").options.some((o) => o.id === "all" || o.id === "session"), "what cannot be undone asks each time");
+  // a write the core lets be allowed for the session (design.md section 12, 2026-11-08): the card says what that covers
+  assert.ok(!card("a3").options.some((o) => o.id === "all"));
+  assert.equal(card("a3").options.find((o) => o.id === "session").label, strings("ja").again.tool.label);
+  assert.ok(card("a3").body.includes(strings("ja").again.tool.covers));
   void h.answer("approval:a1", { option: "all" });
-  assert.deepEqual(decided[0], ["a1", true, "all"]);
+  void h.answer("approval:a3", { option: "session" });
+  assert.deepEqual(decided, [["a1", true, "all"], ["a3", true, "session"]]);
 });
 
 test("a tool's first-use download is one card, updated as it goes and closed when done", () => {
@@ -467,14 +476,18 @@ test("'always on this device' is offered for a command whatever its protocol, wh
   const core = new CoreClient("/nonexistent", tmpdir());
   const s = strings("en");
   const h = new Harness(core, () => { throw new Error("not woken"); }, s, { language: "English", maxTurnsPerHour: 1 });
-  const ask = (id, always) => core.emit("approvalRequested", { id, action: "serial.send", port: "serial:x", args: '{"data": "status"}',
-    effect: "disruptive", status: "pending", by: "agent", always,
+  const ask = (id, always, model) => core.emit("approvalRequested", { id, action: "serial.send", port: "serial:x", args: '{"data": "status"}',
+    effect: "disruptive", status: "pending", by: "agent", always, model,
     impact: { reason: "sends bytes", affected_ports: [], disturbs: [], subjects: ["status"] } });
-  ask("a1", true);
-  ask("a2", false);
-  const labels = (id) => h.cards.find((c) => c.id === `approval:${id}`).options.map((o) => o.label);
+  ask("a1", true, false);
+  ask("a2", false, false);
+  ask("a3", true, true);  // a model whose units share a serial, plugged in alone (design.md section 12, 2026-11-08)
+  const card = (id) => h.cards.find((c) => c.id === `approval:${id}`);
+  const labels = (id) => card(id).options.map((o) => o.label);
   assert.ok(labels("a1").includes(s.allowCommandSession) && labels("a1").includes(s.allowAlwaysHere));
   assert.ok(labels("a2").includes(s.allowCommandSession) && !labels("a2").includes(s.allowAlwaysHere));
+  assert.ok(labels("a3").includes(s.allowAlwaysModel) && card("a3").body.includes(s.modelWide), "the card says it is the model's");
+  assert.ok(!card("a1").body.includes(s.modelWide));
 });
 
 

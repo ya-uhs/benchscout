@@ -112,6 +112,9 @@ class Action:
     text: str = ""
     opens: bool = False  # it opens the port unless the port is held open already: opening is a step of the call
     probe: dict = field(default_factory=dict)  # recon runs it by itself (SAFE), reading its output this way (tools.toml)
+    # a DANGEROUS write the human may allow for the session on one device (rewriting a dev board while iterating), as
+    # the data says; without it, once only (design.md section 12, 2026-11-08)
+    allow_session: bool = False
 
     def normalize(self, args: dict | None) -> dict:
         if args is not None and not isinstance(args, dict):
@@ -143,4 +146,5 @@ def from_data(e: dict) -> Action:
     effect = Effect[e.get("effect", "dangerous").upper()]  # no declared effect -> DANGEROUS
     return Action(e["name"], effect, bool(e.get("disturbs", effect > Effect.SAFE)), e.get("reason", "external tool"),
                   e.get("doc", ""), params, tuple(e["argv"]), tuple(e.get("port_kinds", ())),
-                  bool(e.get("releases_device", False)), float(e.get("timeout", 60)), dict(e.get("version", {})), probe=dict(e.get("probe", {})))
+                  bool(e.get("releases_device", False)), float(e.get("timeout", 60)), dict(e.get("version", {})), probe=dict(e.get("probe", {})),
+                  allow_session=bool(e.get("allow_session", False)))
