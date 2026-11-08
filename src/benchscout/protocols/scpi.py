@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from ..actions import ArgError
+from ..action_types import ArgError
 from ..policy_types import Effect
 from ..model import Confidence, Device, Evidence, Port, Target, device_id, hex4
 from .base import Context, Judged, Protocol, Values

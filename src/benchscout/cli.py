@@ -35,7 +35,8 @@ def user_language(explicit: str | None = None) -> str:
     if not code and sys.platform == "win32":
         import locale
 
-        code = windows_locale_code(locale.getlocale()[0])
+        # the name itself: locale.getlocale() raises on the ja-JP form (recorded on Windows, audit 2026-11-07 T8)
+        code = windows_locale_code(locale.setlocale(locale.LC_CTYPE))
     if not code and sys.platform == "darwin":
         try:
             out = subprocess.run(["defaults", "read", "-g", "AppleLanguages"], stdin=subprocess.DEVNULL, capture_output=True, text=True).stdout
@@ -49,7 +50,8 @@ def user_language(explicit: str | None = None) -> str:
 
 
 def windows_locale_code(name: str | None) -> str | None:
-    """Windows reports 'Japanese_Japan' (or 'ja_JP'); map it to a language code."""
+    """The C runtime's locale name on Windows ('Japanese_Japan.932', or the 'ja-JP' form) -> a language code
+    (fixtures/real/windows_locale_2026-11-08.json)."""
     if not name:
         return None
     head = name.split("_")[0].split("-")[0].lower()
@@ -104,7 +106,7 @@ def cmd_fetch(a) -> None:
 def cmd_mcp(a) -> None:
     from .mcp_relay import main
 
-    main(a.workspace)
+    main(a.workspace, user_language())
 
 
 def setup_workspace(cwd: Path, agent: str = "claude", skill_only: bool = False) -> None:

@@ -25,11 +25,12 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import IO, Any
 
+from multiprocessing import AuthenticationError
 from multiprocessing.connection import Client, Listener
 
 from .actions import catalog
 from .broker import Broker
-from .runtime import address_family
+from .runtime import address_family, prove
 from .report import render
 
 # ---- agent channel --------------------------------------------------------------
@@ -103,6 +104,12 @@ class AgentServer:
 
     def _serve(self, conn) -> None:
         with conn:
+            # each side proves it knows this user's key before a word is said; here, not in accept(), so a client that
+            # never answers holds only its own thread
+            try:
+                prove(conn, server=True)
+            except (AuthenticationError, EOFError, OSError):
+                return
             while True:
                 try:
                     raw = conn.recv_bytes()
@@ -130,14 +137,23 @@ class AgentServer:
 
 
 def claim_address(address: str) -> None:
-    """Refuse to start a second core for the same workspace; clear a dead one's socket."""
+    """Refuse to start a second core for the same workspace; clear a dead one's socket. Something at the address that
+    cannot prove this user's key is not a core of this user's: said as such (on Windows, another account took the pipe
+    name first)."""
     family = address_family(address)
     try:
-        Client(address, family).close()
-    except OSError:
+        conn = Client(address, family)
+    except OSError:  # nothing listens there: a dead core's socket at most
         if family == "AF_UNIX" and os.path.exists(address):
             os.unlink(address)
         return
+    with conn:
+        try:
+            prove(conn, server=False)
+        except (AuthenticationError, EOFError, OSError):
+            raise RuntimeError(f"another program holds the agent address {address} and is not a benchscout core of this "
+                               "user (it cannot prove this user's key): another account may have taken it. Find and stop "
+                               "it, then start benchscout again") from None
     raise RuntimeError(f"a benchscout core is already running for this workspace ({address})")
 
 

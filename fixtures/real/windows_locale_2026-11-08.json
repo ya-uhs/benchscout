@@ -1,0 +1,43 @@
+{
+ "note": "Windows 11 ARM64 VM (Insider 26200, user locale en-US), x64 Python under emulation, 2026-11-08 (audit 2026-11-07, T8): the C runtime's LC_CTYPE name as Python starts with it, and after setting each name; what locale.getlocale() makes of it (it raises for the ja-JP form); what Node gives the extension (no LANG on Windows; Intl's locale).",
+ "python": "3.12.16",
+ "windows": "10.0.26200",
+ "machine": "ARM64",
+ "LC_CTYPE_at_start": "English_United States.1252",
+ "getlocale_default": [
+  "English_United States",
+  "1252"
+ ],
+ "GetUserDefaultLocaleName": "en-US",
+ "GetUserDefaultUILanguage": "0x409",
+ "setlocale('Japanese_Japan') then getlocale": [
+  "Japanese_Japan",
+  "932"
+ ],
+ "setlocale('Japanese_Japan') LC_CTYPE is": "Japanese_Japan.932",
+ "setlocale('ja-JP') then getlocale": "ValueError: unknown locale: ja-JP",
+ "setlocale('ja-JP') LC_CTYPE is": "ja-JP",
+ "setlocale('ja_JP') then getlocale": [
+  "ja_JP",
+  "eucJP"
+ ],
+ "setlocale('ja_JP') LC_CTYPE is": "ja_JP",
+ "setlocale('English_United States') then getlocale": [
+  "English_United States",
+  "1252"
+ ],
+ "setlocale('English_United States') LC_CTYPE is": "English_United States.1252",
+ "setlocale('en-US') then getlocale": "ValueError: unknown locale: en-US",
+ "setlocale('en-US') LC_CTYPE is": "en-US",
+ "setlocale('') then getlocale": [
+  "English_United States",
+  "1252"
+ ],
+ "setlocale('') LC_CTYPE is": "English_United States.1252",
+ "node": {
+  "version": "v26.13.0",
+  "LANG": null,
+  "LC_ALL": null,
+  "Intl.DateTimeFormat().resolvedOptions().locale": "en-US"
+ }
+}

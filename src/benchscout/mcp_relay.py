@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+from multiprocessing import AuthenticationError
 from multiprocessing.connection import Client
 from pathlib import Path
 
@@ -19,7 +20,7 @@ import anyio
 from mcp.server.mcpserver import MCPServer
 
 from .actions import catalog as actions_catalog
-from .runtime import address_family, agent_address
+from .runtime import address_family, agent_address, prove
 
 # How long a call that needs approval waits for the human in the panel (S3). Kept under
 # typical client tool timeouts; on expiry the agent gets approval_required and can retry.
@@ -43,6 +44,8 @@ OPENING_PROMPT = (
     "for them. Reply in {language}."
 )
 
+NOT_OURS = ("Something answers at {address}, but it is not a benchscout core of this OS user (it cannot prove this "
+            "user's key), so nothing it says is used. Another account may have taken the address. Tell the user.")
 NO_CORE = ("No benchscout core is running for this folder. Open the benchscout panel in VS Code "
            "(or run `benchscout core` in a terminal in this folder), then try again.")
 
@@ -58,6 +61,12 @@ class CoreClient:
         except OSError:
             return {"error": NO_CORE}
         with conn:
+            try:
+                prove(conn, server=False, seconds=min(timeout, 10.0))
+            except (AuthenticationError, EOFError):  # it hung up rather than prove it: not ours either
+                return {"error": NOT_OURS.format(address=self.address)}
+            except OSError as e:  # the key itself (agent_key says what is wrong with it), or the channel
+                return {"error": f"the agent channel failed: {e}"}
             try:
                 conn.send_bytes(json.dumps({"id": 1, "method": method, "params": params or {}}).encode())
                 if not conn.poll(timeout):
@@ -270,9 +279,8 @@ Actions:
     return mcp
 
 
-def main(workspace: str | None = None) -> None:
-    from .cli import user_language
-
+def main(workspace: str | None = None, language: str = "English") -> None:
+    """`language`: what the agent is asked to reply in (the CLI reads the person's; the relay imports nothing above it)."""
     from . import knowledge as K
 
     address = os.environ.get("BENCHSCOUT_ADDRESS") or agent_address(Path(workspace or os.getcwd()))[0]
@@ -284,4 +292,4 @@ def main(workspace: str | None = None) -> None:
     catalog = reply.get("result") if isinstance(reply.get("result"), str) else None
     if catalog is None:
         K.load(None)  # no core yet: what is shipped and the person's own
-    build_server(client, user_language(), catalog).run()
+    build_server(client, language, catalog).run()

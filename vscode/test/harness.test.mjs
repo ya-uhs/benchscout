@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 
 /** Temp folders are best-effort: on Windows a core or agent that is still exiting keeps its folder busy. */
 function rmrf(dir) {
@@ -24,6 +24,25 @@ const bin = process.env.BENCHSCOUT_TEST_BIN ?? join(repo, ".venv", win ? "Script
 const py = join(repo, ".venv", win ? "Scripts" : "bin", win ? "python.exe" : "python");
 const s = strings("en");
 const STLINK = "STMicroelectronics STLINK-V3";  // the device the streaming bench's crash comes from
+// What the real agents did in one session each (the fakes replay them): the shell command they asked about, their last
+// words, and what was answered to their permission asks (audit 2026-11-07, T21, T27)
+const recorded = (file) => readFileSync(join(repo, "fixtures", "real", file), "utf8").split("\n").filter(Boolean)
+  .map((l) => JSON.parse(l)).filter((l) => l.dir);
+const CLAUDE = recorded("claude_p_stream_2026-11-08.jsonl");
+const CLAUDE_SESSION = {
+  shell: CLAUDE.find((l) => l.msg.type === "control_request" && l.msg.request.tool_name === "Bash").msg.request.input.command,
+  said: CLAUDE.findLast((l) => l.msg.type === "assistant" && l.msg.message.content.some((b) => b.type === "text"))
+    .msg.message.content.find((b) => b.type === "text").text.trim(),
+  answers: CLAUDE.filter((l) => l.dir === "in" && l.msg.type === "control_response").map((l) => l.msg.response.response.behavior),
+  answer: (logged) => logged.response.behavior,
+};
+const COPILOT = recorded("copilot_acp_2026-11-08.jsonl");
+const COPILOT_SESSION = {
+  shell: COPILOT.find((l) => l.msg.method === "session/request_permission").msg.params.toolCall.rawInput.command,
+  said: COPILOT.filter((l) => l.msg.params?.update?.sessionUpdate === "agent_message_chunk").map((l) => l.msg.params.update.content.text).join("").trim(),
+  answers: COPILOT.filter((l) => l.dir === "in" && "result" in l.msg).map((l) => l.msg.result.outcome.optionId),
+  answer: (logged) => logged.response.outcome.optionId,
+};
 
 async function bench(makeDriver) {
   const root = mkdtempSync(join(win ? tmpdir() : "/tmp", "bsh"));
@@ -62,13 +81,15 @@ print(json.dumps(CoreClient(agent_address(Path(sys.argv[1]))[0]).call(sys.argv[2
   return once(p, "exit").then(() => JSON.parse(out));
 }
 
-for (const [name, make] of [
-  ["Claude Code (claude -p)", (ws, relay) => new ClaudeDriver(ws, relay, join(import.meta.dirname, "fake-claude.mjs"))],
-  ["ACP agent", (ws, relay) => new AcpDriver({ label: "Fake ACP", command: join(import.meta.dirname, "fake-acp-agent.mjs"), args: [], mcp: { via: "session" }, install: "-" }, ws, relay)],
+for (const [name, make, real] of [
+  ["Claude Code (claude -p)", (ws, relay) => new ClaudeDriver(ws, relay, join(import.meta.dirname, "fake-claude.mjs")), CLAUDE_SESSION],
+  ["ACP agent (Copilot CLI)", (ws, relay) => new AcpDriver({ label: "Fake ACP", command: join(import.meta.dirname, "fake-acp-agent.mjs"), args: [], mcp: { via: "session" }, install: "-" }, ws, relay), COPILOT_SESSION],
 ]) {
-  // an ACP agent's permission request names a tool by its display title, not by an authenticated MCP server, so there
-  // benchscout's own tools are put to the human too (acp.ts); claude -p names the server, so there they are not
+  // benchscout's own tools are not put to the human: claude -p names their server and the harness allows them; Copilot
+  // CLI does not ask for them (--allow-tool=benchscout, acp.ts). The broker gates what they do
   test(`${name}: benchscout asks first, wakes the agent, and the agent's own tools wait for the human`, async () => {
+    const log = join(mkdtempSync(join(tmpdir(), "bsfc")), "answers.jsonl");  // what the driver answered the fake
+    process.env.FAKE_CLAUDE_LOG = process.env.FAKE_ACP_LOG = log;
     const { core, h, done } = await bench(make);
     try {
       const first = await until(h, (c) => c.kind === "question");
@@ -78,19 +99,17 @@ for (const [name, make] of [
       void h.answer(first.id, { option: ch340.id });
       const watch = await until(h, (c) => c.kind === "confirm" && c.title === s.offerWatch("QinHeng USB Serial"));
       assert.deepEqual(watch.options.map((o) => o.id), ["once", "deny"], "benchscout offers to watch the device it cannot open safely");
-      if (name === "ACP agent") {
-        const scan = await until(h, (c) => c.kind === "confirm" && /bench_scan/.test(c.title));
-        await h.answer(scan.id, { option: "allow_once" });
-      }
-      const confirm = await until(h, (c) => c.kind === "confirm" && c.status === "open" && c !== watch && /rm -rf build/.test(c.detail));
-      assert.match(confirm.detail, /rm -rf build/);   // the shell command reached the human
-      if (name !== "ACP agent") assert.ok(!h.cards.some((c) => c.kind === "confirm" && /bench_scan/.test(c.title)), "benchscout's own tool was not put to the human");
+      const confirm = await until(h, (c) => c.kind === "confirm" && c.status === "open" && c !== watch && c.detail.includes(real.shell));
+      const asked = h.cards.filter((c) => c.kind === "confirm" && c.title.startsWith(s.agentWantsTool));
+      assert.deepEqual(asked, [confirm], "of the agent's tools, only the shell command reached the human");
       assert.deepEqual(core.selected.length, 1);
       void h.answer(confirm.id, { option: confirm.options.find((o) => /deny/i.test(o.label)).id });
       const report = await until(h, (c) => c.kind === "report" && c.status === "open");
-      assert.match(report.body, /bench_scan:(allow|allow_once) shell:(deny|reject_once)/);
+      assert.equal(report.body, real.said);
       assert.ok(report.options.some((o) => o.id === "continue"));
-    } finally { done(); }
+      const answers = readFileSync(log, "utf8").split("\n").filter(Boolean).map((l) => real.answer(JSON.parse(l)));
+      assert.deepEqual(answers, real.answers, "answered as in the recorded session");
+    } finally { delete process.env.FAKE_CLAUDE_LOG; delete process.env.FAKE_ACP_LOG; done(); }
   });
 }
 
@@ -130,7 +149,7 @@ test("broker approvals and agent questions become cards; answers go back through
   } finally { done(); }
 });
 
-import { writeFileSync, readFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 
 test("unknown resource: human approves a program, receives its observation and stops it in the panel", async () => {
   const { core, h, root, env, done } = await bench((ws, relay) => new ClaudeDriver(ws, relay, join(import.meta.dirname, "fake-claude.mjs")));

@@ -33,8 +33,11 @@ SHIPPED_LIBS = re.compile(r"lib(ftdi1?|usb-1\.0|hidapi[\w-]*)[.\d-]*\.(so[.\d]*|
 # each library that may travel with it (a part of its file name) and the word its license files are named by (the
 # package or formula they come from: Homebrew's libftdi, Debian's libusb-1.0-0, MSYS2's gcc-libs ...). A library not
 # listed here stops the build: it would ship without its license text
-LICENSED_AS = (("hidapi", "hidapi"), ("ftdi", "ftdi"), ("usb-1.0", "libusb"), ("stdc++", "gcc"), ("gcc_s", "gcc"),
-               ("winpthread", "winpthread"), ("zlib", "zlib"))
+# (MSYS2: openFPGALoader 1.2.0 needs libftdi, libusb, zlib and the GCC runtime; libftdi also lists libiconv, gettext and
+# confuse; each package keeps its texts in share/licenses/<name>, packages.msys2.org, 2026-11-08)
+LICENSED_AS = (("hidapi", "hidapi"), ("ftdi", "ftdi"), ("usb-1.0", "libusb"), ("stdc++", "stdc++"), ("gcc_s", "gcc"),
+               ("winpthread", "winpthread"), ("zlib", "zlib"), ("libz-1", "zlib"), ("iconv", "iconv"), ("intl", "gettext"),
+               ("confuse", "confuse"))
 
 
 def run(*args: str | Path) -> str:
@@ -119,7 +122,7 @@ def licenses(exe: Path, shipped: list[Path]) -> None:
         sys.exit(f"could not get openFPGALoader's license from {LICENSE_URL}: {e}")
     # every shipped library's license: Homebrew keeps them per formula, Debian under /usr/share/doc, MSYS2 under
     # share/licenses (on Windows the C++ runtime, winpthreads and zlib DLLs travel too)
-    wanted = ("ftdi", "libusb", "hidapi", "gcc-libs", "gcc", "winpthread", "zlib")
+    wanted = ("ftdi", "libusb", "hidapi", "gcc-libs", "gcc", "stdc++", "winpthread", "zlib", "iconv", "gettext", "confuse")
     roots = [Path("/opt/homebrew/opt"), Path("/usr/local/opt"), Path("/usr/share/doc"), exe.parent.parent / "share" / "licenses"]
     exact = {"libftdi", "libusb", "hidapi", "libftdi1-2", "libusb-1.0-0", "libhidapi-libusb0", "libhidapi-hidraw0"}
     for root in roots:

@@ -64,7 +64,8 @@ load in `bench-session/`, which must look exactly like an end user's workspace.
   (no Marketplace) with this Python core frozen by PyInstaller inside (section 15).
 - **Two channels.** The extension starts the core as a child process and owns the control channel
   (its stdin/stdout): approvals, selection. The agent reaches the core only through
-  `benchscout mcp`, a relay with tools and no way to approve (section 3, 16 R3).
+  `benchscout mcp`, a relay with tools and no way to approve (section 3, 16 R3). The core and the relay prove the
+  OS user's key (`runtime.agent_key`) to each other before anything else (another account can take a Windows pipe name).
 - **The first read needs no LLM** (raw clues + memory, shown at once); the LLM starts when the user
   picks devices (R4). Calls needing approval wait for the panel (S3). Expert behaviour ships as one
   skill source, in `.claude/skills/` for Claude Code and `.agents/skills/` for the others (S4).
@@ -167,6 +168,8 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
   fine; anything that is not SAFE (it resets or writes something) only after the user says OK
   in chat for that action. Why: this session has a shell and can edit code, so a direct probe
   could reset or rewrite a board the user is working on, and would test a path no user takes.
+- The extension's tests drive fake agents that replay real sessions (`fixtures/real/claude_p_stream_*.jsonl`,
+  `copilot_acp_*.jsonl`); record a new one the same way when an agent's behaviour matters, rather than editing the fakes.
 - Tests read `fixtures/knowledge` as the user's knowledge layer (what the fixture benches assume, e.g. that the
   example probe's serial port is safe to open): never the developer's own `~/.config/benchscout/knowledge`.
 - **Add a test only for one of these**: a safety promise (the gate, approvals, the policy; property tests where

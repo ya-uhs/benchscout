@@ -119,10 +119,15 @@ def test_serial_ending_in_a_letter_is_not_cut_without_reason(tmp_path):
     assert dev.serial == "ABCB"
 
 
-@pytest.mark.assumed  # Python's locale names on Windows, not yet recorded on the Windows VM
-@pytest.mark.parametrize("name,code", [("Japanese_Japan", "ja"), ("ja_JP", "ja"), ("English_United States", "en"), (None, None)])
-def test_windows_locale(name, code):
-    assert windows_locale_code(name) == code
+WIN_LOCALE = json.loads((Path(__file__).parent.parent / "fixtures" / "real" / "windows_locale_2026-11-08.json").read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("key", [k for k in WIN_LOCALE if "LC_CTYPE" in k])
+def test_windows_locale_names_as_recorded(key):
+    """Each locale name the C runtime gave on the Windows VM (both forms: 'Japanese_Japan.932' and 'ja-JP'; Python's
+    getlocale() raises on the second) says its language (audit 2026-11-07, T8: these were made up)."""
+    name = WIN_LOCALE[key]
+    assert windows_locale_code(name) == ("ja" if name.lower().startswith(("ja", "japanese")) else "en"), name
 
 
 def test_runtime_dir_ignores_temp_dir_variables(monkeypatch):

@@ -25,7 +25,10 @@ export interface AcpProfile {
 export const COPILOT: AcpProfile = {
   label: "GitHub Copilot CLI",
   command: "copilot",
-  args: ["--acp"],
+  // benchscout's own tools run without Copilot asking (its permission rule for the MCP server named benchscout): the
+  // broker gates what they do, as for Claude Code. Without it every bench_scan was a card (real Copilot CLI 1.0.105,
+  // fixtures/real/copilot_acp_2026-11-08.jsonl). Its other tools still ask, and the asks become cards
+  args: ["--acp", "--allow-tool=benchscout"],
   mcp: {
     via: "flag",
     build: (r) => ["--additional-mcp-config", JSON.stringify({

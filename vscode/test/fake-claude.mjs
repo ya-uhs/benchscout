@@ -1,31 +1,55 @@
 #!/usr/bin/env node
-// Stands in for `claude -p --input-format stream-json --output-format stream-json`: for each user
-// message it asks permission for a benchscout tool and for a shell command, then says what it got.
+// Stands in for `claude -p --input-format stream-json --output-format stream-json --permission-prompt-tool stdio` with
+// what the real one printed (fixtures/real/claude_p_stream_2026-11-08.jsonl; audit 2026-11-07, T21: it had been made
+// up). For each user message it prints the recorded session's lines in order; at each recorded permission ask it waits
+// for the answer, and writes the answer it got to FAKE_CLAUDE_LOG (one JSON line each) for the test to compare.
+// FAKE_QUIET: no permission asks, one benchscout tool call, then it says the first line it was asked; built from the
+// recorded messages, so every message still has the real fields.
+import { appendFileSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import * as readline from "node:readline";
+
+export const RECORDING = join(import.meta.dirname, "..", "..", "fixtures", "real", "claude_p_stream_2026-11-08.jsonl");
+const recorded = readFileSync(RECORDING, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((l) => l.dir);
+const printed = recorded.filter((l) => l.dir === "out").map((l) => l.msg);
 const out = (m) => process.stdout.write(JSON.stringify(m) + "\n");
 const waiting = new Map();
+const answered = (id) => new Promise((resolve) => waiting.set(id, resolve));
+
+// the recorded messages a quiet turn is made of: the benchscout tool call, its result, the text, the result line
+const call = printed.find((m) => m.type === "assistant" && m.message.content.some((b) => b.name === "mcp__benchscout__bench_scan"));
+const callId = call.message.content[0].id;
+const result = printed.find((m) => m.type === "user" && m.message.content.some((b) => b.tool_use_id === callId));
+const text = printed.findLast((m) => m.type === "assistant" && m.message.content.some((b) => b.type === "text"));
+const end = printed.find((m) => m.type === "result");
 let n = 0;
-const ask = (tool, input) => new Promise((resolve) => {
-  const id = `req${++n}`;
-  waiting.set(id, resolve);
-  out({ type: "control_request", request_id: id, request: { subtype: "can_use_tool", tool_name: tool, input, description: `use ${tool}` } });
-});
-out({ type: "system", subtype: "init" });
-readline.createInterface({ input: process.stdin }).on("line", async (line) => {
-  const m = JSON.parse(line);
-  if (m.type === "control_response") return waiting.get(m.response.request_id)?.(m.response.response.behavior);
-  if (m.type !== "user") return;
-  if (process.env.FAKE_QUIET) {  // no permission asks: one benchscout tool call, then say what it was asked
-    const first = String(m.message.content).split("\n")[0];
-    const id = `q${++n}`;
-    out({ type: "assistant", message: { content: [{ type: "tool_use", id, name: "mcp__benchscout__bench_scan" }] } });
-    out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] } });
-    out({ type: "assistant", message: { content: [{ type: "text", text: `got: ${first}` }] } });
-    out({ type: "result", subtype: "success", is_error: false, result: `got: ${first}` });
-    return;
+
+async function replay() {
+  for (const m of printed) {
+    if (m.type === "system") continue;  // once, at start
+    out(m);
+    if (m.type === "control_request") {
+      const got = await answered(m.request_id);
+      if (process.env.FAKE_CLAUDE_LOG) {
+        appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ tool: m.request.tool_name, response: got }) + "\n");
+      }
+    }
   }
-  const a = await ask("mcp__benchscout__bench_scan", {});
-  const b = await ask("Bash", { command: "rm -rf build" });
-  out({ type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "mcp__benchscout__bench_scan" }, { type: "text", text: `bench_scan:${a} shell:${b}` }] } });
-  out({ type: "result", subtype: "success", is_error: false, result: `bench_scan:${a} shell:${b}` });
+}
+
+function quiet(first) {
+  const id = `toolu_quiet_${++n}`;
+  out({ ...call, message: { ...call.message, content: [{ ...call.message.content[0], id }] } });
+  out({ ...result, message: { ...result.message, content: [{ ...result.message.content[0], tool_use_id: id }] } });
+  out({ ...text, message: { ...text.message, content: [{ type: "text", text: `got: ${first}` }] } });
+  out({ ...end, result: `got: ${first}`, permission_denials: [] });
+}
+
+out(printed.find((m) => m.type === "system"));
+let turn = Promise.resolve();
+readline.createInterface({ input: process.stdin }).on("line", (line) => {
+  const m = JSON.parse(line);
+  if (m.type === "control_response") return waiting.get(m.response.request_id)?.(m.response.response);
+  if (m.type !== "user") return;
+  turn = turn.then(() => (process.env.FAKE_QUIET ? quiet(String(m.message.content).split("\n")[0]) : replay()));
 });

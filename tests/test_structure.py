@@ -96,3 +96,49 @@ def test_operations_use_only_what_their_context_lists():
                 if any(n.split(".")[-1] in ("broker", "recon") for n in names):
                     wrong.append(f"{path.name}:{node.lineno} imports the gate or recon")
     assert not wrong, wrong
+
+
+def _imports() -> dict[str, set[str]]:
+    """Which modules of the core each module imports, in any form (at the top, in a function, relative or absolute)."""
+    mods = {".".join(p.relative_to(SRC).with_suffix("").parts).removesuffix(".__init__"): p for p in SRC.rglob("*.py")}
+    graph: dict[str, set[str]] = {}
+    for name, path in mods.items():
+        package = name.split(".") if path.name == "__init__.py" else name.split(".")[:-1]
+        found: set[str] = set()
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.ImportFrom):
+                if node.level:
+                    base = package[:len(package) - node.level + 1]
+                    found |= {".".join(base + [node.module])} if node.module else {".".join(base + [a.name]) for a in node.names}
+                elif node.module and node.module.startswith("benchscout."):
+                    found.add(node.module.removeprefix("benchscout."))
+            elif isinstance(node, ast.Import):
+                found |= {a.name.removeprefix("benchscout.") for a in node.names if a.name.startswith("benchscout.")}
+        graph[name] = {m for m in found if m in mods and m != name}
+    return graph
+
+
+def test_modules_depend_one_way():
+    """Codex's audit finding 8 (audit 2026-11-07): the checks above look at where words are, not which way modules depend.
+    Every dependency goes one way (no module reaches, however indirectly, back to itself: the action types and the
+    knowledge loader, the CLI and the MCP relay did), and the entrances (the CLI, the core, the relay) are used by the CLI
+    only: nothing below them depends on them."""
+    graph = _imports()
+    cycles = []
+
+    def walk(m: str, path: list[str]) -> None:
+        for d in sorted(graph[m]):
+            if d in path:
+                cycles.append(" -> ".join(path[path.index(d):] + [d]))
+            elif d not in done:
+                walk(d, path + [d])
+        done.add(m)
+
+    done: set[str] = set()
+    for m in sorted(graph):
+        if m not in done:
+            walk(m, [m])
+    assert not cycles, cycles
+    entrances = {"cli", "core", "mcp_relay"}
+    wrong = sorted(f"{m} imports {d}" for m, ds in graph.items() for d in ds & entrances if m != "cli")
+    assert not wrong, wrong

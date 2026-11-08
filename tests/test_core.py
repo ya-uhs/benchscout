@@ -296,6 +296,70 @@ def test_relay_without_a_core_says_how_to_start_one(addr):
     assert CoreClient(addr).call("scan") == {"error": NO_CORE}
 
 
+def _impostor(addr, seen):
+    """A program at the agent address that is not this user's core: it answers the way the core did before (audit
+    2026-11-07, recorded on Windows: another account created the pipe first and the relay used its answers)."""
+    from multiprocessing.connection import Listener
+
+    from benchscout.runtime import address_family
+
+    listener = Listener(addr, address_family(addr))
+
+    def serve():
+        try:
+            with listener.accept() as conn:
+                if conn.poll(5):
+                    seen.append(conn.recv_bytes())
+                    conn.send_bytes(json.dumps({"id": 1, "result": "from the impostor"}).encode())
+                conn.poll(5)
+        except (EOFError, OSError):  # the other end hung up on it
+            pass
+
+    threading.Thread(target=serve, daemon=True).start()
+    return listener
+
+
+def test_relay_uses_nothing_from_a_program_that_cannot_prove_this_users_key(addr):
+    seen: list = []
+    listener = _impostor(addr, seen)
+    try:
+        reply = CoreClient(addr).call("catalog", timeout=1)
+        assert "from the impostor" not in json.dumps(reply) and "not a benchscout core of this OS user" in reply["error"]
+        assert not seen, "nor does it tell it what the agent asked"
+    finally:
+        listener.close()
+
+
+def test_a_core_does_not_start_where_a_program_that_cannot_prove_the_key_listens(io, tmp_path, addr):
+    listener = _impostor(addr, [])
+    try:
+        with pytest.raises(RuntimeError, match="not a benchscout core of this user"):
+            Core(Broker(io, tmp_path), addr, stdio.StringIO()).start()
+    finally:
+        listener.close()
+
+
+def test_the_core_answers_nobody_who_cannot_prove_this_users_key(io, tmp_path, addr):
+    from multiprocessing.connection import Client
+
+    from benchscout.runtime import address_family
+
+    br = Broker(io, tmp_path)
+    core = Core(br, addr, stdio.StringIO())
+    core.start()
+    try:
+        with Client(addr, address_family(addr)) as conn:
+            conn.send_bytes(json.dumps({"id": 1, "method": "scan", "params": {}}).encode())
+            first = conn.recv_bytes()
+            assert first.startswith(b"#CHALLENGE#"), first  # it asks first, and the request is not taken as an answer
+            with pytest.raises(EOFError):
+                while True:
+                    assert b'"result"' not in conn.recv_bytes(), "no answer to the request"
+        assert CoreClient(addr).call("inventory")["result"] is not None, "this user's relay still gets answers"
+    finally:
+        core.stop()
+
+
 @pytest.mark.parametrize("line,expected", [
     ("approve ab12", {"method": "decide", "params": {"approval_id": "ab12", "granted": True, "scope": "once"}}),
     ("approve ab12 session", {"method": "decide", "params": {"approval_id": "ab12", "granted": True, "scope": "session"}}),

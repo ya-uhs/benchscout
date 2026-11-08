@@ -92,7 +92,7 @@ class _Layers:
         self.gets: dict[str, dict] = {}
 
     def add(self, data: dict) -> None:
-        from .actions import from_data
+        from .action_types import from_data
 
         self.shared |= set(data.get("shared_serials", []))
         for e in data.get("usb", []):
