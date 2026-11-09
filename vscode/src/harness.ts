@@ -9,7 +9,7 @@
 // No `vscode` import: tested with Node against a real core and fake agents.
 
 import { EventEmitter } from "events";
-import { AgentDriver, AgentEvent, PermissionAsk, WakeError } from "./agents/types";
+import { AgentDriver, AgentEvent, PermissionAnswer, PermissionAsk, WakeError } from "./agents/types";
 import { Approval, Bench, CoreClient, DeviceEvent, DevicesChanged, DownloadEvent, MemoryEntry, MemoryEvent, Question, ToolProposal, describeArgs, deviceViews } from "./core";
 import { Strings } from "./i18n";
 
@@ -42,6 +42,7 @@ export interface Card {
   effect?: string; // for confirm cards from the broker
   options: CardOption[];
   freeText: boolean; // "something else…" box
+  placeholder?: string; // what that box asks for, when it is not "something else"
   status: "open" | "working" | "closed";
   answer?: string;
   progress: string[]; // for report cards: what the agent did, in order
@@ -62,6 +63,7 @@ export class Harness extends EventEmitter {
   private handlers = new Map<string, (a: Answer) => unknown>();
   private driver?: AgentDriver;
   private turns: number[] = [];
+  private lastDenial?: { tool: string; text?: string }; // the agent tool the human said no to in this turn
   private nextId = 1;
   private askedFirst = false;
   private lastWake = new Map<string, number>(); // device -> when the agent was last woken for it
@@ -527,10 +529,20 @@ export class Harness extends EventEmitter {
         this.driver = d;
       }
       this.turns.push(Date.now());
+      this.lastDenial = undefined;
       const r = await this.driver.prompt(this.instructions(request));
       report.status = "open";
       report.title = `${this.s.report}: ${title}`;
       report.body = r.text.trim() || report.body;
+      // (set by the permission card's answer while the turn ran)
+      const denied = r.stoppedOnDenial ? this.lastDenial as { tool: string; text?: string } | undefined : undefined;
+      if (denied) {
+        // the agent ended its turn on the human's "no" (Copilot CLI does): a "no" means "not that", not "stop
+        // everything", so it is told so and goes on, as Claude Code goes on by itself (the human can still press Done)
+        report.body = `${report.body}\n\n${this.s.deniedGoesOn(denied.tool)}`;
+        void this.wake(`The human denied "${denied.tool}" in the benchscout inbox${denied.text ? ` and said: ${denied.text}` : ""}. `
+          + "Do not run it again. Continue the investigation without it and report what you found.", title);
+      }
       report.options = [{ id: "continue", label: this.s.continueIt, primary: true }, { id: "done", label: this.s.doneIt }];
       report.freeText = true;
       this.handlers.set(report.id, (a) => (a.text ? this.wake(a.text, a.text.slice(0, 60)) : a.option === "continue" ? this.wake("Continue.", title) : undefined));
@@ -571,16 +583,24 @@ export class Harness extends EventEmitter {
     this.changed();
   }
 
-  /** benchscout's own tools are gated by the broker, so the agent's ask about them is answered here. */
-  private permission(p: PermissionAsk): Promise<string> {
+  /** benchscout's own tools are gated by the broker, so the agent's ask about them is answered here. The card for
+   *  any other tool has a box: writing in it denies the call and tells the agent what to do instead ("No, and tell
+   *  it what to do differently", as Claude Code's and Copilot CLI's own prompts offer). */
+  private permission(p: PermissionAsk): Promise<PermissionAnswer> {
     const allow = p.options.find((o) => o.kind === "allow_once") ?? p.options.find((o) => o.kind !== "reject");
-    if (p.benchscout && allow) return Promise.resolve(allow.id);
+    if (p.benchscout && allow) return Promise.resolve({ option: allow.id });
+    const reject = p.options.find((o) => o.kind === "reject")?.id ?? "reject";
     return new Promise((resolve) => {
       this.add({
         kind: "confirm", title: `${this.s.agentWantsTool}: ${p.title}`, body: "", detail: p.detail,
         options: p.options.map((o, i) => ({ id: o.id, primary: i === 0,
-          label: o.kind === "allow_once" ? this.s.allowOnce : o.kind === "allow_always" ? this.s.allowAlways : this.s.deny })), freeText: false,
-      }, (a) => resolve(a.option ?? p.options.find((o) => o.kind === "reject")?.id ?? "reject"));
+          label: o.kind === "allow_once" ? this.s.allowOnce : o.kind === "allow_always" ? this.s.allowAlways : this.s.deny })),
+        freeText: true, placeholder: this.s.denyInstead,
+      }, (a) => {
+        const option = a.text ? reject : a.option ?? reject;
+        if (option === reject) this.lastDenial = { tool: p.title, text: a.text };
+        resolve({ option, text: a.text });
+      });
     });
   }
 

@@ -111,7 +111,7 @@ function makeDriver(ctx: vscode.ExtensionContext, ws: string): AgentDriver {
   if (id === "copilot") return new AcpDriver({ ...COPILOT, command: which("copilot") ?? "copilot" }, ws, relay);
   // Nothing chosen: say so instead of picking one (design.md section 17: never switch on our own).
   return {
-    label: "benchscout", onEvent: () => {}, onPermission: async () => "reject",
+    label: "benchscout", onEvent: () => {}, onPermission: async () => ({ option: "reject" }),
     start: async () => { throw new WakeError("No agent is chosen", s.chooseAgent, "no_agent"); },
     prompt: async () => ({ stopReason: "error", text: "" }), stop: () => {},
   };

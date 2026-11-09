@@ -128,7 +128,7 @@ function card(c, s) {
     h += '<div class="row">' + c.options.map((o) => '<button class="opt' + (o.primary ? " primary" : "") + '" data-card="' + esc(c.id) + '" data-opt="' + esc(o.id) + '">' + esc(o.label) + "</button>").join("") + "</div>";
   }
   if (c.status === "open" && c.freeText) {
-    h += '<div class="row" style="flex-wrap:nowrap"><textarea data-draft="' + esc(c.id) + '" placeholder="' + esc(s.typeHere) + '">' + esc(drafts[c.id] ?? "") + '</textarea><button data-card="' + esc(c.id) + '" data-text="1">' + esc(s.send) + "</button></div>";
+    h += '<div class="row" style="flex-wrap:nowrap"><textarea data-draft="' + esc(c.id) + '" placeholder="' + esc(c.placeholder ?? s.typeHere) + '">' + esc(drafts[c.id] ?? "") + '</textarea><button data-card="' + esc(c.id) + '" data-text="1">' + esc(s.send) + "</button></div>";
   }
   if (c.status === "closed" && c.answer) h += '<div class="answer muted">→ ' + esc(c.answer) + "</div>";
   return h + "</div>";

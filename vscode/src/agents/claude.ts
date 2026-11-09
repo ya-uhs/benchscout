@@ -10,12 +10,12 @@ import crossSpawn = require("cross-spawn");
 const spawn = (command: string, args: string[], opts: { cwd: string }) =>
   crossSpawn(command, args, { ...opts, stdio: "pipe" }) as ChildProcessWithoutNullStreams;
 import * as readline from "readline";
-import { AgentDriver, AgentEvent, McpRelay, PermissionAsk, TurnResult, WakeError, isBenchscoutTool } from "./types";
+import { AgentDriver, AgentEvent, McpRelay, PermissionAnswer, PermissionAsk, TurnResult, WakeError, isBenchscoutTool } from "./types";
 
 export class ClaudeDriver implements AgentDriver {
   readonly label = "Claude Code";
   onEvent: (e: AgentEvent) => void = () => {};
-  onPermission: (p: PermissionAsk) => Promise<string> = async () => "reject";
+  onPermission: (p: PermissionAsk) => Promise<PermissionAnswer> = async () => ({ option: "reject" });
   private proc?: ChildProcessWithoutNullStreams;
   private turn?: { resolve: (r: TurnResult) => void; reject: (e: Error) => void; text: string };
   private stderr = "";
@@ -85,7 +85,7 @@ export class ClaudeDriver implements AgentDriver {
       }
     } else if (m.type === "control_request" && m.request?.subtype === "can_use_tool") {
       const r = m.request;
-      const choice = await this.onPermission({
+      const answer = await this.onPermission({
         tool: r.tool_name,
         title: r.description || r.display_name || r.tool_name,
         detail: r.input?.command ?? JSON.stringify(r.input ?? {}),
@@ -95,9 +95,10 @@ export class ClaudeDriver implements AgentDriver {
           { id: "reject", label: "Deny", kind: "reject" },
         ],
       });
-      const response = choice.startsWith("allow")
+      // a denial goes back with what the human said, and Claude goes on without the tool (its own prompt does the same)
+      const response = answer.option.startsWith("allow")
         ? { behavior: "allow", updatedInput: r.input ?? {} }
-        : { behavior: "deny", message: "The human denied this in the benchscout inbox." };
+        : { behavior: "deny", message: "The human denied this in the benchscout inbox." + (answer.text ? ` They said: ${answer.text}` : "") };
       this.send({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response } });
     } else if (m.type === "result") {
       const t = this.turn;

@@ -37,6 +37,8 @@ const CLAUDE_SESSION = {
   answer: (logged) => logged.response.behavior,
 };
 const COPILOT = recorded("copilot_acp_2026-11-08.jsonl");
+// the title of the tool the recorded Copilot asked about and was denied
+const COPILOT_DENIED = COPILOT.find((l) => l.msg.method === "session/request_permission").msg.params.toolCall.title;
 const COPILOT_SESSION = {
   shell: COPILOT.find((l) => l.msg.method === "session/request_permission").msg.params.toolCall.rawInput.command,
   said: COPILOT.filter((l) => l.msg.params?.update?.sessionUpdate === "agent_message_chunk").map((l) => l.msg.params.update.content.text).join("").trim(),
@@ -103,12 +105,26 @@ for (const [name, make, real] of [
       const asked = h.cards.filter((c) => c.kind === "confirm" && c.title.startsWith(s.agentWantsTool));
       assert.deepEqual(asked, [confirm], "of the agent's tools, only the shell command reached the human");
       assert.deepEqual(core.selected.length, 1);
-      void h.answer(confirm.id, { option: confirm.options.find((o) => /deny/i.test(o.label)).id });
+      // "No, and tell it what to do differently" (Claude Code's and Copilot CLI's own prompts): words in the box deny it
+      assert.equal(confirm.placeholder, s.denyInstead);
+      void h.answer(confirm.id, { text: "list the folder instead" });
       const report = await until(h, (c) => c.kind === "report" && c.status === "open");
-      assert.equal(report.body, real.said);
       assert.ok(report.options.some((o) => o.id === "continue"));
-      const answers = readFileSync(log, "utf8").split("\n").filter(Boolean).map((l) => real.answer(JSON.parse(l)));
-      assert.deepEqual(answers, real.answers, "answered as in the recorded session");
+      const logged = () => readFileSync(log, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+      assert.deepEqual(logged().filter((l) => l.response).map(real.answer), real.answers, "answered as in the recorded session");
+      if (name.startsWith("Claude")) {
+        // Claude Code takes the words with the denial and goes on by itself
+        assert.equal(report.body, real.said);
+        assert.match(logged().find((l) => l.tool === "Bash").response.message, /list the folder instead/);
+      } else {
+        // Copilot CLI ends its turn on a denial (recorded): benchscout says so and asks it to go on, with the words
+        assert.equal(report.body, `${real.said}\n\n${s.deniedGoesOn(COPILOT_DENIED)}`);
+        const end = Date.now() + 15000;
+        while (!logged().some((l) => l.prompt?.startsWith("The human denied")) && Date.now() < end) await new Promise((r) => setTimeout(r, 50));
+        const next = logged().find((l) => l.prompt?.startsWith("The human denied"))?.prompt ?? "";
+        assert.match(next, /list the folder instead/);
+        assert.ok(next.includes(COPILOT_DENIED), next);
+      }
     } finally { delete process.env.FAKE_CLAUDE_LOG; delete process.env.FAKE_ACP_LOG; done(); }
   });
 }

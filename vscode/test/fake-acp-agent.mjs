@@ -24,6 +24,9 @@ acp.agent({ name: "fake-acp-agent" })
   .onRequest("initialize", () => reply("initialize"))
   .onRequest("session/new", () => reply("session/new"))
   .onRequest("session/prompt", async (ctx) => {
+    if (process.env.FAKE_ACP_LOG) {  // what it was asked, for the test (benchscout's follow-up after a denial)
+      appendFileSync(process.env.FAKE_ACP_LOG, JSON.stringify({ prompt: ctx.params.prompt.map((b) => b.text ?? "").join("") }) + "\n");
+    }
     for (const m of turn) {
       if (m.method === "session/update") {
         await ctx.client.notify(acp.methods.client.session.update, m.params);

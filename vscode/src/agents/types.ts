@@ -25,6 +25,16 @@ export interface PermissionAsk {
 export interface TurnResult {
   stopReason: string;
   text: string; // everything the agent said in this turn
+  // it ended the turn right after the human denied one of its tools, doing nothing more (Copilot CLI cancels the whole
+  // turn on a denial: real sessions, fixtures/real/copilot_acp_2026-11-08.jsonl); Claude Code goes on by itself
+  stoppedOnDenial?: boolean;
+}
+
+/** What the human answered on an agent's permission card, and what they said with a denial ("No, and tell it what to do
+ *  differently", as Claude Code's and Copilot CLI's own prompts offer). */
+export interface PermissionAnswer {
+  option: string;
+  text?: string;
 }
 
 /** Waking failed. Shown to the human as is; benchscout never switches to another agent on its own. */
@@ -44,7 +54,7 @@ export interface McpRelay {
 export interface AgentDriver {
   readonly label: string;
   onEvent: (e: AgentEvent) => void;
-  onPermission: (p: PermissionAsk) => Promise<string>; // returns the chosen option id
+  onPermission: (p: PermissionAsk) => Promise<PermissionAnswer>;
   start(): Promise<void>; // spawn + handshake; throws WakeError
   prompt(text: string): Promise<TurnResult>; // one turn
   stop(): void;

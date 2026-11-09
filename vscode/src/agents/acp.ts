@@ -9,7 +9,7 @@ const spawn = (command: string, args: string[], opts: { cwd: string }) =>
   crossSpawn(command, args, { ...opts, stdio: "pipe" }) as ChildProcessWithoutNullStreams;
 import { Readable, Writable } from "stream";
 import type * as Acp from "@agentclientprotocol/sdk" with { "resolution-mode": "import" };
-import { AgentDriver, AgentEvent, McpRelay, PermissionAsk, TurnResult, WakeError } from "./types";
+import { AgentDriver, AgentEvent, McpRelay, PermissionAnswer, PermissionAsk, TurnResult, WakeError } from "./types";
 
 /** How a particular ACP agent is started and how it gets benchscout's MCP relay. */
 export interface AcpProfile {
@@ -40,12 +40,13 @@ export const COPILOT: AcpProfile = {
 
 export class AcpDriver implements AgentDriver {
   onEvent: (e: AgentEvent) => void = () => {};
-  onPermission: (p: PermissionAsk) => Promise<string> = async () => "reject";
+  onPermission: (p: PermissionAsk) => Promise<PermissionAnswer> = async () => ({ option: "reject" });
   private proc?: ChildProcessWithoutNullStreams;
   private session?: Acp.ActiveSession;
   private close?: () => void;
   private titles = new Map<string, string>(); // toolCallId -> title from session/update
   private stderr = "";
+  private denied = false; // the human denied a tool and the agent has not started another since
 
   constructor(private profile: AcpProfile, private cwd: string, private relay: McpRelay) {}
 
@@ -93,9 +94,10 @@ export class AcpDriver implements AgentDriver {
     if (!s) throw new WakeError(`${this.label} is not running`, "Start it again.");
     void s.prompt(text);
     let said = "";
+    this.denied = false;
     for (;;) {
       const m = await s.nextUpdate();
-      if (m.kind === "stop") return { stopReason: m.response.stopReason, text: said };
+      if (m.kind === "stop") return { stopReason: m.response.stopReason, text: said, stoppedOnDenial: this.denied };
       const u = m.notification.update as any;
       if (u.sessionUpdate === "agent_message_chunk" && u.content?.type === "text") {
         said += u.content.text;
@@ -103,6 +105,7 @@ export class AcpDriver implements AgentDriver {
       } else if (u.sessionUpdate === "agent_thought_chunk" && u.content?.type === "text") {
         this.onEvent({ kind: "thought", text: u.content.text });
       } else if (u.sessionUpdate === "tool_call") {
+        this.denied = false;  // it went on with something else
         this.titles.set(u.toolCallId, u.title);
         this.onEvent({ kind: "tool", id: u.toolCallId, title: u.title, status: u.status });
       } else if (u.sessionUpdate === "tool_call_update" && u.status) {
@@ -120,7 +123,7 @@ export class AcpDriver implements AgentDriver {
     const tc = params.toolCall as any;
     const title = this.titles.get(tc.toolCallId) ?? tc.title ?? "";
     const raw = tc.rawInput ?? {};
-    const choice = await this.onPermission({
+    const answer = await this.onPermission({
       tool: title,
       title: tc.title ?? title,
       detail: raw.command ?? (Array.isArray(raw.commands) ? raw.commands.join("; ") : JSON.stringify(raw)),
@@ -128,6 +131,8 @@ export class AcpDriver implements AgentDriver {
       options: params.options.map((o) => ({ id: o.optionId, label: o.name,
         kind: o.kind.startsWith("allow") ? (o.kind as "allow_once" | "allow_always") : "reject" })),
     });
-    return { outcome: { outcome: "selected", optionId: choice } };
+    // ACP's answer carries no words: what the human said goes to the agent with the next prompt (the harness)
+    this.denied = !params.options.find((o) => o.optionId === answer.option)?.kind.startsWith("allow");
+    return { outcome: { outcome: "selected", optionId: answer.option } };
   }
 }
