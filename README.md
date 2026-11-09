@@ -79,7 +79,7 @@ ESP32-S3 USB ─┬─ /dev/cu.usbmodem ─uart─┐
 |---|---|---|
 | (planned) `vscode/` | L4 panel | device list, first read, logs, approvals; owns the control channel |
 | `mcp_relay.py`, `skills/bench-expert` | L3 agent face | MCP tools, instructions and the `bench_start` prompt (relayed to the core); expert behaviour |
-| `core.py` | core | control channel (stdin/stdout) and agent channel (Unix socket) |
+| `core.py` | core | control channel (stdin/stdout) and agent channel (Unix socket / Windows named pipe; core and relay prove the user's key to each other) |
 | `broker.py`, `approvals.py`, `locks.py` | L2 broker | session selection, approvals in memory, per-device locks across windows, artifacts |
 | `policy.py` | policy | classify by effect on device state; propagate impact over the graph |
 | `recon.py` | L1b identification | build the graph, run SAFE probes, make proposals |
@@ -96,7 +96,9 @@ ESP32-S3 USB ─┬─ /dev/cu.usbmodem ─uart─┐
   becomes SAFE only after it was observed not to reset anything and a human confirmed that.
 - VISA's serial (`ASRL`) resources are never sent `*IDN?`.
 - Approvals come only from the control channel and live in the core's memory. DANGEROUS grants
-  are bound to (action, port, arg) and single use; DISRUPTIVE grants may cover the session or N minutes.
+  are bound to (action, port, arg) and single use, or for the session where the card offers it (an agent program while
+  unchanged, a write marked `allow_session` with the same tool on the same device, an output setting up to the value
+  approved); DISRUPTIVE grants may cover the session or N minutes. "Allow all" covers DISRUPTIVE only.
 - Only devices selected for the session can be used; a selected device is locked against other windows
   and its serial port is opened exclusively.
 - An action or command with no declared effect is treated as DANGEROUS.
