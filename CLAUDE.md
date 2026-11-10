@@ -101,7 +101,8 @@ openFPGALoader next to it; on macOS from `brew install openfpgaloader`), `uv run
 packaging/notices.py` (THIRD_PARTY_NOTICES.txt: every shipped component's license text; fails if one is missing), then
 `VSCE_TARGET=darwin-arm64 npm run package:platform`
 (same tests against the frozen core: `BENCHSCOUT_TEST_BIN=$PWD/bin/benchscout/benchscout npm test`). Keep `src/core.ts` free of `vscode` imports
-so it stays testable with plain Node. Panel wording lives in `src/i18n.ts` (en/ja); clarity first.
+so it stays testable with plain Node. Panel wording is English and lives in `src/wording.ts`, plain and short; the
+person's language (`benchscout.language`) is what the agent replies in (design.md §2, §12 2026-11-10).
 
 To look at the extension in a real VS Code (no computer use needed, the user's own VS Code untouched):
 `npm run e2e` (in `vscode/`, after `npm run package`) drives that same isolated VS Code through a scripted bench
@@ -179,7 +180,7 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
 - **Add a test only for one of these**: a safety promise (the gate, approvals, the policy; property tests where
   inputs are open-ended), something a real bench or a real OS did (record its output in `fixtures/real/` and test
   against the recording), or a regression that was found. Do not add tests that restate the implementation (retyped
-  panel wording: compare with the `i18n.ts` string instead) or that test a parser against output you made up: such
+  panel wording: compare with the `wording.ts` string instead) or that test a parser against output you made up: such
   tests pass while the real system behaves otherwise (the invented WMI test passed while Windows named devices by
   their drivers). Where no recording exists yet, mark the test `@pytest.mark.assumed` and replace it once that
   system is on the bench. Prefer one end-to-end check (`npm run e2e`) over many unit tests of the same path.

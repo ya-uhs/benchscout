@@ -15,8 +15,8 @@ import { AcpDriver, COPILOT } from "./agents/acp";
 import { ClaudeDriver } from "./agents/claude";
 import { AgentDriver, McpRelay, WakeError } from "./agents/types";
 import { Bench, CoreClient, DeviceEvent, deviceViews, MemoryGroup } from "./core";
-import { Card, Harness, memoryText } from "./harness";
-import { languageName, pickLanguage, strings } from "./i18n";
+import { Card, Harness } from "./harness";
+import { S as s, languageName, pickLanguage } from "./wording";
 import { DeviceRow, PanelState, html } from "./panel";
 
 /** The OS UI language: macOS's first preferred language, else the locale (Windows reports its own here). */
@@ -35,7 +35,6 @@ function currentLanguage(): string {
   return pickLanguage(vscode.workspace.getConfiguration("benchscout").get<string>("language"), vscode.env.language, osLanguage());
 }
 
-let s = strings(currentLanguage());
 
 const AGENTS: Record<string, { label: string; exe: string }> = {
   copilot: { label: "GitHub Copilot CLI", exe: "copilot" },
@@ -127,7 +126,7 @@ function askForAgent(): void {
     agentCard = harness.notify(s.noAgentFound, "", s.noAgentFix);
     return;
   }
-  agentCard = harness.ask(s.chooseAgent, found.map(([, a]) => a.label).join(" / "),
+  agentCard = harness.chooser = harness.ask(s.chooseAgent, found.map(([, a]) => a.label).join(" / "),
     found.map(([id, a], i) => ({ id, label: a.label, primary: i === 0 })),
     async (a) => {
       // the configuration listener below then writes the skill and wakes whatever waited for the choice
@@ -175,7 +174,7 @@ function refresh(): void {
   });
   const state: PanelState = { running: !!core?.running, agent: AGENTS[chosenAgent()]?.label ?? "", cards, devices,
     others: views.filter((d) => d.other).length,
-    memory: memoryGroups.map((g) => ({ ...g, entries: g.entries.map((e) => ({ ...e, text: memoryText(e, s) })) })),
+    memory: memoryGroups,
     allowAll: !!core?.running && !!core?.allowAll, autonomy: currentAutonomy(), strings: plain };
   view.webview.postMessage({ type: "state", state });
 }
@@ -297,10 +296,8 @@ export function activate(ctx: vscode.ExtensionContext): void {
         harness?.setAutonomy(currentAutonomy());
         refresh();
       }
-      if (e.affectsConfiguration("benchscout.language")) {  // new cards and the panel speak it from now on
-        s = strings(currentLanguage());
-        harness?.setLanguage(s, languageName(currentLanguage()));
-        refresh();
+      if (e.affectsConfiguration("benchscout.language")) {  // the agent replies in it from its next turn
+        harness?.setLanguage(languageName(currentLanguage()));
       }
       if (!e.affectsConfiguration("benchscout.agent")) return;
       const ws = folder();

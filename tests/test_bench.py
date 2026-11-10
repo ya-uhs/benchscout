@@ -304,43 +304,6 @@ def test_crash_without_guru_meditation_is_an_alert_that_survives_a_quiet_answer(
     assert any(f.startswith("ALERT: abort marker") for f in esp.facts)
 
 
-def test_every_reason_the_core_gives_is_said_in_the_japanese_panel(tmp_path):
-    """The panel says a reason in the person's language by its code, else in the core's English (harness.ts reason()).
-    Audit 2026-11-07, T14: this test copied eight codes and never looked at the panel; a value outside its remembered
-    limits was said in English in a Japanese panel."""
-    import re
-
-    from benchscout import actions as A
-
-    i18n = (Path(__file__).parent.parent / "vscode" / "src" / "i18n.ts").read_text(encoding="utf-8")
-    said = set(re.findall(r'^\s*"?([\w:.]+)"?\s*:', i18n.split("const ja", 1)[1].split("reasons: {", 1)[1].split("\n  },")[0], re.M))
-    codes: dict[str, str] = {}
-    for bench in ("bench_example.json", "bench_unseen.json"):  # every action, shipped or built in, on every port
-        b = recon.run(FixtureIo(FIXTURE.parent / bench)).bench
-        for name in [*A.all_actions(), "no.such.action"]:
-            for port in b.ports:
-                codes.setdefault(classify(b, name, port).code, f"{name} on {port}")
-    br = Broker(FixtureIo(FIXTURE), tmp_path / "ws" / ".benchscout")
-    br.scan()
-    vcp, psu = br.resolve_port("/dev/cu.usbmodem21403"), "visa:TCPIP0::192.168.1.50::INSTR"
-    br.select([br.bench.ports[vcp].device_id])  # watched: listening opens nothing
-    for c in ("*IDN?", "MEAS:VOLT?", "DISP:BRIG 5", "OUTP ON", "*TST?", "*RST", "*CLS"):
-        codes.setdefault(br.impact("scpi.query", psu, {"command": c}).code, c)
-    key = br._key(br.bench.devices[br.bench.ports[vcp].device_id])
-    for cmd, effect, extra in (("status", "safe", {}), ("reboot", "disruptive", {}), ("erase", "dangerous", {}),
-                               ("set", "disruptive", {"limits": [{"min": 0, "max": 9}]})):
-        r = br.remember(vcp, "command", cmd, data={"command": cmd, "effect": effect, **extra})
-        if r["status"] == "pending_human":
-            br.decide_memory(key, r["id"], True)
-    for text in ("status", "reboot", "erase", "set 3", "set 99"):
-        codes.setdefault(br.impact("serial.send", vcp, {"data": text}).code, text)
-    codes.setdefault(br.impact("serial.listen", vcp).code, "listen while watched")
-    br.end_session()
-    assert {"watched", "outside_limits", "command_safe", "unknown_action"} <= set(codes), sorted(codes)
-    missing = {c: what for c, what in codes.items() if c not in said}
-    assert not missing, f"no Japanese wording for: {missing}"
-
-
 def test_every_serial_port_keeps_its_evidence_and_a_valid_open_mode():
     """Review 2026-11-02 (mypy): a positional argument had slid into open_lines, so bridge ports lost
     their evidence and carried a list where "low"/"asserted" belongs."""

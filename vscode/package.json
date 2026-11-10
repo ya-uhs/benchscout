@@ -111,10 +111,10 @@
           "default": "auto",
           "enumDescriptions": [
             "VS Code's display language, or the OS language when VS Code is in English",
-            "日本語",
+            "Japanese",
             "English"
           ],
-          "description": "The language of the benchscout inbox and of what it asks the agent to reply in."
+          "description": "The language the agent replies in (its reports and questions). benchscout's own words in the inbox are English, as in Claude Code and Copilot CLI."
         }
       }
     }

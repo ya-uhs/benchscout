@@ -2,7 +2,7 @@
 // at the top to say what you want. It only shows state and sends the person's choices back.
 
 import { Card } from "./harness";
-import { Strings } from "./i18n";
+import { Wording } from "./wording";
 
 /** One device in the list at the top: the person can release it (for their own tools) or use it again. */
 export interface DeviceRow {
@@ -27,7 +27,7 @@ export interface PanelState {
   // what is remembered about each device on the bench (design.md section 6): seen, fixed in its file, deleted here
   memory?: { device: string; name: string; key: string; file: string;
              entries: { id: string; kind: string; text: string; source: string; time: string; status: string; device?: string }[] }[];
-  strings: { [K in keyof Strings as Strings[K] extends (...a: never[]) => unknown ? never : K]: Strings[K] };  // the plain ones
+  strings: { [K in keyof Wording as Wording[K] extends (...a: never[]) => unknown ? never : K]: Wording[K] };  // the plain ones
 }
 
 export function html(nonce: string, cspSource: string): string {

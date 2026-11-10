@@ -6,10 +6,10 @@ import test from "node:test";
 
 const require = createRequire(import.meta.url);
 const { html } = require("../out/panel.js");
-const { strings } = require("../out/i18n.js");
+const { S } = require("../out/wording.js");
 
 function plainStrings(lang) {
-  return Object.fromEntries(Object.entries(strings(lang)).filter(([, v]) => typeof v !== "function"));
+  return Object.fromEntries(Object.entries(S).filter(([, v]) => typeof v !== "function"));
 }
 
 /** Runs the webview script with a fake document; returns render(state) -> innerHTML and the posted messages. */
@@ -84,21 +84,14 @@ test("decisions come before reports, and remembered things come last", () => {
   assert.match(out, /class="card memory  record"/);
 });
 
-test("the Japanese inbox renders with its own words", () => {
-  const w = webview();
-  const out = w.render({ running: true, agent: "", strings: plainStrings("ja"), cards: [],
-    devices: [{ id: "d1", label: "x", selected: false, watched: false, busy: false }] });
-  const ja = plainStrings("ja");
-  assert.ok(out.includes(ja.noAgentYet) && out.includes(ja.devicesTitle));
-});
-
-test("language: the setting, else VS Code's language when it has one, else the OS language", async () => {
-  const { pickLanguage, languageName } = require("../out/i18n.js");
+test("the agent's language: the setting, else VS Code's language when it has one, else the OS language", async () => {
+  const { pickLanguage, languageName } = require("../out/wording.js");
   assert.equal(pickLanguage("en", "ja", "ja-JP"), "en", "the setting wins");
   assert.equal(pickLanguage("auto", "ja", "en-US"), "ja", "a Japanese VS Code");
   assert.equal(pickLanguage("auto", "en", "ja-JP"), "ja-JP", "an English VS Code (no language pack) on a Japanese OS");
   assert.equal(pickLanguage(undefined, "en-us", ""), "en");
   assert.equal(languageName("ja-JP"), "Japanese");
+  assert.equal(languageName("zh-CN"), "Chinese", "any language, by its standard name");
 });
 
 test("each device can be released for the person's own tools, or used again", () => {

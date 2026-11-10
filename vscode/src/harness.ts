@@ -11,22 +11,7 @@
 import { EventEmitter } from "events";
 import { AgentDriver, AgentEvent, PermissionAnswer, PermissionAsk, WakeError } from "./agents/types";
 import { Approval, Bench, CoreClient, DeviceEvent, DevicesChanged, DownloadEvent, MemoryEntry, MemoryEvent, Question, ToolProposal, describeArgs, deviceViews } from "./core";
-import { Strings } from "./i18n";
-
-/** A memory entry in the person's language. What benchscout wrote itself (what it saw when opening a port, a human's
- *  "always on this device") is worded here, in one place for the inbox's cards and its memory list; what the agent
- *  wrote stays as written (it writes in the person's language). Older files without the data code are read by text. */
-export function memoryText(e: MemoryEntry, s: Strings): string {
-  const d = e.data ?? {};
-  if (e.source === "human" && e.kind === "command") return s.allowedAlwaysNote;
-  if (e.source !== "benchscout") return e.text;
-  const seen = Number(d.seen ?? e.text.match(/\((\d+) times\)/)?.[1] ?? 2);
-  if (e.kind === "safety" && d.listen_safe === true) return e.status === "pending" ? s.listenSafeAsk(e.target, seen) : s.listenSafeKept(e.target, seen);
-  // it reset when opened as safe (design.md section 6: the newer observation wins)
-  if (e.kind === "safety" && d.listen_safe === false) return s.resetOnOpen(e.target);
-  if (e.kind === "observation" && (d.opened === "stayed" || /own USB port stayed|did not vanish/.test(e.text))) return s.stayedOnOpen(e.target);
-  return e.text;
-}
+import { Wording } from "./wording";
 
 export type CardKind = "question" | "confirm" | "report" | "notify" | "memory";
 
@@ -71,9 +56,9 @@ export class Harness extends EventEmitter {
   private stopping = false;
   private sleeps = new Map<string, number>(); // device -> times its port was reopened after the computer slept
   private current?: { card: Card; tools: Map<string, number> }; // the report card of the turn in progress
-  private deferred?: () => Promise<void>; // a wake waiting for the human to choose an agent
+  private deferred: (() => Promise<void>)[] = []; // wakes waiting for the human to choose an agent, in the order asked
 
-  constructor(private core: CoreClient, private makeDriver: () => AgentDriver, private s: Strings,
+  constructor(private core: CoreClient, private makeDriver: () => AgentDriver, private s: Wording,
               private opts: HarnessOptions = { language: "English", maxTurnsPerHour: 20 }) {
     super();
     core.on("scan", (b: Bench, _p: unknown, broken: string[] = []) => {
@@ -145,6 +130,9 @@ export class Harness extends EventEmitter {
     return this.add({ kind: "question", title, body, options, freeText, pin }, handler);
   }
 
+  /** The host's card asking which agent to wake: a request made before the choice waits on it, and says so there. */
+  chooser?: Card;
+
   /** A note from the host (e.g. no agent installed). */
   notify(title: string, body: string, detail?: string): Card {
     return this.add({ kind: "notify", title, body, detail, options: [], freeText: false, pin: true });
@@ -155,9 +143,8 @@ export class Harness extends EventEmitter {
     this.opts.autonomy = a;
   }
 
-  /** The person changed benchscout's language: new cards and the agent's next turn use it. */
-  setLanguage(s: Strings, language: string): void {
-    this.s = s;
+  /** The person changed the language the agent replies in: its next turn uses it. */
+  setLanguage(language: string): void {
     this.opts.language = language;
   }
 
@@ -165,11 +152,11 @@ export class Harness extends EventEmitter {
   resetAgent(): void {
     this.driver?.stop();
     this.driver = undefined;
-    const d = this.deferred;
-    this.deferred = undefined;
-    if (d) {
+    const waiting = this.deferred;
+    this.deferred = [];
+    if (waiting.length) {
       this.closeRef("wait-agent", "");
-      void d();
+      for (const d of waiting) void d();  // one at a time: a wake waits while another runs
     }
   }
 
@@ -266,7 +253,7 @@ export class Harness extends EventEmitter {
         + (always && a.model ? `\n${this.s.modelWide}` : "");
     this.add({
       // what the session option lets run later, said before the human picks it
-      kind: "confirm", title: this.s.actions[a.action] ?? a.action,
+      kind: "confirm", title: a.action,  // the action's own name, as an agent's permission prompt names its tool
       body: this.reason(a) + fetch + covers,
       detail: `${a.port} · ${describeArgs(a.args)}${a.impact.affected_ports.length ? ` · ${this.s.alsoAffects}: ${a.impact.affected_ports.join(", ")}` : ""}`,
       effect: a.effect, options, freeText: false,
@@ -336,9 +323,9 @@ export class Harness extends EventEmitter {
     this.add({ kind: "notify", title, body, options: [], freeText: false, status: d.state === "running" ? "open" : "closed" }, undefined, id);
   }
 
-  /** The core's reason in the person's language when the panel knows its code; else its own words. */
+  /** The core's reason, as it says it. */
   private reason(a: Approval): string {
-    const r = (a.impact.code && this.s.reasons[a.impact.code]) || a.impact.reason;
+    const r = a.impact.reason;
     return r.charAt(0).toUpperCase() + r.slice(1);
   }
 
@@ -367,7 +354,7 @@ export class Harness extends EventEmitter {
       .map((l, i) => (l ? `#${i + 1} ${l.min ?? ""}..${l.max ?? ""}` : "")).filter(Boolean).join(", ") : "";
     const cmd = e.kind === "command" && e.data.command
       ? `\n${this.s.commandAs(String(e.data.command), String(e.data.effect ?? "disruptive"))}${limits ? `\n${this.s.limitsAs(limits)}` : ""}` : "";
-    const body = memoryText(e, this.s) + cmd + (e.evidence ? `\n"${e.evidence}"` : "");
+    const body = e.text + cmd + (e.evidence ? `\n"${e.evidence}"` : "");
     const detail = `${this.s.memoryKinds[e.kind] ?? e.kind} · ${this.s.memorySources[e.source] ?? e.source} · ${e.time.slice(0, 16).replace("T", " ")}`;
     if (e.status === "pending") {
       this.add({ kind: "memory", title: this.s.learnedSafety(name), body: body + (m.model_wide ? `\n${this.s.modelWide}` : ""), detail, freeText: false,
@@ -517,8 +504,13 @@ export class Harness extends EventEmitter {
           this.cards = this.cards.filter((c) => c !== report);
           if (w.code === "no_agent") {
             // not a failure: nothing is chosen yet. Wait for the human's choice, then go on with this request.
-            this.deferred = () => this.wake(request, title);
-            if (!this.cards.some((c) => c.id === "wait-agent" && c.status === "open")) {
+            this.deferred.push(() => this.wake(request, title));  // (a second request made meanwhile used to replace the first)
+            const chooser = this.chooser?.status === "open" ? this.chooser : undefined;
+            if (chooser) {
+              // said on the card that asks for the choice, not on a second card above it
+              if (!chooser.body.includes(this.s.requestWaits)) chooser.body = `${chooser.body}\n${this.s.requestWaits}`;
+              this.changed();
+            } else if (!this.cards.some((c) => c.id === "wait-agent" && c.status === "open")) {
               this.add({ kind: "notify", title: this.s.chooseAgentFirst, body: "", options: [], freeText: false, pin: true }, undefined, "wait-agent");
             }
             return;

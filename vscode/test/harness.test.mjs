@@ -12,17 +12,17 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { once } from "node:events";
 import { CoreClient } from "../out/core.js";
-import { Harness, memoryText } from "../out/harness.js";
+import { Harness } from "../out/harness.js";
 import { ClaudeDriver } from "../out/agents/claude.js";
 import { AcpDriver } from "../out/agents/acp.js";
-import { strings } from "../out/i18n.js";
+import { S } from "../out/wording.js";
 
 const repo = resolve(import.meta.dirname, "../..");
 const win = process.platform === "win32";
 // BENCHSCOUT_TEST_BIN runs the same tests against the frozen core (vscode/bin/benchscout/benchscout)
 const bin = process.env.BENCHSCOUT_TEST_BIN ?? join(repo, ".venv", win ? "Scripts" : "bin", win ? "benchscout.exe" : "benchscout");
 const py = join(repo, ".venv", win ? "Scripts" : "bin", win ? "python.exe" : "python");
-const s = strings("en");
+const s = S;
 const STLINK = "STMicroelectronics STLINK-V3";  // the device the streaming bench's crash comes from
 // What the real agents did in one session each (the fakes replay them): the shell command they asked about, their last
 // words, and what was answered to their permission asks (audit 2026-11-07, T21, T27)
@@ -151,7 +151,7 @@ test("broker approvals and agent questions become cards; answers go back through
     assert.equal((await req).result.status, "selected");
     // the agent wants a DISRUPTIVE action -> approval card -> allow once
     const listen = agentCall(env, root, "do", { action: "serial.listen", port: "/dev/cu.usbserial-10", args: { seconds: 0.1 } });
-    const ap = await until(h, (c) => c.kind === "confirm" && c.effect === "disruptive" && c.title === s.actions["serial.listen"]);
+    const ap = await until(h, (c) => c.kind === "confirm" && c.effect === "disruptive" && c.title === "serial.listen");  // the action's own name
     assert.ok(ap.options.some((o) => o.id === "session"), "DISRUPTIVE can be allowed for the session");
     void h.answer(ap.id, { option: "once" });
     assert.equal((await listen).result.status, "done");
@@ -283,7 +283,13 @@ test("with no agent chosen, a pick waits for the choice and then wakes the chose
   }));
   try {
     await until(h, (c) => c.kind === "question" && c.title === s.firstAsk);
+    // the extension's card asking for the agent: the waiting request is said there, not on a second card above it
+    const chooser = h.chooser = h.ask(s.chooseAgent, "", [{ id: "claude", label: "Claude Code" }], () => {}, false, true);
     void h.tell("what is on the bench?");
+    await until(h, () => chooser.body.includes(s.requestWaits));
+    assert.ok(!h.cards.some((c) => c.title === s.chooseAgentFirst), "one card, not two");
+    chooser.status = "closed";
+    void h.tell("and the scope?");  // without the extension's card (none open): a note of its own, pinned
     const wait = await until(h, (c) => c.kind === "notify" && c.title === s.chooseAgentFirst);
     assert.ok(wait.pin);
     assert.ok(!h.cards.some((c) => c.title === s.wakeFailed("benchscout")), "not choosing yet is not a failure");
@@ -292,6 +298,8 @@ test("with no agent chosen, a pick waits for the choice and then wakes the chose
     h.resetAgent();  // what choosing an agent in the card does
     const report = await until(h, (c) => c.kind === "report" && c.status === "open");
     assert.match(report.body, /got: what is on the bench\?/);
+    // both requests made before the choice are answered, in order
+    await until(h, (c) => c.kind === "report" && c.status === "open" && /got: and the scope\?/.test(c.body));
     assert.equal(h.cards.find((c) => c.id === wait.id).status, "closed");
   } finally { delete process.env.FAKE_QUIET; done(); }
 });
@@ -312,77 +320,39 @@ test("each turn's progress goes to its own card, one line per tool call, updated
   } finally { delete process.env.FAKE_QUIET; done(); }
 });
 
-test("approval reasons are shown in the person's language by the core's code", async () => {
-  const ja = strings("ja");
-  const root = mkdtempSync(join(win ? tmpdir() : "/tmp", "bsj"));
-  const env = { ...process.env, BENCHSCOUT_FIXTURE: join(repo, "fixtures", "bench_example.json"), BENCHSCOUT_RUNTIME: root, BENCHSCOUT_MEMORY: join(root, "memory"), BENCHSCOUT_KNOWLEDGE: join(repo, "fixtures", "knowledge") };
-  const core = new CoreClient(bin, root, env);
-  const h = new Harness(core, () => { throw new Error("not woken here"); }, ja, { language: "Japanese", maxTurnsPerHour: 5 });
-  core.start();
-  try {
-    const first = await until(h, (c) => c.kind === "question");
-    await core.select([first.options.find((o) => o.label.includes("QinHeng")).id]);
-    const watch = await until(h, (c) => c.kind === "confirm");
-    assert.equal(watch.title, ja.offerWatch("QinHeng USB Serial"));
-    assert.ok(watch.body.includes(ja.reasons.reset_on_open.slice(1)), "the core's reason, said in the panel's words");
-  } finally { core.stop(); rmrf(root); }
-});
-
-test("benchscout's own safety proposal is said in the person's language; the agent's words stay", () => {
-  const core = new CoreClient("/nonexistent", tmpdir());
-  const h = new Harness(core, () => { throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 1 });
-  const entry = (over) => ({ id: "e1", kind: "safety", text: "Listening to /dev/cu.x did not reset X (2 times). Treat listening as SAFE?",
-    source: "benchscout", evidence: "", target: "serial:usbmodem1101", time: "2026-11-01T15:49:00", status: "pending", data: { listen_safe: true }, ...over });
-  core.emit("memoryAdded", { key: "k", device_name: "ESP32", entry: entry({}) });
-  core.emit("memoryAdded", { key: "k", device_name: "ESP32", entry: entry({ id: "e2", source: "agent", text: "no auto-reset circuit" }) });
-  const [own, agent] = h.cards;
-  assert.equal(own.body, strings("ja").listenSafeAsk("serial:usbmodem1101", 2), "benchscout's own words, in the person's language");
-  assert.equal(agent.body, "no auto-reset circuit");
-  // the memory list showed benchscout's own entries in English (2026-11-03): the list words them as the cards do
-  const ja = strings("ja");
-  assert.equal(memoryText(entry({ status: "active" }), ja), ja.listenSafeKept("serial:usbmodem1101", 2));
-  assert.equal(memoryText(entry({ data: { listen_safe: false }, status: "active" }), ja), ja.resetOnOpen("serial:usbmodem1101"));
-  assert.equal(memoryText(entry({ kind: "observation", data: { opened: "stayed" }, status: "active" }), ja), ja.stayedOnOpen("serial:usbmodem1101"));
-  assert.equal(memoryText(entry({ kind: "observation", data: {}, text: "opened /dev/cu.x and it did not vanish (no re-enumeration seen)" }), ja),
-    ja.stayedOnOpen("serial:usbmodem1101"), "older observations are localized without claiming the target did not reset");
-  assert.equal(memoryText(entry({ kind: "observation", data: {}, text: "unrecognized observation" }), ja), "unrecognized observation");
-  assert.equal(memoryText(entry({ kind: "command", source: "human", data: { command: "status", effect: "safe" } }), ja), ja.allowedAlwaysNote);
-  assert.equal(memoryText(entry({ source: "agent", text: "no auto-reset circuit" }), ja), "no auto-reset circuit");
-});
-
 test("a port lost while the computer slept is one quiet, counted record; nobody is woken", () => {
   const core = new CoreClient("/nonexistent", tmpdir());
   let woken = 0;
-  const h = new Harness(core, () => { woken++; throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 5 });
+  const h = new Harness(core, () => { woken++; throw new Error("not woken"); }, S, { language: "Japanese", maxTurnsPerHour: 5 });
   const ev = (kind) => ({ port: "serial:usbserial-101", device: "d1", device_name: "SIPEED JTAG Debugger", kind, what: "x", cause: "host_sleep" });
   for (let i = 0; i < 2; i++) { core.emit("deviceEvent", ev("vanished")); core.emit("deviceEvent", ev("returned")); }
   assert.equal(h.cards.length, 1);
   assert.equal(h.cards[0].status, "closed");
-  assert.equal(h.cards[0].title, strings("ja").hostSlept("SIPEED JTAG Debugger", 2));
+  assert.equal(h.cards[0].title, S.hostSlept("SIPEED JTAG Debugger", 2));
   assert.equal(woken, 0);
 });
 
 test("an approval that downloads a tool first says so on the card", () => {
   const core = new CoreClient("/nonexistent", tmpdir());
-  const h = new Harness(core, () => { throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 1 });
+  const h = new Harness(core, () => { throw new Error("not woken"); }, S, { language: "Japanese", maxTurnsPerHour: 1 });
   core.emit("approvalRequested", { id: "a1", action: "esptool.write_flash", port: "serial:usbmodem1101", args: "{}", effect: "dangerous",
     status: "pending", impact: { reason: "overwrites flash", affected_ports: [], disturbs: [], code: "action:esptool.write_flash" },
     by: "agent", fetch: "esptool 5.6.0 from github.com (official release, SHA-256 checked, about 63 MB)" });
-  assert.ok(h.cards[0].body.includes(`${strings("ja").fetchFirst}: esptool 5.6.0 from github.com`));
+  assert.ok(h.cards[0].body.includes(`${S.fetchFirst}: esptool 5.6.0 from github.com`));
 });
 
 test("a SCPI command's card allows that command for the session or always, and says that is all it covers", () => {
   const core = new CoreClient("/nonexistent", tmpdir());
   const decided = [];
   core.decide = async (...a) => { decided.push(a); return {}; };
-  const h = new Harness(core, () => { throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 1 });
+  const h = new Harness(core, () => { throw new Error("not woken"); }, S, { language: "Japanese", maxTurnsPerHour: 1 });
   const ask = (id, effect, subjects) => core.emit("approvalRequested", { id, action: "scpi.write", port: "visa:TCPIP0::192.168.1.50::INSTR",
     args: JSON.stringify({ command: "DISP:BRIG 5" }), effect, status: "pending", by: "agent", always: true,
     impact: { reason: "x", affected_ports: [], disturbs: [], code: subjects ? "scpi_command" : "energizing", subjects } });
   ask("a1", "disruptive", ["DISP:BRIG"]);
   const card = h.cards.find((c) => c.id === "approval:a1");
   assert.deepEqual(card.options.map((o) => o.id), ["once", "session", "always", "all", "deny"]);
-  assert.ok(card.body.includes(strings("ja").commandCovers), "the card says the grant covers this command only");
+  assert.ok(card.body.includes(S.commandCovers), "the card says the grant covers this command only");
   void h.answer(card.id, { option: "always" });
   assert.deepEqual(decided[0], ["a1", true, "always"]);
   ask("a2", "dangerous", ["VOLT"]);  // an output setting: once, or not at all
@@ -393,7 +363,7 @@ test("allow all is on DISRUPTIVE cards only; a write may be allowed for the sess
   const core = new CoreClient("/nonexistent", tmpdir());
   const decided = [];
   core.decide = async (...a) => { decided.push(a); return {}; };
-  const h = new Harness(core, () => { throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 1 });
+  const h = new Harness(core, () => { throw new Error("not woken"); }, S, { language: "Japanese", maxTurnsPerHour: 1 });
   const ask = (id, action, effect, again) => core.emit("approvalRequested", { id, action, port: "serial:usbserial-10", args: "{}", effect,
     status: "pending", by: "agent", impact: { reason: "x", affected_ports: [], disturbs: [], code: "" }, ...(again ? { again } : {}) });
   ask("a1", "serial.send", "disruptive");
@@ -404,8 +374,8 @@ test("allow all is on DISRUPTIVE cards only; a write may be allowed for the sess
   assert.ok(!card("a2").options.some((o) => o.id === "all" || o.id === "session"), "what cannot be undone asks each time");
   // a write the core lets be allowed for the session (design.md section 12, 2026-11-08): the card says what that covers
   assert.ok(!card("a3").options.some((o) => o.id === "all"));
-  assert.equal(card("a3").options.find((o) => o.id === "session").label, strings("ja").again.tool.label);
-  assert.ok(card("a3").body.includes(strings("ja").again.tool.covers));
+  assert.equal(card("a3").options.find((o) => o.id === "session").label, S.again.tool.label);
+  assert.ok(card("a3").body.includes(S.again.tool.covers));
   void h.answer("approval:a1", { option: "all" });
   void h.answer("approval:a3", { option: "session" });
   assert.deepEqual(decided, [["a1", true, "all"], ["a3", true, "session"]]);
@@ -413,31 +383,31 @@ test("allow all is on DISRUPTIVE cards only; a write may be allowed for the sess
 
 test("a tool's first-use download is one card, updated as it goes and closed when done", () => {
   const core = new CoreClient("/nonexistent", tmpdir());
-  const h = new Harness(core, () => { throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 1 });
+  const h = new Harness(core, () => { throw new Error("not woken"); }, S, { language: "Japanese", maxTurnsPerHour: 1 });
   const ev = (got, state) => core.emit("download", { tool: "esptool", version: "5.6.0", got, total: 65_000_000, state });
   ev(0, "running");
   ev(32_000_000, "running");
   assert.equal(h.cards.length, 1);
-  assert.equal(h.cards[0].title, strings("ja").downloading("esptool 5.6.0"));
-  assert.ok(h.cards[0].body.startsWith(strings("ja").downloadBody("32", "65").slice(0, 7)), "progress in MB");
+  assert.equal(h.cards[0].title, S.downloading("esptool 5.6.0"));
+  assert.ok(h.cards[0].body.startsWith(S.downloadBody("32", "65").slice(0, 7)), "progress in MB");
   assert.equal(h.cards[0].status, "open");
   ev(65_000_000, "done");
   assert.equal(h.cards.length, 1);
-  assert.equal(h.cards[0].title, strings("ja").downloaded("esptool 5.6.0"));
+  assert.equal(h.cards[0].title, S.downloaded("esptool 5.6.0"));
   assert.equal(h.cards[0].status, "closed");
 });
 
 test("Windows: a device that needs a driver gets one card saying which interface and how, closed once it is right", () => {
   const core = new CoreClient("/nonexistent", tmpdir());
-  const h = new Harness(core, () => { throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 1 });
+  const h = new Harness(core, () => { throw new Error("not woken"); }, S, { language: "Japanese", maxTurnsPerHour: 1 });
   const bench = (dev) => ({ devices: [{ id: "usb:0403:6010:x", name: "SIPEED JTAG Debugger", evidence: [], ...dev }], ports: [], targets: [], links: [] });
   core.emit("scan", bench({ access: [{ need: "driver", interfaces: [0, 1] }] }), []);
   const card = () => h.cards.find((c) => c.id === "driver:usb:0403:6010:x");
-  assert.equal(card().body, strings("ja").driverBody("0, 1", "", ""), "which interfaces lack a driver");
-  assert.ok(h.cards.find((c) => c.kind === "question").body.includes(`SIPEED JTAG Debugger (${strings("ja").stateNoDriver})`));
+  assert.equal(card().body, S.driverBody("0, 1", "", ""), "which interfaces lack a driver");
+  assert.ok(h.cards.find((c) => c.kind === "question").body.includes(`SIPEED JTAG Debugger (${S.stateNoDriver})`));
   core.emit("scan", bench({ access: [{ need: "winusb", interfaces: [0], tools: ["openFPGALoader"] }] }), []);  // the maker's driver came; openFPGALoader still needs WinUSB
   assert.equal(h.cards.filter((c) => c.id.startsWith("driver:")).length, 1);
-  assert.equal(card().body, strings("ja").driverBody("", "0", "openFPGALoader"), "which interface needs WinUSB, with how");
+  assert.equal(card().body, S.driverBody("", "0", "openFPGALoader"), "which interface needs WinUSB, with how");
   core.emit("scan", bench({}), []);  // after Zadig and a rescan
   assert.equal(card().status, "closed");
 });
@@ -446,7 +416,7 @@ test("a tool the agent proposes is a card with the exact command, its effect and
   const core = new CoreClient("/nonexistent", tmpdir());
   const decided = [];
   core.toolDecide = async (...a) => { decided.push(a); return {}; };
-  const h = new Harness(core, () => { throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 1 });
+  const h = new Harness(core, () => { throw new Error("not woken"); }, S, { language: "Japanese", maxTurnsPerHour: 1 });
   core.emit("toolProposed", { id: "p1", status: "pending", evidence: "vendor guide ch. 4",
     tool: { name: "vendortool.program", argv: ["vendortool", "--program", "{bitstream}"], effect: "dangerous", reason: "loads a bitstream" },
     probes: [{ vid: 0x03fd, pid: 0x0013, probe: "jtag" }] });
@@ -461,14 +431,14 @@ test("a tool the agent proposes is a card with the exact command, its effect and
 
 test("Linux: a device a libusb tool cannot open gets one card naming the node, the tool and the udev fix", () => {
   const core = new CoreClient("/nonexistent", tmpdir());
-  const h = new Harness(core, () => { throw new Error("not woken"); }, strings("ja"), { language: "Japanese", maxTurnsPerHour: 1 });
+  const h = new Harness(core, () => { throw new Error("not woken"); }, S, { language: "Japanese", maxTurnsPerHour: 1 });
   const bench = (dev) => ({ devices: [{ id: "usb:0403:6010:x", name: "SIPEED JTAG Debugger", evidence: [], ...dev }], ports: [], targets: [], links: [] });
   // the tool is the one the core's data names (a person's knowledge may add one): the panel named openFPGALoader always
   // (audit 2026-11-07, files read last)
   core.emit("scan", bench({ access: [{ need: "udev", node: "/dev/bus/usb/003/002", tools: ["openocd"] }] }), []);
   const card = () => h.cards.find((c) => c.id === "driver:usb:0403:6010:x");
-  assert.equal(card().title, strings("ja").udevTitle("SIPEED JTAG Debugger"));
-  assert.equal(card().body, strings("ja").udevBody("/dev/bus/usb/003/002", "openocd"));
+  assert.equal(card().title, S.udevTitle("SIPEED JTAG Debugger"));
+  assert.equal(card().body, S.udevBody("/dev/bus/usb/003/002", "openocd"));
   core.emit("scan", bench({}), []);  // the rule took effect
   assert.equal(card().status, "closed");
 });
@@ -476,7 +446,7 @@ test("Linux: a device a libusb tool cannot open gets one card naming the node, t
 test("with only devices benchscout has no data for, the first question still offers them to the agent", () => {
   // review 7 (17): the first question and the device list showed nothing, so an unknown programmer had no way in
   const core = new CoreClient("/nonexistent", tmpdir());
-  const s = strings("en");
+  const s = S;
   const h = new Harness(core, () => { throw new Error("not woken"); }, s, { language: "English", maxTurnsPerHour: 1 });
   const bench = { devices: [{ id: "usb:1234:5678:x", name: "Acme Cable", evidence: [], other: true }], ports: [], targets: [], links: [] };
   core.emit("scan", bench, [], []);
@@ -490,7 +460,7 @@ test("with only devices benchscout has no data for, the first question still off
 test("'always on this device' is offered for a command whatever its protocol, where the core says it can keep it", () => {
   // audit 2026-11-07 (23): it was offered for a unit whose memory may be another's, and the next call asked again
   const core = new CoreClient("/nonexistent", tmpdir());
-  const s = strings("en");
+  const s = S;
   const h = new Harness(core, () => { throw new Error("not woken"); }, s, { language: "English", maxTurnsPerHour: 1 });
   const ask = (id, always, model) => core.emit("approvalRequested", { id, action: "serial.send", port: "serial:x", args: '{"data": "status"}',
     effect: "disruptive", status: "pending", by: "agent", always, model,

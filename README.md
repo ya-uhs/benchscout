@@ -39,7 +39,7 @@ without asking and can be edited or deleted in the panel.
 | | Today |
 |---|---|
 | Entry | the user's own agent + MCP; benchscout wakes it: Claude Code via `claude -p`, others (Copilot CLI) via ACP |
-| UI | VS Code extension in `vscode/`: an inbox of questions, approvals, reports, notices and memory (English / Japanese: `benchscout.language`, by default VS Code's language, or the OS's when VS Code is in English) |
+| UI | VS Code extension in `vscode/`: an inbox of questions, approvals, reports, notices and memory. benchscout's own words are English (as in Claude Code and Copilot CLI); the agent replies in `benchscout.language` (by default VS Code's language, or the OS's when VS Code is in English) |
 | Loop | benchscout asks which agent and what to look at, wakes the agent, watches the chosen devices (asking first when opening a port may disturb it), notices reconnects and matches observation rules supplied for the bench, wakes the agent again (autonomy: auto / suggest; hourly budget) |
 | Safety | approvals only from the panel (the agent's channel cannot approve); cautious defaults; selected ports held exclusively |
 | Identification | the agent, with a quote of the device's output that benchscout checks (`bench_identify`) |
@@ -106,8 +106,8 @@ ESP32-S3 USB ─┬─ /dev/cu.usbmodem ─uart─┐
 ## Not done yet
 
 See [docs/notes.md](docs/notes.md) (次にやること): Copilot Chat inside VS Code using the tools (needs a
-signed-in VS Code), device commands from memory, Japanese wording from the core (approval reasons),
-Windows/Linux in CI and on hardware, writing flash with esptool 5 on the real bench.
+signed-in VS Code), device commands from memory, Windows/Linux in CI and on hardware, writing flash with esptool 5
+on the real bench.
 
 CI maintenance: pushes run the lightweight Linux checks, including Windows-targeted type checking.
 Manual `test` workflow runs validate all platforms and generate VSIX artifacts; pushes do not cancel those runs.

@@ -63,14 +63,12 @@ def test_concrete_names_appear_only_in_their_home():
     assert not misplaced, "\n".join(misplaced)
 
 
-def test_the_extension_names_no_action_protocol_or_tool_outside_its_wording():
-    """The panel's words (i18n.ts) may name actions to say them in the person's language; nothing else in the extension
-    decides by an action's, a protocol's or a tool's name."""
+def test_the_extension_names_no_action_protocol_or_tool():
+    """Nothing in the extension decides or says something by an action's, a protocol's or a tool's name: those come from
+    the core (its data). (Its words are English and name none since 2026-11-10; the Japanese wording named actions.)"""
     pattern = r"\b(serial|scpi|jtag)\.[a-z_]+\b|openFPGALoader|esptool|openocd"
     found = []
     for path in sorted(EXT.rglob("*.ts")):
-        if path.name == "i18n.ts":
-            continue
         code = re.sub(r"//[^\n]*|/\*.*?\*/", "", path.read_text(encoding="utf-8"), flags=re.S)
         if re.search(pattern, code):
             found.append(path.relative_to(EXT).as_posix())
