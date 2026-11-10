@@ -1,43 +1,23 @@
 name: test
-# Runner minutes are limited (a private repo: macOS minutes count 10x, Windows 2x). Every push to main runs one Linux
-# job with everything that needs no display. The full set (tests on three OSes, the VS Code e2e on three, the .vsix
-# for four targets) runs by hand before a release: Actions > test > Run workflow. The e2e also runs locally
-# (npm run e2e) before pushing.
+# A public repository: GitHub-hosted runners cost nothing, so every push to main and every pull request runs the
+# tests on three OSes and the VS Code e2e on three; a push to main (or Actions > test > Run workflow) also builds the
+# .vsix for four targets. Actions are pinned to a release's commit (the tag in the comment): a moved tag cannot change
+# what builds the .vsix people install. Pull requests from forks run with read-only access and no secrets.
 on:
   push:
     branches: [main]
-    paths-ignore: ["docs/**", "**.md"]  # words only: no need to spend runner minutes
+    paths-ignore: ["docs/**", "**.md"]  # words only
+  pull_request:
+    branches: [main]
+    paths-ignore: ["docs/**", "**.md"]
   workflow_dispatch:
 permissions:
   contents: read
-concurrency:  # pushes supersede pushes, never a manually requested package build
+concurrency:  # a newer push or PR update supersedes the older run; a requested run is never cancelled
   group: test-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 jobs:
-  quick:
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-      - run: uv sync --extra mcp --extra visa
-      - run: uvx ruff@0.14.3 check src tests packaging
-      - run: uv run mypy
-      - run: uv run mypy --platform win32
-      - run: uv run pytest -q
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: npm ci
-        working-directory: vscode
-      - run: npm test
-        working-directory: vscode
-      - run: npm run package  # vsce scans our own files for secrets here
-        working-directory: vscode
-
   pytest:
-    if: github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -45,14 +25,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6.8.0
       - run: uv sync --extra mcp --extra visa
       - run: uvx ruff@0.14.3 check src tests packaging
         if: runner.os == 'Linux'
       - run: uv run mypy  # on each OS, so its own branches (msvcrt, fcntl) are checked
+      - run: uv run mypy --platform win32  # Windows' branches again, for a run that stops before Windows' job
+        if: runner.os == 'Linux'
       - run: uv run pytest -q
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
           node-version: 22
       - run: npm ci
@@ -71,10 +53,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6.8.0
       - run: uv sync --extra mcp --extra visa
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
           node-version: 22
       - run: npm ci
@@ -91,7 +73,7 @@ jobs:
         working-directory: vscode
         env:
           E2E_DOWNLOAD_VSCODE: "1"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         if: failure()
         with:
           retention-days: 7
@@ -101,6 +83,7 @@ jobs:
   package:
     # one .vsix per OS/CPU with the frozen core inside (PyInstaller does not cross-compile)
     needs: pytest
+    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -118,9 +101,9 @@ jobs:
       # runner) puts symlinks into the frozen core, and a .vsix cannot hold symlinks
       UV_PYTHON_PREFERENCE: only-managed
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6.8.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
           node-version: 22
       - if: matrix.python
@@ -140,7 +123,7 @@ jobs:
           uv run python packaging/bundle_tools.py --exe /tmp/ofl/build/openFPGALoader
       - if: runner.os == 'Windows'
         id: msys2
-        uses: msys2/setup-msys2@v2
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e  # v2.33.0
         with:
           msystem: UCRT64
           release: false
@@ -163,7 +146,7 @@ jobs:
         working-directory: vscode
         env:
           BENCHSCOUT_TEST_BIN: ${{ github.workspace }}/vscode/bin/benchscout/benchscout${{ runner.os == 'Windows' && '.exe' || '' }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           retention-days: 14
           if-no-files-found: error

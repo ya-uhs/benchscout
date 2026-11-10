@@ -107,8 +107,9 @@ person's language (`benchscout.language`) is what the agent replies in (design.m
 To look at the extension in a real VS Code (no computer use needed, the user's own VS Code untouched):
 `npm run e2e` (in `vscode/`, after `npm run package`) drives that same isolated VS Code through a scripted bench
 (`fixtures/bench_e2e.json`) end to end against the checkout's core; run it before pushing a change to the extension or the core.
-CI minutes are limited (private repo; macOS counts 10x): a push runs one Linux job; the full set (three OSes, e2e, the
-.vsix for four targets) runs by hand before a release (`gh workflow run test`). Push in batches, not after every commit.
+CI (a public repo, so runners are free): a push to main runs the tests and the e2e on three OSes and builds the .vsix
+for four targets; a pull request runs the tests and the e2e. Actions are pinned to a release commit; when bumping one,
+pin the new release's commit and name the tag in a comment. Run the tests and the e2e locally before pushing.
 `cd vscode && npm run ui-check -- start` installs the newest .vsix into an isolated profile, opens the
 fixture bench and the inbox; then `shot <file.png>`, `cards`, `click "<button text>"`, `stop`. After
 Python changes, rebuild the frozen core before packaging, or the .vsix carries the old one. `--real`

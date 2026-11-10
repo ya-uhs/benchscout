@@ -109,7 +109,7 @@ See [docs/notes.md](docs/notes.md) (次にやること): Copilot Chat inside VS 
 signed-in VS Code), device commands from memory, Windows/Linux in CI and on hardware, writing flash with esptool 5
 on the real bench.
 
-CI maintenance: pushes run the lightweight Linux checks, including Windows-targeted type checking.
-Manual `test` workflow runs validate all platforms and generate VSIX artifacts; pushes do not cancel those runs.
-Jobs have time limits (15 minutes for quick checks, 30 for platform jobs). Failure screenshots are retained for
-7 days and VSIX artifacts for 14 days; download packages you need to keep before they expire.
+CI: every push to main and every pull request runs the tests and the VS Code e2e on Windows, Linux and macOS; a push
+to main (or a manual `test` run) also builds the .vsix for four targets. A newer push cancels the older run; a manual
+run is never cancelled. Jobs stop after 30 minutes. Failure screenshots are kept for 7 days and the .vsix artifacts for
+14 days; download a package you need to keep before it expires.
