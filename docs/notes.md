@@ -47,7 +47,7 @@
 | 区分 | 扱い |
 |---|---|
 | 必須の機能 | 人による対象選択・承認、占有と停止、出力の保存、選んだエージェントの起動、根拠付きの識別と記憶。実装と回帰テストがあり、今回の修正と検証結果を末尾に記録した。 |
-| 配布前の検証 | macOS Apple Silicon 版はローカルで検査できる。他の配布対象は最新版のCIとVSIX検査が必要。[push CI](https://github.com/ya-uhs/benchscout/actions/runs/42139256463) は課金制限で開始できず。[手動CI](https://github.com/ya-uhs/benchscout/actions/runs/41865412854) は macOS ランナーを確保できず、全 OS のテスト完了を待つ E2E と VSIX 生成がスキップされた。 |
+| 配布前の検証 | 公開後の最初の CI([43343356616](https://github.com/ya-uhs/benchscout/actions/runs/43343356616)、2026-11-13)で 3 OS のテスト・E2E、4 種の .vsix の作成と凍結版コアでの拡張のテスト、同梱物のライセンス文の確認がすべて成功。以後は main への push ごとに同じものが回る。 |
 | 実機で未確認の項目 | 測定器の画像・データ保存、Windows x64のドライバ手順、改行なしプロンプトの実出力。各環境で得た証拠を個別に記録する。 |
 | 実機で確認済みの排他 | macOS の ESP32-S3 USB JTAG/serial ポートで LiveIo.serial_stream(exclusive=True) を使用。保持中は別プロセスの os.open が EBUSY (16)、close 後は同じプロセス起動手順で再オープン成功。データ送信なし。 |
 | 配布物のライセンス | 同梱する openFPGALoader の USB ライブラリ(libftdi1・libusb、Windows 版は libiconv・libintl も)は LGPL-2.1。ライセンス文は付けている(notices.py)が、そのライブラリのソースを .vsix と同じ場所に置く仕組みは未対応。benchscout 自身のライセンスは未定(当面なし、2026-11-13 利用者)。依存は MIT・BSD・Apache-2.0・ISC・PSF で、どれを選んでもぶつからない。 |
@@ -802,3 +802,4 @@ Codex の監査(docs/audit-2026-11-07.md、基準 d1b0af4)を引き継ぎ、判�
 - CI は push と PR で 3 OS のテストと E2E、main への push では 4 種の .vsix も作る。actions はリリースのコミットに固定した
   (公開した .vsix を作る経路を、タグの付け替えで変えられないように)。
 - ライセンスは未定(ファイルなし)。ライセンスが無い公開リポジトリは、読めるが利用の許諾は無い状態。決めるのは利用者。
+- 最初の CI は 10 ジョブすべて成功。actions の版が Node.js 20 で動くという警告が出たので、Node.js 24 で動く最新の版に上げた(どの版の互換性の変更も、ここでの使い方には当たらない)。checkout はトークンを .git に残さない。
