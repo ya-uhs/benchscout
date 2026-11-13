@@ -76,7 +76,7 @@ load in `bench-session/`, which must look exactly like an end user's workspace.
 - **Scope**: bench observation, diagnosis and hardware operation, including writing a bitstream
   to FPGA SRAM or an image to flash as one DANGEROUS action defined as data. Editing and building
   code are out of scope.
-- What exists today and what is next: docs/notes.md (現状, 次にやること). Shipped data is limited to
+- What exists today and what is left: docs/notes.md (現状 and its table of what is left). Shipped data is limited to
   how USB interfaces behave when opened, what they carry and how a tool reaches them, board
   wiring assumptions for impact warnings, and external-tool actions; do not
   grow it. `test_without_any_shipped_data_benchscout_only_gets_stricter` guards the rule that
