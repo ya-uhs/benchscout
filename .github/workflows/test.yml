@@ -1,11 +1,14 @@
 name: test
 # A public repository: GitHub-hosted runners cost nothing, so every push to main and every pull request runs the
 # tests on three OSes and the VS Code e2e on three; a push to main (or Actions > test > Run workflow) also builds the
-# .vsix for four targets. Actions are pinned to a release's commit (the tag in the comment): a moved tag cannot change
-# what builds the .vsix people install. Pull requests from forks run with read-only access and no secrets.
+# .vsix for four targets. A pushed version tag (v0.1.0, annotated: its message is the release notes) runs the same and
+# then publishes a GitHub release with those .vsix files. Actions are pinned to a release's commit (the tag in the
+# comment): a moved tag cannot change what builds the .vsix people install. Pull requests from forks run with read-only
+# access and no secrets.
 on:
   push:
     branches: [main]
+    tags: ["v*"]  # (path filters do not apply to tags)
     paths-ignore: ["docs/**", "**.md"]  # words only
   pull_request:
     branches: [main]
@@ -167,3 +170,41 @@ jobs:
           path: |
             vscode/benchscout-${{ matrix.target }}.vsix
             vscode/lgpl-sources/
+
+  release:
+    # a version tag: the .vsix each package job built and tested, and beside each the source of the LGPL libraries it
+    # carries (the LGPL asks for it from the same place). Only after every test and e2e passed on that commit
+    needs: [package, e2e]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write  # this job only: it creates the release
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: benchscout-*
+          path: built
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir assets
+          for dir in built/benchscout-*/; do
+            name="$(basename "$dir")"
+            version="$(unzip -p "$dir/$name.vsix" extension/package.json | jq -r .version)"
+            if [ "v$version" != "$TAG" ]; then
+              echo "::error::$name.vsix says version $version, the tag says $TAG: bump vscode/package.json, then tag"
+              exit 1
+            fi
+            cp "$dir/$name.vsix" assets/
+            (cd "$dir" && zip -qr "$GITHUB_WORKSPACE/assets/$name-lgpl-sources.zip" lgpl-sources)
+          done
+          ls -l assets
+          # the notes are the annotated tag's message (a lightweight tag has none: this fails, nothing is published)
+          sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha)"
+          gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha" --jq .message > notes.md
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "benchscout ${TAG#v}" \
+            --notes-file notes.md assets/*

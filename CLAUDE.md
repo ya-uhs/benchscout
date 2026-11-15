@@ -111,7 +111,9 @@ To look at the extension in a real VS Code (no computer use needed, the user's o
 `npm run e2e` (in `vscode/`, after `npm run package`) drives that same isolated VS Code through a scripted bench
 (`fixtures/bench_e2e.json`) end to end against the checkout's core; run it before pushing a change to the extension or the core.
 CI (a public repo, so runners are free): a push to main runs the tests and the e2e on three OSes and builds the .vsix
-for four targets; a pull request runs the tests and the e2e. Actions are pinned to a release commit; when bumping one,
+for four targets; a pull request runs the tests and the e2e. A pushed annotated tag `v<version>` (equal to
+`vscode/package.json`'s version; the tag's message is the release notes) runs the same, then publishes a GitHub release
+with those four .vsix files and their LGPL sources: never upload one built here. Actions are pinned to a release commit; when bumping one,
 pin the new release's commit and name the tag in a comment. Run the tests and the e2e locally before pushing.
 `cd vscode && npm run ui-check -- start` installs the newest .vsix into an isolated profile, opens the
 fixture bench and the inbox; then `shot <file.png>`, `cards`, `click "<button text>"`, `stop`. After

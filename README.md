@@ -20,6 +20,26 @@ and reads logs; benchscout gets the clues, guards the hardware, and remembers.
 Intent, direction and decisions live in [docs/design.md](docs/design.md) (Japanese). That file is the
 source of truth; this README is a summary of it.
 
+## Install
+
+Download the .vsix for your machine from the [latest release](https://github.com/ya-uhs/benchscout/releases/latest)
+and install it in VS Code (Extensions view > `...` > Install from VSIX..., or
+`code --install-extension benchscout-<target>.vsix`). The core is inside: no Python or other tools to install.
+Then open the benchscout view in the activity bar, or run **benchscout: Open bench**. Your agent is your own:
+Copilot in VS Code, GitHub Copilot CLI or Claude Code.
+
+| File | For |
+|---|---|
+| `benchscout-win32-x64.vsix` | Windows x64 |
+| `benchscout-win32-arm64.vsix` | Windows on Arm (the core runs under Windows' x64 emulation) |
+| `benchscout-linux-x64.vsix` | Linux x64 |
+| `benchscout-darwin-arm64.vsix` | macOS on Apple silicon |
+
+When a tool needs a driver (Windows) or a udev rule (Linux) before it can reach a device, the inbox says which.
+Each .vsix ships openFPGALoader with libftdi1 and libusb (LGPL-2.1); `benchscout-<target>-lgpl-sources.zip` in the
+same release is the source they were built from, and every component's license text is in `THIRD_PARTY_NOTICES.txt`
+inside the .vsix.
+
 ## Roles
 
 | | benchscout (deterministic) | your agent (LLM) |
@@ -46,7 +66,7 @@ without asking and can be edited or deleted in the panel.
 | Memory | automatic, per device and per folder, plain TOML; only safety-loosening entries wait for the human |
 | Writing | FPGA SRAM and ESP flash as DANGEROUS actions defined as data (`packs/bench/data/tools.toml`); users add their own tools |
 | Packaging | `packaging/build_core.py` + `npm run package:platform` -> a .vsix per OS/CPU with the frozen core |
-| Platforms | macOS (real bench), Linux and Windows (tests; not yet on real hardware) |
+| Platforms | real devices (ESP32-S3, Tang Nano 9K) on macOS, and passed through to Ubuntu 24.04 and Windows 11 VMs on Arm; the x64 packages pass the tests and the e2e in CI but have not met real devices yet |
 
 Checked on a real bench (ESP32-S3 + Tang Nano 9K with the firmware/bitstream in `testbench/`): after the
 human picked the ESP32, an injected crash was noticed, the agent was woken, it read the log, named the chip
@@ -77,7 +97,7 @@ ESP32-S3 USB ─┬─ /dev/cu.usbmodem ─uart─┐
 
 | File | Layer | Job |
 |---|---|---|
-| (planned) `vscode/` | L4 panel | device list, first read, logs, approvals; owns the control channel |
+| `vscode/` | L4 panel | device list, first read, logs, approvals; owns the control channel |
 | `mcp_relay.py`, `skills/bench-expert` | L3 agent face | MCP tools, instructions and the `bench_start` prompt (relayed to the core); expert behaviour |
 | `core.py` | core | control channel (stdin/stdout) and agent channel (Unix socket / Windows named pipe; core and relay prove the user's key to each other) |
 | `broker.py`, `approvals.py`, `locks.py` | L2 broker | session selection, approvals in memory, per-device locks across windows, artifacts |
@@ -110,6 +130,8 @@ saving, the driver steps on Windows x64, a device prompt that ends without a new
 forks such as Cursor.
 
 CI: every push to main and every pull request runs the tests and the VS Code e2e on Windows, Linux and macOS; a push
-to main (or a manual `test` run) also builds the .vsix for four targets. A newer push cancels the older run; a manual
-run is never cancelled. Jobs stop after 30 minutes. Failure screenshots are kept for 7 days and the .vsix artifacts for
-14 days; download a package you need to keep before it expires.
+to main (or a manual `test` run) also builds the .vsix for four targets. A version tag (`v0.1.0`, annotated: its
+message becomes the release notes) runs all of it and then publishes a release with those .vsix files and their LGPL
+sources; it stops if the tag and `vscode/package.json` disagree on the version. A newer push cancels the older run; a
+manual run is never cancelled. Jobs stop after 30 minutes. Failure screenshots are kept for 7 days and the .vsix
+artifacts for 14 days (a release keeps its files).
