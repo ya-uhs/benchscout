@@ -814,3 +814,7 @@ Codex の監査(docs/audit-2026-11-07.md、基準 d1b0af4)を引き継ぎ、判�
   ソースパッケージ。署名された一覧で照合される。CI で deb-src を有効にする)、Windows は pacman のデータベースで DLL の持ち主を引き、MSYS2 の
   ソースパッケージ。NOTICE.txt にファイル名を書く。CI の成果物は .vsix と並べてこのフォルダを持ち、.vsix には入れない(.vscodeignore)。
 - Mac で通した:libftdi1 1.5(Homebrew のパッチ 1 つ)と libusb 1.0.30 のソース、formula 2 つ。
+- CI で 4 種とも通した([43690072073](https://github.com/ya-uhs/benchscout/actions/runs/43690072073)、10 ジョブ成功)。Windows は MSYS2 の
+  libftdi 1.5-13 と libusb 1.0.30-1、Linux は Ubuntu の libftdi1 1.5-6build5 と libusb-1.0 1.0.27-1(.dsc・元の圧縮ファイル・署名・Debian の差分)。
+  成果物は .vsix と lgpl-sources/ を並べて持つ(Linux は 9 ファイル)。最初の Linux の失敗は、Ubuntu に同じ名前の古いバイナリパッケージ
+  `libftdi1` があり、apt がそちらと取り違えたため(`--only-source` で直した)。
