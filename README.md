@@ -106,8 +106,8 @@ ESP32-S3 USB ─┬─ /dev/cu.usbmodem ─uart─┐
 ## Not done yet
 
 See [docs/notes.md](docs/notes.md) (現状): checks on a real bench still to do (an instrument's screenshot and data
-saving, the driver steps on Windows x64, a device prompt that ends without a newline), MCP registration in VS Code
-forks such as Cursor, and putting the source of the LGPL libraries shipped with openFPGALoader next to the .vsix.
+saving, the driver steps on Windows x64, a device prompt that ends without a newline), and MCP registration in VS Code
+forks such as Cursor.
 
 CI: every push to main and every pull request runs the tests and the VS Code e2e on Windows, Linux and macOS; a push
 to main (or a manual `test` run) also builds the .vsix for four targets. A newer push cancels the older run; a manual

@@ -9,3 +9,5 @@ e2e-out/**
 # a developer's environment files: package-platform.mjs skips vsce's secret and .env scan for the frozen core
 **/.env
 **/.env.*
+# the LGPL libraries' source: published beside the .vsix, not in it (packaging/bundle_tools.py)
+lgpl-sources/**

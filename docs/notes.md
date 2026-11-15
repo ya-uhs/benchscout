@@ -50,7 +50,7 @@
 | 配布前の検証 | 公開後の最初の CI([43343356616](https://github.com/ya-uhs/benchscout/actions/runs/43343356616)、2026-11-13)で 3 OS のテスト・E2E、4 種の .vsix の作成と凍結版コアでの拡張のテスト、同梱物のライセンス文の確認がすべて成功。以後は main への push ごとに同じものが回る。 |
 | 実機で未確認の項目 | 測定器の画像・データ保存、Windows x64のドライバ手順、改行なしプロンプトの実出力。各環境で得た証拠を個別に記録する。 |
 | 実機で確認済みの排他 | macOS の ESP32-S3 USB JTAG/serial ポートで LiveIo.serial_stream(exclusive=True) を使用。保持中は別プロセスの os.open が EBUSY (16)、close 後は同じプロセス起動手順で再オープン成功。データ送信なし。 |
-| 配布物のライセンス | 同梱する openFPGALoader の USB ライブラリ(libftdi1・libusb、Windows 版は libiconv・libintl も)は LGPL-2.1。ライセンス文は付けている(notices.py)が、そのライブラリのソースを .vsix と同じ場所に置く仕組みは未対応。benchscout 自身のライセンスは未定(当面なし、2026-11-13 利用者)。依存は MIT・BSD・Apache-2.0・ISC・PSF で、どれを選んでもぶつからない。 |
+| 配布物のライセンス | 同梱する openFPGALoader の USB ライブラリ libftdi1・libusb は LGPL-2.1(Windows 版の GCC ランタイム・winpthreads・zlib はソースを求めない)。ライセンス文は .vsix に入れ、作ったときのソースは .vsix の横に置く(2026-11-15、design.md §12)。benchscout 自身のライセンスは未定(当面なし、2026-11-13 利用者)。依存は MIT・BSD・Apache-2.0・ISC・PSF で、どれを選んでもぶつからない。 |
 | 任意の将来候補 | Cursor等のforkへのMCP登録、追加ツールの同梱。採用を決めたときに対象環境と受け入れ条件を定める。 |
 | 設計上の境界 | 独自プロトコル・フレーミング・コマンドはエージェントが用意するプログラムで扱う。コアの占有は申告された対象に効く。別名の同定や任意コードの物理作用の検証は保証範囲外。 |
 
@@ -803,3 +803,14 @@ Codex の監査(docs/audit-2026-11-07.md、基準 d1b0af4)を引き継ぎ、判�
   (公開した .vsix を作る経路を、タグの付け替えで変えられないように)。
 - ライセンスは未定(ファイルなし)。ライセンスが無い公開リポジトリは、読めるが利用の許諾は無い状態。決めるのは利用者。
 - 最初の CI は 10 ジョブすべて成功。actions の版が Node.js 20 で動くという警告が出たので、Node.js 24 で動く最新の版に上げた(どの版の互換性の変更も、ここでの使い方には当たらない)。checkout はトークンを .git に残さない。
+
+### 2026-11-15 LGPL のライブラリのソース(利用者が案 1 を選択)
+
+- CI の記録で、同梱しているライブラリを確かめた。LGPL は全 OS とも libftdi1 と libusb の 2 つだけ。Windows 版に libiconv・libintl は入って
+  いない(MSYS2 の libftdi のパッケージが依存に挙げるのでライセンス文は集めているが、DLL は読み込まれない)。先に利用者へ「Windows 版は
+  4 つ」と伝えたのは誤りだった。
+- `packaging/bundle_tools.py` が、同梱した LGPL のライブラリごとに、パッケージ管理が作るのに使ったソースを `vscode/lgpl-sources/` に取る。
+  macOS は Homebrew の formula(API が示す版のもの、SHA-256 を照合)とその元の圧縮ファイルとパッチ、Linux は `apt-get source`(Debian の
+  ソースパッケージ。署名された一覧で照合される。CI で deb-src を有効にする)、Windows は pacman のデータベースで DLL の持ち主を引き、MSYS2 の
+  ソースパッケージ。NOTICE.txt にファイル名を書く。CI の成果物は .vsix と並べてこのフォルダを持ち、.vsix には入れない(.vscodeignore)。
+- Mac で通した:libftdi1 1.5(Homebrew のパッチ 1 つ)と libusb 1.0.30 のソース、formula 2 つ。

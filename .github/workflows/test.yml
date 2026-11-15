@@ -122,6 +122,12 @@ jobs:
         run: brew install openfpgaloader && uv run python packaging/bundle_tools.py
       - if: runner.os == 'Linux'
         run: |
+          # deb-src on, for the source of the LGPL libraries that ship (bundle_tools.py: apt-get source)
+          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+            sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
+          else
+            sudo sed -i 's/^# *deb-src /deb-src /' /etc/apt/sources.list
+          fi
           sudo apt-get update -q && sudo apt-get install -y -q cmake pkg-config libftdi1-dev libusb-1.0-0-dev libhidapi-dev zlib1g-dev patchelf
           git clone -q --depth 1 --branch v1.2.0 https://github.com/trabucayre/openFPGALoader.git /tmp/ofl
           cmake -S /tmp/ofl -B /tmp/ofl/build -DENABLE_LIBGPIOD=OFF -DCMAKE_BUILD_TYPE=Release
@@ -157,4 +163,7 @@ jobs:
           retention-days: 14
           if-no-files-found: error
           name: benchscout-${{ matrix.target }}
-          path: vscode/benchscout-${{ matrix.target }}.vsix
+          # the .vsix and, beside it, the source of the LGPL libraries it carries (the LGPL asks for it where they are)
+          path: |
+            vscode/benchscout-${{ matrix.target }}.vsix
+            vscode/lgpl-sources/
