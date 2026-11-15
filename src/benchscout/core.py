@@ -87,7 +87,10 @@ class AgentServer:
         self.broker = broker
         self._closing = False
         claim_address(address)
-        self._listener = Listener(address, self.family)
+        try:
+            self._listener = Listener(address, self.family)
+        except PermissionError:  # taken between the check and here
+            raise RuntimeError(TAKEN.format(address=address)) from None
         if self.family == "AF_UNIX":
             os.chmod(address, 0o600)
 
@@ -136,6 +139,11 @@ class AgentServer:
         self._listener.close()  # also removes the socket file on POSIX
 
 
+TAKEN = ("another program holds the agent address {address} and is not a benchscout core of this user (it cannot prove "
+         "this user's key, or this user may not even open it): another account may have taken it. Find and stop it, then "
+         "start benchscout again")
+
+
 def claim_address(address: str) -> None:
     """Refuse to start a second core for the same workspace; clear a dead one's socket. Something at the address that
     cannot prove this user's key is not a core of this user's: said as such (on Windows, another account took the pipe
@@ -143,6 +151,10 @@ def claim_address(address: str) -> None:
     family = address_family(address)
     try:
         conn = Client(address, family)
+    except PermissionError:  # something is there that this user may not open. Windows VM 2026-11-15: a pipe another
+        # account made first refuses a user without admin rights; read as "nothing there", the core then failed to make
+        # the pipe with a traceback, and the relay told the agent to open the panel
+        raise RuntimeError(TAKEN.format(address=address)) from None
     except OSError:  # nothing listens there: a dead core's socket at most
         if family == "AF_UNIX" and os.path.exists(address):
             os.unlink(address)
@@ -151,10 +163,9 @@ def claim_address(address: str) -> None:
         try:
             prove(conn, server=False)
         except (AuthenticationError, EOFError, OSError):
-            raise RuntimeError(f"another program holds the agent address {address} and is not a benchscout core of this "
-                               "user (it cannot prove this user's key): another account may have taken it. Find and stop "
-                               "it, then start benchscout again") from None
-    raise RuntimeError(f"a benchscout core is already running for this workspace ({address})")
+            raise RuntimeError(TAKEN.format(address=address)) from None
+    raise RuntimeError(f"a benchscout core is already running for this workspace ({address}). Use that terminal or window, "
+                       "or quit it first")
 
 
 # ---- control channel ------------------------------------------------------------

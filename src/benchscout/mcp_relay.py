@@ -44,8 +44,9 @@ OPENING_PROMPT = (
     "for them. Reply in {language}."
 )
 
-NOT_OURS = ("Something answers at {address}, but it is not a benchscout core of this OS user (it cannot prove this "
-            "user's key), so nothing it says is used. Another account may have taken the address. Tell the user.")
+NOT_OURS = ("Something holds {address}, but it is not a benchscout core of this OS user (it cannot prove this user's "
+            "key, or this user may not even open it), so nothing it says is used. Another account may have taken the "
+            "address. Tell the user.")
 NO_CORE = ("No benchscout core is running for this folder. Open the benchscout panel in VS Code "
            "(or run `benchscout core` in a terminal in this folder), then try again.")
 
@@ -58,6 +59,8 @@ class CoreClient:
         """One request on a fresh connection. Returns {"result": ...} or {"error": ...}."""
         try:
             conn = Client(self.address, address_family(self.address))
+        except PermissionError:  # something is there that this user may not open (Windows: another account's pipe)
+            return {"error": NOT_OURS.format(address=self.address)}
         except OSError:
             return {"error": NO_CORE}
         with conn:

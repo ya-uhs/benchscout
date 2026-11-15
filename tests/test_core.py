@@ -347,6 +347,24 @@ def test_a_core_does_not_start_where_a_program_that_cannot_prove_the_key_listens
         listener.close()
 
 
+@pytest.mark.skipif(WINDOWS, reason="a pipe only another account may open cannot be made here (seen on the VM)")
+def test_an_address_this_user_may_not_open_is_taken_not_free(io, tmp_path, addr):
+    """Windows VM 2026-11-15: a pipe another account made first refuses a user without admin rights. That was read as
+    "no core here": the core then died with a traceback making the pipe, and the relay told the agent to open the panel.
+    Here the same refusal (PermissionError) comes from a socket this user may not write to."""
+    import os
+    from multiprocessing.connection import Listener
+
+    listener = Listener(addr, "AF_UNIX")
+    os.chmod(addr, 0)
+    try:
+        assert "not a benchscout core of this OS user" in CoreClient(addr).call("scan", timeout=1)["error"]
+        with pytest.raises(RuntimeError, match="another account may have taken it"):
+            Core(Broker(io, tmp_path), addr, stdio.StringIO()).start()
+    finally:
+        listener.close()
+
+
 def test_the_core_answers_nobody_who_cannot_prove_this_users_key(io, tmp_path, addr):
     from multiprocessing.connection import Client
 
