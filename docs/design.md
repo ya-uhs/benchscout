@@ -586,7 +586,7 @@ src/benchscout/
 ├── mcp_relay.py       `benchscout mcp`:エージェントの経路への中継
 ├── broker.py、policy.py、actions.py、approvals.py、locks.py、runtime.py
 ├── knowledge.py       データの読み込みと照合だけ(機器名を書かない。テストで確認)
-├── memory.py          記憶(これから)
+├── memory.py          記憶
 ├── io.py、recon.py、console.py、cli.py
 └── packs/
     └── bench/         ドメイン:data/(安全の規則、外部ツールの操作)、skills/、instructions / prompts
