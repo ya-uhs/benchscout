@@ -95,7 +95,9 @@ BENCHSCOUT_FIXTURE=fixtures/bench_example.json uv run benchscout core   # core w
 ```
 
 VS Code extension (`vscode/`): `npm test` (its control channel against a real core on the fixture
-bench), `npm run package` -> `vscode/benchscout.vsix` (no core inside). Platform build with the frozen
+bench), `npm run package` -> `vscode/benchscout.vsix` (no core inside). A .vsix carries the extension as one file
+that esbuild bundles with its npm packages (`dist/extension.js`, `npm run bundle`, run by both package scripts); the tests
+import tsc's `out/`, and the npm packages' license texts are in THIRD_PARTY_NOTICES.txt. Platform build with the frozen
 core: `uv run python packaging/build_core.py`, `uv run python packaging/bundle_tools.py` (ships
 openFPGALoader next to it; on macOS from `brew install openfpgaloader`; the source of its LGPL libraries goes to
 `vscode/lgpl-sources/`, beside the .vsix and never in it: a release attaches it with the .vsix), `uv run --with zstandard python

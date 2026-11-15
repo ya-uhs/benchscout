@@ -36,6 +36,7 @@ await createVSIX({
   packagePath: join(here, `benchscout-${target}.vsix`),
   skipLicense: true,
   allowMissingRepository: true,
+  dependencies: false, // the extension is one bundled file (npm run bundle)
   allowPackageAllSecrets: true,
   allowPackageEnvFile: true,
 });

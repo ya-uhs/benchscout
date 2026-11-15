@@ -12,7 +12,7 @@
   "categories": [
     "Other"
   ],
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
   "activationEvents": [
     "workspaceContains:.benchscout"
   ],
@@ -121,9 +121,10 @@
   },
   "scripts": {
     "compile": "tsc -p .",
+    "bundle": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --outfile=dist/extension.js",
     "test": "npm run compile && node --test --test-concurrency=1 --test-timeout=120000 test/*.test.mjs",
-    "package": "npm run compile && vsce package --skip-license --allow-missing-repository -o benchscout.vsix",
-    "package:platform": "npm run compile && node scripts/package-platform.mjs",
+    "package": "npm run compile && npm run bundle && vsce package --no-dependencies --skip-license --allow-missing-repository -o benchscout.vsix",
+    "package:platform": "npm run compile && npm run bundle && node scripts/package-platform.mjs",
     "ui-check": "node scripts/ui-check.mjs",
     "e2e": "node scripts/e2e.mjs"
   },
@@ -133,6 +134,7 @@
     "@types/vscode": "1.101.0",
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.28.2",
     "typescript": "^5.4.0"
   },
   "dependencies": {
@@ -142,7 +144,9 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "restrictedConfigurations": ["benchscout.corePath"],
+      "restrictedConfigurations": [
+        "benchscout.corePath"
+      ],
       "description": "In a folder you have not trusted, benchscout does not read the folder's own .benchscout/knowledge files or its memory file: a project from elsewhere could declare its actions safe."
     }
   }

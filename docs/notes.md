@@ -848,3 +848,15 @@ Codex の監査(docs/audit-2026-11-07.md、基準 d1b0af4)を引き継ぎ、判�
 - 回帰テスト:ESP32 に名前と配線を覚えさせ、同じ番号の別製品(プローブ)を挿したとき、またその逆で、名前と配線が ESP32 に当たり、
   プローブには当たらない(旧コードで落ちる。配線を番号だけの名前で書くと落ちることも確かめた)。
 - 検査:Python 322 件成功・1 skip、mypy(通常と win32)、ruff、拡張 37 件、e2e。
+
+### 2026-11-16 拡張の JS を 1 つのファイルにまとめた
+
+- .vsix の約 1,100 ファイルのうち約 950 が npm のパッケージ(zod 840、ACP の SDK 110)で、vsce が「ファイルが多い」と警告していた。
+  VS Code の案内どおり esbuild で 1 つにまとめる(`dist/extension.js`、約 440 KB。`vscode` だけ外に置く)。vsce には node_modules を
+  入れさせない(`--no-dependencies`、プラットフォーム版は API の `dependencies: false`)。拡張そのものは package.json・ライセンス文・
+  まとめた JS の 3 ファイルになった(残りは凍結したコア)。npm のパッケージのライセンス文は今までどおり THIRD_PARTY_NOTICES.txt に入る
+  (`npm ls --omit=dev` から作る。依存の組は変わらない)。
+- テストは tsc の `out/` を読むまま(`src/core.ts` を素の Node で試す仕組みは変えない)。ACP の SDK は ESM だけで、使うときに読み込む。
+  esbuild はそれを同じ JS の中に入れ、使うときに初期化する形に書き換える。e2e はエージェントを起こさないので、ACP の経路は別に確かめた:
+  `agents/acp.ts` を同じ設定でまとめたものに差し替え、ハーネスのテスト 23 件(Copilot の ACP の記録の再生を含む)が通った。
+- 検査:拡張 37 件、まとめた .vsix での e2e、darwin-arm64 のプラットフォーム版の作成(102 ファイル)。

@@ -1,4 +1,8 @@
 src/**
+# the extension ships as one bundled file (dist/, `npm run bundle`): not tsc's out/ (the tests use that), and no
+# node_modules (vsce --no-dependencies); their license texts are in THIRD_PARTY_NOTICES.txt (packaging/notices.py)
+out/**
+node_modules/**
 test/**
 tsconfig.json
 **/*.map
