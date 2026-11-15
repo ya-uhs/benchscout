@@ -211,7 +211,10 @@ def source_debian(origin: Path) -> list[str]:
     owner = run("dpkg", "-S", origin).split(": ")[0]
     src = run("dpkg-query", "-W", "-f=${source:Package}=${source:Version}", owner).strip()
     before = set(SOURCES.iterdir())
-    r = subprocess.run(["apt-get", "source", "--download-only", src], cwd=SOURCES, capture_output=True, text=True)
+    # --only-source: the name is the source package's. Without it apt reads it as a binary package's when one has that
+    # name (CI 2026-11-15: Ubuntu's binary libftdi1 is old libftdi's, so source libftdi1=1.5-6build5 was "not found")
+    r = subprocess.run(["apt-get", "source", "--download-only", "--only-source", src], cwd=SOURCES, capture_output=True,
+                       text=True)
     if r.returncode != 0:
         sys.exit(f"apt-get source {src} failed (turn deb-src on and apt-get update): {r.stderr.strip()}")
     return sorted(f.name for f in set(SOURCES.iterdir()) - before)
