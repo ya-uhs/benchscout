@@ -60,6 +60,12 @@ def device_id(vid, pid, serial, location) -> str:
     return f"usb:{hex4(vid)}:{hex4(pid)}:{serial or location or 'noserial'}"
 
 
+def short_name(dev: Device) -> str:
+    """What a device's own ports and targets are named by while no other device plugged in has it too: its serial, or
+    where it is plugged in when it has none (Bench.local_name)."""
+    return (dev.serial or dev.id.split(":")[-1]).replace(" ", "_")
+
+
 DEFAULT_BAUD = 115200  # the rate a serial port is opened at when none was learned for it (memory config {"baud": n})
 PORT_KINDS = ("serial", "jtag", "swd", "usbtmc", "lan-scpi", "resource")  # adapter kinds, not a list of supported devices
 PROBE_KINDS = ("jtag", "swd")  # what a debug probe offers
@@ -164,6 +170,48 @@ class Bench:
         and the product does not give every unit the same one (`shared_serials`): memory that loosens safety, and a name
         remembered for it, apply only then."""
         return bool(dev.serial) and dev.serial not in shared_serials and self.selector_serial(dev) is not None
+
+    # ---- the names of a device's own ports and targets (recon names them; memory keeps the stable form) ----
+    def local_name(self, dev: Device) -> str:
+        """What this device's own ports and targets are named by now: its short name, or its whole device id while another
+        device plugged in has the same short name (a serial string is unique only within a product)."""
+        short = short_name(dev)
+        return dev.id if any(d.id != dev.id and short_name(d) == short for d in self.devices.values()) else short
+
+    def stable_id(self, id: str) -> str:
+        """A port or target id in the form that does not change with what else is plugged in (by the short name): the form
+        memory keeps, so that what was learned finds its unit after the bench changes (audit 2026-11-07, Codex 7)."""
+        head, _, rest = id.partition(":")
+        for d in self.devices.values():
+            if rest == d.id or rest.startswith(d.id + ":"):
+                return f"{head}:{short_name(d)}{rest[len(d.id):]}"
+        return id
+
+    def full_id(self, id: str) -> str:
+        """A port or target id named by its device's whole id: the same whatever else is plugged in, and never another
+        unit's. Memory keeps this form where an entry names a target of any device (the wiring `inside`)."""
+        head, _, rest = id.partition(":")
+        for d in self.devices.values():
+            short = self.local_name(d)
+            mine = self.ports[id].device_id == d.id if id in self.ports else \
+                any(p.device_id == d.id for p in self.ports_reaching(id))
+            if short != d.id and mine and (rest == short or rest.startswith(short + ":")):
+                return f"{head}:{d.id}{rest[len(short):]}"
+        return id
+
+    def current_id(self, id: str, dev: Device | None = None) -> str:
+        """A remembered port or target id, in either form, as this bench names it now (one of `dev`'s, when given).
+        Unchanged when it names nothing here, or more than one thing: units are never matched by guess."""
+        if id in self.ports or id in self.targets:
+            return id
+        head, _, rest = id.partition(":")
+        found = set()
+        for d in [dev] if dev else self.devices.values():
+            for old, new in ((short_name(d), d.id), (d.id, short_name(d))):
+                if rest == old or rest.startswith(old + ":"):
+                    if (c := f"{head}:{new}{rest[len(old):]}") in self.ports or c in self.targets:
+                        found.add(c)
+        return found.pop() if len(found) == 1 else id
 
     def dependents(self, target_id: str) -> list[Target]:
         """Targets that go down when this one is reset/reprogrammed (transitively)."""

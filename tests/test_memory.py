@@ -67,6 +67,41 @@ def test_a_quote_not_in_the_output_names_nothing(tmp_path):
     assert br.identify(ESP, "ESP32-S3", "ESP")["status"] == "rejected"  # too short to be evidence
 
 
+def test_a_remembered_name_finds_its_unit_whatever_else_is_plugged_in(tmp_path, monkeypatch):
+    """Audit 2026-11-07, Codex 7: a serial string is unique only within a product, so while another product carrying the
+    same one is plugged in, a unit's targets are named by its whole device id. A name learned in either form still finds
+    its unit, and only its unit."""
+    def with_twin(f):  # the probe answers with the ESP32's serial string
+        data = json.loads(f.read_text())
+        sn = next(u for u in data["usb"] if u["vid"] == "0x303a")["serial"]
+        next(u for u in data["usb"] if u["vid"] == "0x0483")["serial"] = sn
+        next(s for s in data["serial"] if s["vid"] == "0x0483")["serial_number"] = sn
+        twin = f.parent / "twin.json"
+        twin.write_text(json.dumps(data))
+        return twin
+
+    def esp_and_probe(br):
+        return [br.bench.targets_via(br.resolve_port(p))[0] for p in (ESP, VCP)]
+
+    for learned_with_twin in (False, True):
+        run = tmp_path / f"learned-with-twin-{learned_with_twin}"
+        run.mkdir()
+        monkeypatch.setenv("BENCHSCOUT_MEMORY", str(run / "memory"))
+        alone = fixture(run)
+        first, then = (with_twin(alone), alone) if learned_with_twin else (alone, with_twin(alone))
+        br = session(run, first, ESP)
+        send_approved(br, ESP, "reboot")
+        named = br.identify(ESP, "ESP32-S3", BANNER)["target"]
+        assert br.remember(CH340, "config", "wired to the ESP32's UART", data={"inside": named})["status"] == "remembered"
+        br.end_session()
+        nxt = session(run, then)
+        esp, probe = esp_and_probe(nxt)
+        assert esp.id != named, "the other form: the bench changed"
+        assert esp.name == "ESP32-S3" and esp.confidence == Confidence.IDENTIFIED
+        assert probe.name is None, "the other product with the same serial string is not that unit"
+        assert nxt.bench.targets_via(nxt.resolve_port(CH340))[0].hosted_on == esp.id, "learned wiring follows it too"
+
+
 def test_safety_memory_waits_for_the_human(tmp_path):
     f = fixture(tmp_path)
     br = session(tmp_path, f, ESP)

@@ -566,11 +566,12 @@ class Broker:
             for e in self.memory.entries(self._key(dev)):
                 if e.status != "active" and not (e.kind == "command" and e.status == "pending"):
                     continue  # (a command waiting for the human is still usable, gated like serial.send)
-                if not self._owns(bench, dev, e.target):
+                tid = bench.current_id(e.target, dev)  # memory keeps the form that does not change with the bench
+                if not self._owns(bench, dev, tid):
                     continue  # that name is another unit's now (port names follow the OS: /dev/ttyUSB0 by plug order)
                 when = f"{e.time[:10]}, {e.source}"
-                if e.kind == "identity" and e.target in bench.targets:
-                    t = bench.targets[e.target]
+                if e.kind == "identity" and tid in bench.targets:
+                    t = bench.targets[tid]
                     if shared:  # memory of this model and serial may be another unit's: what it says, not its name
                         t.facts.append(f"remembered for a unit of this model, which may be another one: {e.text} "
                                        f"(quoting \"{e.evidence}\", {when})")
@@ -579,34 +580,34 @@ class Broker:
                         t.name, t.confidence = e.text, Confidence.IDENTIFIED
                     t.evidence.append(Evidence("learned", f"{e.text}: \"{e.evidence}\" ({when})"))
                 elif e.kind == "safety":
-                    if e.target in bench.ports and e.data.get("listen_safe") is False:
-                        bench.ports[e.target].may_reset_on_open = True  # seen to reset when opened: stricter, at once
+                    if tid in bench.ports and e.data.get("listen_safe") is False:
+                        bench.ports[tid].may_reset_on_open = True  # seen to reset when opened: stricter, at once
                         continue
                     if not loosen:
                         continue  # memory of this model and serial may be another unit's: never loosen safety on it
-                    if e.target in bench.ports and e.data.get("listen_safe"):
-                        bench.ports[e.target].may_reset_on_open = False
+                    if tid in bench.ports and e.data.get("listen_safe"):
+                        bench.ports[tid].may_reset_on_open = False
                 elif e.kind == "command" and e.data.get("command"):
                     self._load_command(bench, dev, e)
-                    for t in bench.targets_via(e.target)[:1] if e.target in bench.ports else []:
-                        t.facts.append(f"command `{e.data['command']}` on {e.target}: {e.text} "
+                    for t in bench.targets_via(tid)[:1] if tid in bench.ports else []:
+                        t.facts.append(f"command `{e.data['command']}` on {tid}: {e.text} "
                                        f"({e.data.get('effect', 'disruptive')}{', waiting for the human' if e.status == 'pending' else ''})")
                 elif e.kind == "interpretation" and e.data.get("pattern"):
                     dev.line_rules.append(e.data)
                 else:
                     baud = e.data.get("baud") if e.kind == "config" else None
                     if isinstance(baud, int) and not isinstance(baud, bool) and 50 <= baud <= 12_000_000:
-                        for p in [bench.ports[e.target]] if e.target in bench.ports else bench.ports_reaching(e.target):
+                        for p in [bench.ports[tid]] if tid in bench.ports else bench.ports_reaching(tid):
                             p.baud = baud  # the rate the agent found it talks at: watched at it from now on
-                    inside = e.data.get("inside") if e.kind == "config" else None
-                    if inside and e.target in bench.targets and inside in bench.targets and inside != e.target:
+                    inside = bench.current_id(e.data["inside"]) if e.kind == "config" and e.data.get("inside") else None
+                    if inside and tid in bench.targets and inside in bench.targets and inside != tid:
                         # learned wiring is structure, not only words: what disturbs the host disturbs this (review 7, 13)
-                        t = bench.targets[e.target]
+                        t = bench.targets[tid]
                         if t.hosted_on is None:
                             t.hosted_on = inside
                         elif t.hosted_on != inside:
                             t.facts.append(f"also said to be inside {inside} ({when}); kept inside {t.hosted_on}")
-                    for t in ([bench.targets[e.target]] if e.target in bench.targets else targets[:1]):
+                    for t in ([bench.targets[tid]] if tid in bench.targets else targets[:1]):
                         t.facts.append(f"remembered: {e.text} ({when})")
 
     def observe_open(self, port_id: str, text: str | None) -> None:
@@ -714,8 +715,9 @@ class Broker:
                     return {"status": "rejected", "message": "a safety entry is about one port: give its id or path"}
                 target = port
             loosens = kind == "safety" and (data or {}).get("listen_safe") is not False
-            e = Entry(kind=kind, text=text, source=source, evidence=evidence, target=target or "",
-                      status="pending" if loosens else "active", data=data or {})
+            kept = dict(data or {}, inside=self.bench.full_id(inside)) if inside else data or {}  # (Bench.full_id)
+            e = Entry(kind=kind, text=text, source=source, evidence=evidence, target=self.bench.stable_id(target or ""),
+                      status="pending" if loosens else "active", data=kept)
             try:
                 e = self.memory.add(self._key(dev), e, self._header(dev))
             except ValueError as err:  # (the folder's setup, in a folder that is not trusted)
@@ -1005,7 +1007,8 @@ class Broker:
                                                            "recorded as a guess, not as its name"}
             t.name, t.confidence = name, Confidence.IDENTIFIED
             t.evidence.append(Evidence("agent-read", f"\"{q}\" ({where})"))
-            e = self.memory.add(self._key(dev), Entry(kind="identity", text=name, source="agent", evidence=q, target=tid), self._header(dev))
+            e = self.memory.add(self._key(dev), Entry(kind="identity", text=name, source="agent", evidence=q,
+                                                      target=self.bench.stable_id(tid)), self._header(dev))
         self._memory_event(dev, e)
         self._bench_event()  # the name shows in the panel now, not at the next scan
         return {"status": "identified", "target": tid, "found_in": where}

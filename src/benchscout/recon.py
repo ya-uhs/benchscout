@@ -263,12 +263,7 @@ def _tool_args(b: Bench, info: dict, dev: Device, port: Port) -> dict[str, list[
 
 def _apply_usb_knowledge(b: Bench, dev: Device, info: dict, serials: list[dict], raw: dict) -> None:
     role = info.get("role")
-    short = (dev.serial or dev.id.split(":")[-1]).replace(" ", "_")
-    # Serial strings are unique only within a product. Namespace targets and
-    # debug ports when another device would produce the same local identifier.
-    aliases = [(d.serial or d.id.split(":")[-1]).replace(" ", "_") for d in b.devices.values()]
-    if aliases.count(short) > 1:
-        short = dev.id
+    short = b.local_name(dev)  # its serial, or its whole device id while another product has the same serial string
 
     if role == "native":
         t = b.add_target(Target(f"target:{short}", None, "mcu", Confidence.UNKNOWN,
