@@ -18,6 +18,7 @@ from pathlib import Path
 
 import anyio
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 from .actions import catalog as actions_catalog
 from .runtime import address_family, agent_address, prove
@@ -86,8 +87,8 @@ def build_server(client: CoreClient, language: str = "English", catalog: str | N
 
     async def _call(method: str, params: dict | None = None, timeout: float = 30.0) -> str:
         reply = await anyio.to_thread.run_sync(lambda: client.call(method, params, timeout))
-        if "error" in reply:
-            return f"error: {reply['error']}"
+        if "error" in reply:  # a tool error (isError) that every agent reads as one: the MCP SDK's ToolError
+            raise ToolError(reply["error"])
         r = reply["result"]
         return r if isinstance(r, str) else json.dumps(r, default=str)
 
@@ -99,8 +100,8 @@ def build_server(client: CoreClient, language: str = "English", catalog: str | N
         (they are in use: what their earlier probes got is shown again, marked as earlier; their
         live output is in the watch log). benchscout notices plugs and unplugs by itself."""
         reply = await anyio.to_thread.run_sync(lambda: client.call("scan", timeout=60))
-        if "error" in reply:
-            return f"error: {reply['error']}"
+        if "error" in reply:  # a tool error (isError) that every agent reads as one: the MCP SDK's ToolError
+            raise ToolError(reply["error"])
         sel = reply["result"]["selected"]
         session = ("Selected for this session: " + ", ".join(sel)) if sel else \
             "No device is selected yet. Suggest which ones to select; the human selects them in the benchscout panel."
