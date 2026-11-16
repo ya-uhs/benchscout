@@ -2,6 +2,12 @@ import os
 from pathlib import Path
 
 import pytest
+from hypothesis import settings
+
+# property tests explore the same examples on every run: a result never depends on luck, and a failure reproduces as it
+# came (deterministic checks where possible: the person's preference, 2026-11-16)
+settings.register_profile("deterministic", derandomize=True)
+settings.load_profile("deterministic")
 
 FIXTURE_KNOWLEDGE = Path(__file__).parent.parent / "fixtures" / "knowledge"
 

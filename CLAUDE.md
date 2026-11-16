@@ -190,6 +190,9 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
   tests pass while the real system behaves otherwise (the invented WMI test passed while Windows named devices by
   their drivers). Where no recording exists yet, mark the test `@pytest.mark.assumed` and replace it once that
   system is on the bench. Prefer one end-to-end check (`npm run e2e`) over many unit tests of the same path.
+  Prefer deterministic checks: where a promise has several cases, enumerate them all in one parametrized test
+  (every kind x every way it should end, as `test_an_ok_that_lasts_ends_when_what_it_was_given_for_changes`) rather
+  than adding one test per bug; hypothesis runs derandomized (tests/conftest.py), the same examples every run.
 - New behaviour is tested against `FixtureIo` first. When the real bench shows something,
   record it in `fixtures/` or a test so the suite keeps covering it without hardware.
   `FixtureIo` takes only what an OS or VISA gives and fails as `LiveIo` does (OSError, not None); a test checks "nothing

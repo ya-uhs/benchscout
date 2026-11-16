@@ -331,16 +331,3 @@ def test_an_ieee_block_is_taken_apart_and_anything_else_is_kept():
     assert ieee_block(b"#0raw bytes to the end\n") == b"raw bytes to the end"
     assert ieee_block(b"1.23E-3\n") == b"1.23E-3\n", "not a block: as it came"
     assert ieee_block(b"#x") == b"#x" and ieee_block(b"#9123") == b"#9123"
-
-
-
-@pytest.mark.parametrize("command", ["VOLT 4", "CURR 1;:VOLT 4"])
-def test_a_new_limit_overrides_a_standing_output_grant(broker, command):
-    br, _ = broker
-    asked = br.request("scpi.write", PSU, {"command": "CURR 1;:VOLT 5"})
-    br.decide(asked["approval_id"], True, "session")
-    br.remember(PSU, "command", "Maximum 3 V", data={
-        "command": "VOLT", "effect": "dangerous", "limits": [{"min": 0, "max": 3}]})
-    result = br.request("scpi.write", PSU, {"command": command})
-    assert result["status"] == "approval_required"
-    assert br.approvals.get(result["approval_id"]).again == ""

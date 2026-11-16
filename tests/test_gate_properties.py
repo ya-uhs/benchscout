@@ -16,9 +16,11 @@ except where a rule says why (the command line for SCPI, memory the human confir
 
 import json
 import os
+import sys
 import tempfile
 from pathlib import Path
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, rule
@@ -285,3 +287,81 @@ def test_an_approval_id_for_another_call_is_refused_at_once(tmp_path):
     assert res["status"] == "approval_mismatch" and "scpi.write" in res["message"]
     assert br.request("scpi.write", PSU, {"command": "OUTP CH1,ON", }, approval_id=aid)["status"] == "approval_required"
     br.end_session()
+
+
+# ---- an OK that lasts ends when what it was given for changes: every kind, every ending, the same cases each run ----
+# (Codex's review, 2026-11-16, found two that did not: a program's session OK outlived its second resource leaving the
+# session, and an output setting's outlived a lower limit learned after it)
+
+LASTING = {  # kind of OK -> the devices its call touches (each may leave the session) and whether a rule can tighten it
+    "a serial command for the session": (["its port's device"], True),
+    "an output setting for the session": (["the instrument"], True),
+    "two output settings in one line for the session": (["the instrument"], True),
+    "every DISRUPTIVE call (allow all)": ([], True),  # for the session, not for a device: leaving does not end it
+    "a program on two resources for the session": (["the first resource", "the second resource"], False),
+}
+ENDINGS = [(kind, f"{who} leaves the session and comes back") for kind, (touches, _) in LASTING.items() for who in touches] \
+    + [(kind, "a stricter rule is learned") for kind, (_, tightens) in LASTING.items() if tightens]
+
+
+def _give(br, kind, tmp):
+    """Give the OK of `kind`; return the call it covers (-> "runs" or "asks", and the card when it asks), the devices
+    by name, and a way to learn a stricter rule for that call."""
+    def ask(result):
+        return ("asks", br.approvals.get(result["approval_id"])) if result.get("status") == "approval_required" \
+            else ("runs", None)
+
+    devices = {"its port's device": br.bench.ports[CH340].device_id, "the instrument": br.bench.ports[PSU].device_id}
+    if kind == "a program on two resources for the session":
+        first, second = (br.register_resource(f"opaque:{n}", n) for n in ("first", "second"))
+        devices.update({"the first resource": first["device"], "the second resource": second["device"]})
+        program = tmp / "program.py"
+        program.write_text("print('ok')", encoding="utf-8")
+        args = dict(resources=[first["resource"], second["resource"]], argv=[sys.executable, str(program)], purpose="test")
+
+        def call(**kw):
+            res = br.run_program(**args, **kw)
+            if res.get("job"):
+                assert br.runs[res["job"]].done.wait(30)
+            return res
+        stricter = None
+    elif kind in ("an output setting for the session", "two output settings in one line for the session"):
+        line = "VOLT {}" if kind == "an output setting for the session" else "CURR 1;:VOLT {}"
+        granted = lambda **kw: br.request("scpi.write", PSU, {"command": line.format(5)}, wait=0, **kw)  # noqa: E731
+        call = lambda **kw: br.request("scpi.write", PSU, {"command": line.format(4)}, wait=0, **kw)  # noqa: E731
+        stricter = lambda: br.remember(PSU, "command", "at most 3 V", data={  # noqa: E731
+            "command": "VOLT", "effect": "dangerous", "limits": [{"min": 0, "max": 3}]})
+    else:
+        call = lambda **kw: br.request("serial.send", CH340, {"data": "status", "seconds": 0.05}, wait=0, **kw)  # noqa: E731
+        stricter = lambda: br.remember(CH340, "command", "status reboots it", data={  # noqa: E731
+            "command": "status", "effect": "dangerous"})
+    br.select(sorted(devices.values()))
+    if kind == "every DISRUPTIVE call (allow all)":
+        br.set_allow_all(True)
+    else:
+        asked = (granted if kind.startswith(("an output", "two output")) else call)()
+        assert asked["status"] == "approval_required"
+        br.decide(asked["approval_id"], True, "session")
+    return (lambda: ask(call())), devices, stricter
+
+
+@pytest.mark.parametrize("kind, ending", ENDINGS, ids=[f"{k}: {e}" for k, e in ENDINGS])
+def test_an_ok_that_lasts_ends_when_what_it_was_given_for_changes(tmp_path, kind, ending):
+    br = Broker(FixtureIo(FIXTURE), tmp_path / "ws" / ".benchscout", approval_wait=0)
+    br.scan()
+    try:
+        call, devices, stricter = _give(br, kind, tmp_path)
+        assert call()[0] == "runs", "the OK covers the call while nothing changed"
+        if ending == "a stricter rule is learned":
+            stricter()
+        else:
+            who = ending.removesuffix(" leaves the session and comes back")
+            br.select(sorted(d for d in devices.values() if d != devices[who]))
+            br.select(sorted(devices.values()))
+        result, card = call()
+        assert result == "asks", f"{kind} still covered the call after {ending}"
+        if ending == "a stricter rule is learned" and "output" in kind:
+            assert card.again == "", "beyond a limit in force: once only, never for the session"
+    finally:
+        br.end_session()
+
