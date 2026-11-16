@@ -47,7 +47,7 @@
 | 区分 | 扱い |
 |---|---|
 | 必須の機能 | 人による対象選択・承認、占有と停止、出力の保存、選んだエージェントの起動、根拠付きの識別と記憶。実装と回帰テストがあり、今回の修正と検証結果を末尾に記録した。 |
-| 配布前の検証 | 公開後の最初の CI([43343356616](https://github.com/ya-uhs/benchscout/actions/runs/43343356616)、2026-11-13)で 3 OS のテスト・E2E、4 種の .vsix の作成と凍結版コアでの拡張のテスト、同梱物のライセンス文の確認がすべて成功。以後は main への push ごとに同じものが回る。最初のリリース [v0.1.0](https://github.com/ya-uhs/benchscout/releases/tag/v0.1.0)(2026-11-16)はタグの CI が作って試したものを載せた。 |
+| 配布前の検証 | 公開後の最初の CI([43343356616](https://github.com/ya-uhs/benchscout/actions/runs/43343356616)、2026-11-13)で 3 OS のテスト・E2E、4 種の .vsix の作成と凍結版コアでの拡張のテスト、同梱物のライセンス文の確認がすべて成功。以後は main への push ごとに同じものが回る。最初のリリース [v0.1.0](https://github.com/ya-uhs/benchscout/releases/tag/v0.1.0)(2026-11-16)はタグの CI が作って試したものを載せた。Codex の修正を入れた [v0.1.1](https://github.com/ya-uhs/benchscout/releases/tag/v0.1.1)(同日)も同じ手順。 |
 | 実機で未確認の項目 | 測定器の画像・データ保存、Windows x64のドライバ手順、改行なしプロンプトの実出力。各環境で得た証拠を個別に記録する。 |
 | 実機で確認済みの排他 | macOS の ESP32-S3 USB JTAG/serial ポートで LiveIo.serial_stream(exclusive=True) を使用。保持中は別プロセスの os.open が EBUSY (16)、close 後は同じプロセス起動手順で再オープン成功。データ送信なし。 |
 | 配布物のライセンス | 同梱する openFPGALoader の USB ライブラリ libftdi1・libusb は LGPL-2.1(Windows 版の GCC ランタイム・winpthreads・zlib はソースを求めない)。ライセンス文は .vsix に入れ、作ったときのソースは .vsix の横に置く(2026-11-15、design.md §12)。benchscout 自身のライセンスは未定(当面なし、2026-11-13 利用者)。依存は MIT・BSD・Apache-2.0・ISC・PSF で、どれを選んでもぶつからない。 |
@@ -918,3 +918,11 @@ Codex が作業ツリーに入れた修正 6 件を読み、それぞれのテ�
 - **これからの課題**:別のモデルにコードを読ませず、design.md と外から見える入口(MCP の道具、制御の経路)だけからテストを書かせる。
   コードと同じ思い込みを持たないテストになる。
 - 検査:Python 333 件成功・1 skip(2 回とも同じ)、mypy、ruff。
+
+### 2026-11-16 v0.1.1
+
+- 利用者の OK(「v0.1.1 出していいよ」)で公開した:https://github.com/ya-uhs/benchscout/releases/tag/v0.1.1 。Codex の修正 5 件
+  (f7908ef)を入れた版。版番号を拡張とコアの両方で 0.1.1 にし(d43e649)、タグの CI([43783617197](https://github.com/ya-uhs/benchscout/actions/runs/43783617197))
+  で全部通ってから載った。`releases/latest` は v0.1.1 を指す。ログインせずに Linux の .vsix を落とし、版 0.1.1 とまとめた JS を確かめた。
+- 説明の下書きに事実と違う文が 2 つあり、出す前に直した(プログラムの許可は「最初の接続先だけが終わらせた」ではなく「2 つのうち
+  一方だけ」。「受信箱が理由を言う」は今回の変更ではない)。
