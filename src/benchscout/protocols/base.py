@@ -165,25 +165,22 @@ def judge_rule(rule: dict, name: str, args: list[str]) -> Judged:
     return effect, reason, f"command_{rule['effect']}"
 
 
-def judge(port, text: str, proto: Protocol) -> tuple[Effect, str, str, list[str]]:
-    """The strongest of the commands in `text`, and the names a standing grant for it is bound to."""
+def _judgments(port, text: str, proto: Protocol):
+    """Keep every reading and its actual values until all policy checks are complete."""
 
     def rule(name: str) -> dict | None:
         r = port.commands.get(name)
         return r if r and not r.get("pending") else None
 
-    worst: Judged = (Effect.SAFE, "", "")
-    subjects: set[str] = set()
     for names, values in proto.commands(text):
         if proto.many_readings:  # the device may read it any of these ways: the strictest counts
-            judged = max((judge_rule(r, n, values(n)) if (r := rule(n)) else proto.default(n) for n in names),
-                         key=lambda j: j[0])
-            subjects |= set(names)
+            for n in names:
+                yield (judge_rule(r, n, values(n)) if (r := rule(n)) else proto.default(n)), n
         else:  # the most specific remembered form is the command meant; else the command word alone
             name = next((n for n in names if rule(n)), None)
             if name is None:
                 judged = proto.default(names[-1])
-                subjects.add(names[-1])
+                name = names[-1]
             else:
                 r = rule(name)
                 assert r is not None
@@ -192,7 +189,21 @@ def judge(port, text: str, proto: Protocol) -> tuple[Effect, str, str, list[str]
                     # words after it that its rule does not take as values: what the human confirmed was the command,
                     # not those words, so it asks no less than an unknown command would (and a stronger rule stays)
                     judged = max(judged, proto.default(names[-1]), key=lambda j: j[0])
-                subjects.add(name)
+            yield judged, name
+
+
+def judge(port, text: str, proto: Protocol) -> tuple[Effect, str, str, list[str]]:
+    """The strongest judgment, and every subject a standing grant is bound to."""
+    worst: Judged = (Effect.SAFE, "", "")
+    subjects: set[str] = set()
+    for judged, name in _judgments(port, text, proto):
+        subjects.add(name)
         if judged[0] > worst[0] or not worst[1]:
             worst = judged
     return (*worst, sorted(subjects))
+
+
+def can_bound(port, text: str, proto: Protocol) -> bool:
+    """A session offer must not hide a once-only reading behind an equally strong judgment."""
+    return all(effect != Effect.DANGEROUS or code in proto.bounded_codes
+               for (effect, _, code), _ in _judgments(port, text, proto))

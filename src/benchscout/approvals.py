@@ -57,6 +57,7 @@ class Grant:
     subjects: frozenset[str] | None = None  # only calls about these (SCPI headers); None = any call of the action
     effect: Effect = Effect.DISRUPTIVE  # the strongest call it covers
     content: str | None = None  # only calls with this content (a program's plan, a tool's identity); None = any
+    affected_ports: frozenset[str] = frozenset()
     bounds: dict | None = None  # {subject: limits (protocols.base.outside)}: only values within them
 
 
@@ -181,11 +182,13 @@ class ApprovalBook:
                 offer = self._again.get(a.id, {})  # what the card said "for the session" covers, and nothing more
                 self._grants.append(Grant(a.action, a.port, None,
                                           frozenset(offer["subjects"]) if offer.get("subjects") is not None else None,
-                                          Effect.DANGEROUS, offer.get("content"), offer.get("bounds")))
+                                          Effect.DANGEROUS, offer.get("content"),
+                                          frozenset(a.impact.get("affected_ports", [])), offer.get("bounds")))
             elif granted and scope != "once":
                 expires = None if scope == "session" else self._clock() + 60 * int(scope)
                 subjects = a.impact.get("subjects")
-                self._grants.append(Grant(a.action, a.port, expires, frozenset(subjects) if subjects is not None else None))
+                self._grants.append(Grant(a.action, a.port, expires, frozenset(subjects) if subjects is not None else None,
+                                          affected_ports=frozenset(a.impact.get("affected_ports", []))))
             a.status, a.scope = ("granted" if granted else "denied"), scope
             self._cond.notify_all()
         self._log(a.status, a)
@@ -222,7 +225,7 @@ class ApprovalBook:
         """Devices left the session: drop their standing grants and pending requests."""
         withdrawn = []
         with self._cond:
-            self._grants = [g for g in self._grants if g.port not in ports]
+            self._grants = [g for g in self._grants if g.port not in ports and not ports.intersection(g.affected_ports)]
             for a in self._items.values():
                 if (a.port in ports or ports.intersection(a.impact.get("affected_ports", []))) and a.status in ("pending", "granted"):
                     a.status = "withdrawn"

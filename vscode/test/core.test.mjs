@@ -111,3 +111,21 @@ test("approval cards show nested arguments, tool definitions and input hashes", 
   for (const value of Object.values(plan)) assert.ok(text.includes(JSON.stringify(value)));
   assert.ok(!text.includes("[object Object]"));
 });
+
+
+test("a core that cannot start rejects pending and subsequent calls", async () => {
+  const { root, env, ws } = setup();
+  const core = new CoreClient(join(root, "missing-core"), ws, env);
+  try {
+    const exited = once(core, "exit");
+    core.start();
+    await assert.rejects(core.scan());
+    const [, message] = await exited;
+    assert.match(message, /could not start/);
+    assert.equal(core.running, false);
+    await assert.rejects(core.scan(), /not running/);
+  } finally {
+    core.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

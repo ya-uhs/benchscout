@@ -5,7 +5,7 @@ The human can read and edit the files, and delete entries in the panel. Only ent
 safety (kind "safety") wait for the human to confirm before they take effect.
 
 Where:
-  per device   <user dir>/memory/devices/<vid>-<pid>-<serial>.toml   (devices move between folders)
+  per device   <user dir>/memory/devices/<vid>-<pid>-<serial>-<tag>.toml   (devices move between folders; device_key)
   per folder   <workspace>/.benchscout/memory/workspace.toml          (this setup: wiring, probe nets)
 
 Each file is a list of [[entry]] tables:
@@ -22,6 +22,7 @@ Each file is a list of [[entry]] tables:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -59,8 +60,20 @@ class Entry:
 
 
 def device_key(vid: int | None, pid: int | None, serial: str | None) -> str:
-    raw = f"{vid or 0:04x}-{pid or 0:04x}-{serial or 'noserial'}"
-    return re.sub(r"[^A-Za-z0-9._-]", "_", raw)
+    """A unit's memory file name: readable (the serial, with what a file name cannot hold replaced) and one per serial
+    string: a tag from the serial as given keeps "A:B" apart from "A_B", and "ab" from "AB" where file names ignore
+    case (macOS, Windows), so one unit's memory never lands in another's file."""
+    readable = re.sub(r"[^A-Za-z0-9._-]", "_", serial or "noserial")
+    tag = hashlib.sha256((serial or "").encode("utf-8")).hexdigest()[:12]
+    return f"{vid or 0:04x}-{pid or 0:04x}-{readable}-{tag}"
+
+
+def _key_of(header: dict) -> str | None:
+    """The key of the unit a memory file's header names (None: not a unit's header)."""
+    try:
+        return device_key(int(header["vid"], 16), int(header["pid"], 16), header["serial"] or None)
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
 
 
 def _toml_value(v) -> str:
@@ -169,7 +182,13 @@ class Memory:
         return [self._path(key)] + ([self.workspace_file] if self.workspace_file else [])
 
     def _path(self, key: str) -> Path:
-        return self.root / "devices" / f"{key}.toml"
+        path = self.root / "devices" / f"{key}.toml"
+        if path.exists():
+            return path
+        # a file named before 2026-11-16 (no tag) stays where it is, and is this unit's only if its header names this
+        # very serial: that name was shared by "A:B" and "A_B" (and by "ab" and "AB" where names ignore case)
+        old = path.with_name(key.rsplit("-", 1)[0] + ".toml")
+        return old if old.exists() and _key_of(MemoryFile(old).header) == key else path
 
     def device_file(self, key: str, header: dict | None = None) -> MemoryFile:
         return MemoryFile(self._path(key), header)
@@ -181,7 +200,8 @@ class Memory:
             mine = self.device_file(key).entries
             # the folder's file holds this setup (kind config) and nothing else: whatever else is written there is not
             # memory benchscout or the human put there, and loosens nothing
-            here = [e for e in MemoryFile(self.workspace_file).entries if e.device == key and e.kind == "config"] \
+            aliases = {key, self._path(key).stem}
+            here = [e for e in MemoryFile(self.workspace_file).entries if e.device in aliases and e.kind == "config"] \
                 if self.workspace_file else []
             return mine + here
 
@@ -225,7 +245,7 @@ class Memory:
             with self._lock, _FileLock(path):
                 f = MemoryFile(path)
                 for e in f.entries:
-                    if e.id == entry_id and (path != self.workspace_file or e.device == key):
+                    if e.id == entry_id and (path != self.workspace_file or e.device in {key, self._path(key).stem}):
                         e.status = status
                         f.save()
                         return e

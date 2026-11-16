@@ -423,3 +423,23 @@ def test_command_limits_reject_nonfinite_bounds(tmp_path):
                               "limits": [{"max": value}]})["status"] == "rejected"
     finally:
         b.end_session()
+
+
+def test_device_memory_does_not_merge_serials_when_filenames_collide(tmp_path):
+    from benchscout.memory import Entry, Memory, MemoryFile, device_key
+
+    m = Memory(tmp_path / "workspace", root=tmp_path / "memory")
+    serials = ["A:B", "A_B", "a_b", "noserial", None]
+    keys = [device_key(1, 2, sn) for sn in serials]
+    assert len({k.lower() for k in keys}) == len(serials)
+    # Existing memory remains usable by its recorded unit, without renaming the user's file.
+    legacy = m.root / "devices" / "0001-0002-A_B.toml"
+    f = MemoryFile(legacy, {"vid": "0001", "pid": "0002", "serial": "A:B"})
+    f.entries = [Entry(kind="safety", text="confirmed for A:B", source="user", data={"listen_safe": True})]
+    f.save()
+    assert [e.text for e in m.entries(keys[0])] == ["confirmed for A:B"]
+    for key in keys[1:]:
+        assert m.entries(key) == []
+        m.add(key, Entry(kind="observation", text=key, source="agent"))
+    assert [e.text for e in m.entries(keys[0])] == ["confirmed for A:B"]
+    assert m.device_file(keys[0]).path == legacy

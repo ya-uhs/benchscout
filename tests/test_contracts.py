@@ -910,3 +910,18 @@ def test_on_a_model_whose_units_share_a_serial_what_asks_less_is_kept_for_the_mo
     t = br.bench.targets[target.id]
     assert t.name != "STM32F4" and any("may be another one" in f for f in t.facts)
     br.end_session()
+
+
+def test_parameterized_command_uses_its_remembered_framing(tmp_path):
+    br = bench(tmp_path, select=[VCP])
+    try:
+        port = br.resolve_port(VCP)
+        remember(br, port, "set", "disruptive", limits=[None], eol="\r\n", until="^done$")
+        asked = br.request("serial.send", port, {"data": "set 2"})
+        args = json.loads(br.approvals.get(asked["approval_id"]).args)
+        assert args["eol"] == "\r\n" and args["until"] == "^done$"
+        overridden = br.request("serial.send", port, {"data": "set 2", "eol": "\n", "until": "^end$"})
+        args = json.loads(br.approvals.get(overridden["approval_id"]).args)
+        assert args["eol"] == "\n" and args["until"] == "^end$"
+    finally:
+        br.end_session()

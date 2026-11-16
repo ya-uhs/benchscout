@@ -123,7 +123,12 @@ export class CoreClient extends EventEmitter {
   start(): void {
     this.proc = spawn(this.command, ["core", "--workspace", this.workspace, "--json", ...this.extraArgs],
       { cwd: this.workspace, env: this.env });
-    this.proc.on("error", (e) => this.emit("exit", null, `could not start "${this.command}": ${e.message}`));
+    this.proc.on("error", (e) => {
+      this.proc = undefined;
+      for (const w of this.waiting.values()) w.reject(e);
+      this.waiting.clear();
+      this.emit("exit", null, `could not start "${this.command}": ${e.message}`);
+    });
     this.proc.stderr.on("data", (d) => { this.stderr = (this.stderr + d.toString()).slice(-4000); });
     this.proc.on("exit", (code) => {
       for (const w of this.waiting.values()) w.reject(new Error("benchscout core stopped"));

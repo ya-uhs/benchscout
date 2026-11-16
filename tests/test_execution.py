@@ -468,3 +468,20 @@ def test_the_same_program_may_be_allowed_for_the_session_and_a_changed_one_asks_
     b.select([])
     b.select([r["device"]])
     assert b.run_program(**plan(b, r, "print('first')"))["status"] == "approval_required", "the grant left with the device"
+
+
+def test_secondary_resource_leaving_revokes_the_program_session_grant(bench):
+    b, r, _ = bench
+    other = b.register_resource("opaque:second", "second")
+    selected = [r["device"], other["device"]]
+    b.select(selected)
+    args = plan(b, r, "print('complete')")
+    args["resources"].append(other["resource"])
+    asked = b.run_program(**args)
+    b.decide(asked["approval_id"], True, "session")
+    run = b.run_program(**args)
+    assert finish(b, run["job"])["status"] == "completed"
+    primary = b.approvals.get(asked["approval_id"]).port
+    b.select([b.bench.ports[primary].device_id])
+    b.select(selected)
+    assert b.run_program(**args)["status"] == "approval_required"

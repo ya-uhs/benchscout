@@ -51,8 +51,8 @@ class Lines(Protocol):
 
     def resolve(self, port, args: dict) -> dict:
         """A remembered command is sent with its own line ending and end line unless the call says otherwise."""
-        lines = sent_lines(str(args.get("data", "")))
-        rule = port.commands.get(lines[0]) if len(lines) == 1 else None
+        commands = self.commands(str(args.get("data", "")))
+        rule = next((port.commands[n] for n in commands[0][0] if n in port.commands), None) if len(commands) == 1 else None
         out = dict(args)
         if out.get("eol") is None:
             out["eol"] = (rule or {}).get("eol", "\n")

@@ -1461,7 +1461,7 @@ class Broker:
                            "serial": self.bench.devices[port.device_id].serial}, sort_keys=True, default=str)
 
     def _session_offer(self, spec, proto, port_id: str, impact: Impact, identity: str | None,
-                       said: dict | None) -> tuple[str, dict] | None:
+                       said: dict | None, text: str) -> tuple[str, dict] | None:
         """What "for the session" may cover on this DANGEROUS call's card (design.md section 12, 2026-11-08), or None:
         once only. A write the data allows it for: this tool on this device, any file. Commands the protocol lets be
         bounded (an output setting): up to the values on the card, and only if every command in the call is one of
@@ -1472,10 +1472,8 @@ class Broker:
             return "tool", {"content": identity}
         if proto and said is not None and impact.subjects and impact.code in proto.bounded_codes:
             port = self.bench.ports[port_id]
-            for name in impact.subjects:
-                effect, _, code, _ = protocols.judge(port, name, proto)
-                if effect == Effect.DANGEROUS and code not in proto.bounded_codes:
-                    return None
+            if not protocols.can_bound(port, text, proto):
+                return None
             return "bounded", {"subjects": impact.subjects,
                                "bounds": {n: protocols.up_to(said.get(n, [])) for n in impact.subjects}}
         return None
@@ -1532,8 +1530,11 @@ class Broker:
             said = protocols.values_of(str(text) + str(args.get("eol") or ""), proto) if proto and text is not None else None
             # a tool not installed yet is downloaded only with the human's OK, even for a SAFE action
             fetch = self._fetch_needed(spec)
+            again = self._session_offer(spec, proto, port_id, impact, identity, said,
+                                        str(text) + str(args.get("eol") or ""))
             if not fetch and (impact.effect == Effect.SAFE or
-                              (approval_id is None and self.approvals.covered(action, port_id, impact.effect, impact.subjects,
+                              (approval_id is None and (impact.effect != Effect.DANGEROUS or again is not None)
+                               and self.approvals.covered(action, port_id, impact.effect, impact.subjects,
                                                                                content=identity, values=said))):
                 go = (impact, args, "safe" if impact.effect == Effect.SAFE else "allowed by the human for the session"
                       if not self.approvals.allow_all else "allowed by the human: allow all", {})
@@ -1543,7 +1544,6 @@ class Broker:
                 dev = self.bench.devices[self.bench.ports[port_id].device_id]
                 always = bool(spec.protocol and impact.subjects and impact.effect == Effect.DISRUPTIVE
                               and self._may_loosen(self.bench, dev))
-                again = self._session_offer(spec, proto, port_id, impact, identity, said)
                 approval_id = self.approvals.open(impact, key, fetch=fetch, always=always, again=again,
                                                   model=self._model_wide(self.bench, dev)).id
             else:
