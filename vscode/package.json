@@ -2,7 +2,7 @@
   "name": "benchscout",
   "displayName": "benchscout",
   "description": "Finds what is on your hardware bench, lets your AI agent work on the devices you pick, and asks you before anything changes device state.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "benchscout",
   "license": "UNLICENSED",
   "private": true,
