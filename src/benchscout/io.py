@@ -604,6 +604,24 @@ def _as_listed(items: list[dict], fields: frozenset, what: str) -> list[dict]:
     return [dict(i, vid=int(i["vid"], 16), pid=int(i["pid"], 16)) for i in items]
 
 
+class _Seen(list):
+    """What reached the fixture bench. With BENCHSCOUT_FIXTURE_LOG set, each also goes to that file as a JSON line
+    ({"what", "where", "data"}), so a test outside the core sees what a real device would have: blackbox/."""
+
+    def __init__(self, log: str | None):
+        super().__init__()
+        self.log, self.lock = log, threading.Lock()
+
+    def append(self, call: tuple) -> None:
+        super().append(call)
+        if self.log:
+            data = call[2] if len(call) > 2 else None
+            line = {"what": call[0], "where": list(call[1]) if isinstance(call[1], tuple) else call[1],
+                    "data": data.decode("utf-8", "backslashreplace") if isinstance(data, bytes) else data}
+            with self.lock, open(self.log, "a", encoding="utf-8") as f:
+                f.write(json.dumps(line) + "\n")
+
+
 class FixtureIo:
     """Replays a bench described in JSON (see fixtures/)."""
 
@@ -611,7 +629,7 @@ class FixtureIo:
         self.path = Path(path)
         self.data = json.loads(self.path.read_text(encoding="utf-8"))
         self._mtime = self.path.stat().st_mtime_ns
-        self.calls: list[tuple] = []  # what access was attempted, for tests/audit
+        self.calls: list[tuple] = _Seen(os.environ.get("BENCHSCOUT_FIXTURE_LOG"))  # what access was attempted
         self.exclusive_opens: list[str] = []
         self.bauds: list[int] = []
         self.lines: list[str] = []

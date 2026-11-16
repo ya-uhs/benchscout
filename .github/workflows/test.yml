@@ -39,6 +39,7 @@ jobs:
       - run: uv run mypy --platform win32  # Windows' branches again, for a run that stops before Windows' job
         if: runner.os == 'Linux'
       - run: uv run pytest -q
+      - run: uv run pytest -q blackbox/tests  # from outside: the two channels and the fake bench (blackbox/)
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: 22
@@ -161,6 +162,10 @@ jobs:
         working-directory: vscode
         env:
           BENCHSCOUT_TEST_BIN: ${{ github.workspace }}/vscode/bin/benchscout/benchscout${{ runner.os == 'Windows' && '.exe' || '' }}
+      # and from outside, as a person and an agent would drive it (blackbox/)
+      - run: uv run --no-project --with pytest pytest -q blackbox/tests
+        env:
+          BENCHSCOUT_BIN: ${{ github.workspace }}/vscode/bin/benchscout/benchscout${{ runner.os == 'Windows' && '.exe' || '' }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           retention-days: 14

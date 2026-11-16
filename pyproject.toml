@@ -22,6 +22,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]  # blackbox/ runs on its own, against a built program (blackbox/README.md)
 markers = [
   "assumed: built on how an OS or tool is assumed to answer, not on a recording from a real one yet; replace it with a recording (fixtures/real) when that system is on the bench (pytest -m assumed lists them)",
 ]

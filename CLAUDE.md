@@ -89,6 +89,7 @@ load in `bench-session/`, which must look exactly like an end user's workspace.
 uv sync --extra mcp --extra visa                                        # dev environment
 uv run pytest -q                                                        # all tests, fixture-only, no hardware
 uv run mypy && uvx ruff@0.14.3 check src tests packaging                  # types and lint (CI runs both)
+uv run pytest -q blackbox/tests                                         # from outside: the two channels + fake bench
 BENCHSCOUT_FIXTURE=fixtures/bench_example.json uv run benchscout scan   # recon without hardware
 uv run benchscout scan                                                  # recon on the real bench (safe probes only)
 BENCHSCOUT_FIXTURE=fixtures/bench_example.json uv run benchscout core   # core without hardware; type commands to approve
@@ -193,6 +194,9 @@ changes reach the CLI and the MCP server without reinstalling (reconnect with `/
   Prefer deterministic checks: where a promise has several cases, enumerate them all in one parametrized test
   (every kind x every way it should end, as `test_an_ok_that_lasts_ends_when_what_it_was_given_for_changes`) rather
   than adding one test per bug; hypothesis runs derandomized (tests/conftest.py), the same examples every run.
+  `blackbox/` is the kit for tests written by another model from design.md and the outside entrances only (never the
+  code): `blackbox/export.py` makes its folder, blackbox/README.md says how its results come back. Keep `harness.py`
+  free of benchscout imports, and INTERFACES.md / CONTRACT.md in step with the channels and design.md.
 - New behaviour is tested against `FixtureIo` first. When the real bench shows something,
   record it in `fixtures/` or a test so the suite keeps covering it without hardware.
   `FixtureIo` takes only what an OS or VISA gives and fails as `LiveIo` does (OSError, not None); a test checks "nothing
